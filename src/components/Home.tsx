@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X } from 'lucide-react';
+import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, RefreshCw } from 'lucide-react';
 import { getHistory, deleteHistoryItem, HistoryItem, clearHistory } from '../utils/storage';
 import { ExtractionResult } from '../utils/types';
 import ReactMarkdown from 'react-markdown';
@@ -51,6 +51,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('Ready');
   const [result, setResult] = useState<string | null>(null);
+  const [currentTitle, setCurrentTitle] = useState<string>(''); // Track current document title
   const [isPreview, setIsPreview] = useState(true);
   
   // History State
@@ -148,6 +149,9 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     
     if (task.result) {
       setResult(task.result);
+      if (task.title) {
+        setCurrentTitle(task.title);
+      }
       // Only switch view if we are not already in result view (to avoid jumping if user is refining)
       if (view !== 'result') {
         setView('result');
@@ -196,6 +200,10 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
 
       const extraction: ExtractionResult = response.payload;
       console.log('Extracted:', extraction);
+      
+      if (extraction.title) {
+        setCurrentTitle(extraction.title);
+      }
 
       // Delegate to Background Script
       chrome.runtime.sendMessage({ 
@@ -232,7 +240,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
       // Delegate to Background Script
       await chrome.runtime.sendMessage({ 
         type: 'START_REFINEMENT', 
-        payload: newHistory 
+        payload: { messages: newHistory, title: currentTitle }
       });
 
     } catch (error: any) {
@@ -285,6 +293,9 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
           Memoraid
         </h1>
         <div className="flex gap-2">
+          <button onClick={loadHistory} className="p-2 hover:bg-gray-100 rounded-full" title="Refresh History">
+            <RefreshCw className="w-5 h-5 text-gray-600" />
+          </button>
           <button onClick={onOpenSettings} className="p-2 hover:bg-gray-100 rounded-full" title="Settings">
             <SettingsIcon className="w-5 h-5 text-gray-600" />
           </button>
@@ -374,10 +385,11 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                    historyItems.map(item => (
                      <div 
                        key={item.id}
-                       onClick={() => {
-                         setResult(item.content);
-                         setView('result');
-                       }}
+                      onClick={() => {
+                        setResult(item.content);
+                        setCurrentTitle(item.title);
+                        setView('result');
+                      }}
                        className="p-3 border rounded-lg hover:bg-gray-50 cursor-pointer group flex justify-between items-start transition bg-white"
                      >
                        <div className="flex-1 min-w-0">
@@ -424,11 +436,14 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                   {isPreview ? 'Show Code' : 'Preview'}
                 </button>
                 <button
-                   onClick={() => setView('home')}
-                   className="text-xs text-gray-500 hover:text-black"
-                >
-                  Close
-                </button>
+                 onClick={() => {
+                   setView('home');
+                   loadHistory(); // Reload history when returning to home
+                 }}
+                 className="text-xs text-gray-500 hover:text-black"
+              >
+                Close
+              </button>
               </div>
             </div>
 
@@ -492,7 +507,10 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                 MD
               </button>
               <button
-                onClick={() => setView('home')}
+                onClick={() => {
+                  setView('home');
+                  loadHistory();
+                }}
                 className="px-4 py-2 border rounded hover:bg-gray-50 transition"
               >
                 Back

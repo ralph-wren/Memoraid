@@ -21,4 +21,5 @@ export interface ActiveTask {
   result?: string;
   error?: string;
   conversationHistory?: ChatMessage[]; // Persist chat history for refinement
+  title?: string; // Title of the document being processed
 }
