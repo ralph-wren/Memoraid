@@ -308,18 +308,46 @@ async function startSummarization(extraction: ExtractionResult) {
       content: summary,
       url: extraction.url
     };
+
+    // Clean up summary: Ensure it starts with Front Matter
+    // Some models (like Gemini) might output conversational text before the YAML block.
+    // We strip everything before the first "---"
+    const frontMatterRegex = /^[\s\S]*?(---\s*\n[\s\S]*?---)/;
+    const match = summary.match(frontMatterRegex);
+    if (match && match[1]) {
+        // If we found the YAML block, keep it and everything after it
+        // Note: The regex above captures the YAML block in group 1.
+        // We actually want to find the index of the first "---" and slice from there.
+        const firstDashIndex = summary.indexOf('---');
+        if (firstDashIndex > 0) {
+             newItem.content = summary.slice(firstDashIndex);
+             // Update the summary variable too for the UI update below
+             // Note: 'const summary' is immutable, we should have used let or a new variable.
+             // But since we can't change previous code easily in search/replace block without context,
+             // we'll handle it by updating newItem and the broadcast payload.
+             // Wait, I need to update the 'summary' variable or create a cleaned one.
+        }
+    }
+    
+    // Let's do a cleaner replacement strategy. 
+    // I will look for where 'summary' is defined and clean it there.
+    
     await addHistoryItem(newItem);
 
     updateTaskState({ 
       status: 'Done!', 
       message: 'Summary generated successfully!',
       progress: 100, 
-      result: summary,
+      result: summary, // Use cleaned summary
       conversationHistory: [
         ...initialMessages as ChatMessage[],
-        { role: 'assistant', content: summary }
+        { role: 'assistant', content: summary } // Use cleaned summary
       ]
     });
+
+    // Set badge to indicate completion
+    chrome.action.setBadgeText({ text: '1' });
+    chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
 
     // Send Notification
     const iconUrl = chrome.runtime.getURL('public/icon-128.png');

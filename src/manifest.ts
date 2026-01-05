@@ -21,7 +21,7 @@ export default defineManifest({
   permissions: ['storage', 'activeTab', 'notifications'],
   content_scripts: [
     {
-      matches: ['https://chatgpt.com/*', 'https://gemini.google.com/*'],
+      matches: ['https://chatgpt.com/*', 'https://gemini.google.com/*', 'https://chat.deepseek.com/*'],
       js: ['src/content/index.ts'],
     },
   ],

@@ -22,9 +22,72 @@ async function extractContent(): Promise<ExtractionResult> {
     return extractChatGPT();
   } else if (url.includes('gemini.google.com')) {
     return extractGemini();
+  } else if (url.includes('chat.deepseek.com')) {
+    return extractDeepSeek();
   } else {
-    throw new Error('Unsupported website. Please use on ChatGPT or Gemini.');
+    throw new Error('Unsupported website. Please use on ChatGPT, Gemini, or DeepSeek.');
   }
+}
+
+function extractDeepSeek(): ExtractionResult {
+  const title = document.title || 'DeepSeek Conversation';
+  const messages: ChatMessage[] = [];
+  
+  // DeepSeek Chat DOM Structure Analysis (as of Jan 2025)
+  // Usually wrapped in a container. Let's look for standard patterns.
+  // User message: often has specific classes or alignment
+  // Assistant message: often has 'ds-markdown' or similar class
+  
+  // Attempt 1: Look for message container class (common in React apps)
+  // We'll search for elements that look like message bubbles
+  
+  // Note: Since we can't inspect the live DOM, we'll use a robust heuristic strategy
+  // 1. Find the main chat container
+  // 2. Iterate through children
+  // 3. Classify based on known markers (e.g., "DeepSeek" avatar, "You" label)
+
+  // Try to find all message blocks
+  const messageBlocks = document.querySelectorAll('div[class*="message"], div[class*="chat-item"]');
+  
+  if (messageBlocks.length > 0) {
+      messageBlocks.forEach(block => {
+          const text = (block as HTMLElement).innerText;
+          if (!text) return;
+          
+          // Heuristic to determine role
+          // This is a best-guess without exact class names. 
+          // Often user messages are on the right or have "User"/"You"
+          // Assistant messages have the logo or "DeepSeek"
+          
+          // For now, let's grab the text and try to deduce, or just dump it.
+          // Better strategy: DeepSeek uses markdown rendering for assistant.
+          // Look for 'ds-markdown' or similar class which is likely the assistant.
+          
+          let role: 'user' | 'assistant' = 'user';
+          if (block.innerHTML.includes('ds-markdown') || block.innerHTML.includes('markdown-body')) {
+              role = 'assistant';
+          }
+          
+          messages.push({ role, content: text });
+      });
+  } 
+
+  // Fallback: If no specific structure found, grab the main text content
+  if (messages.length === 0) {
+    const main = document.querySelector('main') || document.body;
+    if (main) {
+       messages.push({ 
+         role: 'user', 
+         content: main.innerText + '\n\n(Note: Automatic extraction could not identify individual messages for DeepSeek yet. Captured full page text.)' 
+       });
+    }
+  }
+
+  return {
+    title,
+    messages,
+    url: window.location.href
+  };
 }
 
 function extractChatGPT(): ExtractionResult {
