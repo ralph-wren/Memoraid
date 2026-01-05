@@ -385,6 +385,46 @@ async function startSummarization(extraction: ExtractionResult) {
       }
     }
 
+    // 3. Ensure Title in Body: Check if the body (after Front Matter) starts with an H1 title
+    // Find the end of Front Matter
+    const frontMatterEndRegex = /^---\s*$/m;
+    const frontMatterEndMatch = summary.substring(3).match(frontMatterEndRegex); // Skip first '---'
+
+    if (frontMatterEndMatch) {
+        // We found the closing '---'
+        let bodyStartIndex = 3 + frontMatterEndMatch.index! + frontMatterEndMatch[0].length;
+        let body = summary.substring(bodyStartIndex);
+        
+        // Remove stray code block fences immediately after Front Matter
+        // This handles cases where LLM wraps output in ```markdown ... ``` and we only stripped the opening
+        const strayFenceMatch = body.match(/^\s*```(?:markdown)?\s*\n?/);
+        if (strayFenceMatch) {
+            const matchLen = strayFenceMatch[0].length;
+            summary = summary.substring(0, bodyStartIndex) + summary.substring(bodyStartIndex + matchLen);
+            body = summary.substring(bodyStartIndex);
+        }
+        
+        // Check if body starts with H1 (ignoring whitespace)
+        if (!/^\s*#\s+/.test(body)) {
+            // Insert title
+            const titleToInsert = extraction.title || 'Untitled';
+            summary = summary.substring(0, bodyStartIndex) + `\n\n# ${titleToInsert}\n` + body;
+        }
+    } else {
+        // No valid Front Matter structure found (or only opening '---')
+        // Check if the whole text starts with H1
+        if (!/^\s*#\s+/.test(summary)) {
+             const titleToInsert = extraction.title || 'Untitled';
+             summary = `# ${titleToInsert}\n\n` + summary;
+        }
+    }
+
+    // 4. Final Cleanup: Remove trailing code block fences
+    summary = summary.trim();
+    if (summary.endsWith('```')) {
+        summary = summary.substring(0, summary.length - 3).trim();
+    }
+
     // Save to History
     const newItem = {
       id: Date.now().toString(),

@@ -30,9 +30,12 @@ async function extractContent(): Promise<ExtractionResult> {
   }
 }
 
-function extractGenericPage(): ExtractionResult {
+async function extractGenericPage(): Promise<ExtractionResult> {
+  // Attempt to auto-expand "Read More" buttons before extraction
+  await autoExpandContent();
+
   try {
-    // Clone document to avoid modifying the actual page
+    // Clone document to avoid modifying the actual page during parsing (though we might have modified it by expanding)
     const documentClone = document.cloneNode(true) as Document;
     const reader = new Readability(documentClone);
     const article = reader.parse();
@@ -58,6 +61,52 @@ function extractGenericPage(): ExtractionResult {
       }],
       url: window.location.href
     };
+  }
+}
+
+async function autoExpandContent() {
+  const EXPAND_SELECTORS = [
+    '.btn-readmore', // CSDN
+    '.btn-read-more', // Juejin
+    '.read-more-btn',
+    '.expand-button',
+    '#btn-readmore',
+    '.show-more', // SegmentFault
+    '[data-action="expand"]'
+  ];
+
+  const EXPAND_TEXTS = ['阅读全文', '展开阅读', 'Read More', 'Show More', '展开更多'];
+
+  console.log('Attempting to auto-expand content...');
+  let expanded = false;
+
+  // 1. Try Selectors
+  for (const selector of EXPAND_SELECTORS) {
+    const btn = document.querySelector(selector) as HTMLElement;
+    if (btn && btn.offsetParent !== null) { // Check if visible
+      console.log('Found expand button by selector:', selector);
+      btn.click();
+      expanded = true;
+    }
+  }
+
+  // 2. Try Text Content (if no selector matched)
+  if (!expanded) {
+    const buttons = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
+    for (const btn of buttons) {
+      const text = (btn as HTMLElement).innerText?.trim();
+      if (text && EXPAND_TEXTS.some(t => text === t)) {
+        console.log('Found expand button by text:', text);
+        (btn as HTMLElement).click();
+        expanded = true;
+        break; // Only click one main expand button usually
+      }
+    }
+  }
+
+  if (expanded) {
+    // Wait for content to load/expand
+    await new Promise(resolve => setTimeout(resolve, 800));
   }
 }
 
