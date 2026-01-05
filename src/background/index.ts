@@ -37,6 +37,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       abortController.abort();
       abortController = null;
     }
+    stopTimer(); // Ensure timer stops immediately
     currentTask = null;
     chrome.storage.local.remove('currentTask');
     broadcastUpdate();
@@ -128,7 +129,13 @@ async function startRefinement(messages: ChatMessage[]) {
 
     const completionPromise = openai.chat.completions.create({
       model: settings.model,
-      messages: messages as any,
+      messages: [
+        ...messages.filter(m => m.role !== 'system'), // Filter out old system prompts if any
+        { 
+          role: 'system', 
+          content: 'You are an expert technical editor. The user will ask for changes to the document provided in the conversation history. You must REWRITE the entire document incorporating these changes. Return ONLY the new markdown content. Do not include conversational filler like "Here is the updated version".' 
+        }
+      ] as any,
     }, { signal: abortController.signal });
 
     const baseMessage = 'Waiting for AI response...';

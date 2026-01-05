@@ -93,11 +93,15 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
 
   const handleCancel = async () => {
     try {
-      await chrome.runtime.sendMessage({ type: 'CANCEL_SUMMARIZATION' });
+      // Immediately update UI state
       setLoading(false);
       setProgress(0);
       setStatus('Ready');
       setErrorMessage(null);
+      setIsRefining(false);
+      setLogMessage('');
+      
+      await chrome.runtime.sendMessage({ type: 'CANCEL_SUMMARIZATION' });
     } catch (error) {
       console.error('Cancel error:', error);
     }
@@ -495,9 +499,27 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
               </button>
             </div>
             
-            <div className="pt-2 border-t mt-2 shrink-0">
+            <div className="pt-2 border-t mt-2 shrink-0 flex flex-col gap-2">
+              {/* Refinement Chat History */}
+              {conversationHistory.length > 0 && (
+                <div className="max-h-32 overflow-y-auto space-y-2 p-2 bg-gray-50 rounded border text-xs mb-1">
+                  {conversationHistory.filter(msg => msg.role !== 'system' && !(msg.role === 'user' && msg.content.includes('Please summarize'))).map((msg, idx) => (
+                    <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[85%] p-2 rounded-lg ${
+                        msg.role === 'user' 
+                          ? 'bg-blue-100 text-blue-900 rounded-br-none' 
+                          : 'bg-white border text-gray-800 rounded-bl-none shadow-sm'
+                      }`}>
+                         {msg.role === 'assistant' ? 'AI: ' : 'You: '}
+                         {msg.content.length > 60 && msg.role === 'assistant' ? msg.content.substring(0, 60) + '...' : msg.content}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {isRefining && (
-                 <div className="mb-2 px-1">
+                 <div className="mb-1 px-1">
                      <div className="flex justify-between items-center text-[10px] text-gray-500 font-medium mb-1">
                        <span className="flex items-center gap-1 truncate max-w-[200px]">
                          <Loader2 className="w-3 h-3 animate-spin text-purple-600" />
@@ -513,23 +535,35 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                      </div>
                  </div>
               )}
+              
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={refinementInput}
                   onChange={(e) => setRefinementInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleRefine()}
                   placeholder="Ask AI to refine (e.g. 'Make it shorter')..."
                   disabled={isRefining}
                   className="flex-1 p-2 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <button
-                  onClick={handleRefine}
-                  disabled={isRefining || !refinementInput.trim()}
-                  className="bg-purple-600 text-white p-2 rounded hover:bg-purple-700 disabled:opacity-50 transition"
-                >
-                  {isRefining ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                </button>
+                
+                {isRefining ? (
+                  <button
+                    onClick={handleCancel}
+                    className="bg-red-500 text-white p-2 rounded hover:bg-red-600 transition flex items-center justify-center min-w-[36px]"
+                    title="Cancel Refinement"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleRefine}
+                    disabled={!refinementInput.trim()}
+                    className="bg-purple-600 text-white p-2 rounded hover:bg-purple-700 disabled:opacity-50 transition min-w-[36px] flex items-center justify-center"
+                    title="Send"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             </div>
           </div>
