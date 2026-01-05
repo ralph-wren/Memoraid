@@ -9,7 +9,7 @@ interface ProviderConfig {
 
 const PROVIDERS: Record<string, ProviderConfig> = {
   'apiyi': {
-    name: 'API Yi (Default)',
+    name: 'API Yi (Default - Recommended, Supports Multiple Models)',
     baseUrl: 'https://api.apiyi.com/v1',
     models: ['gpt-4o', 'gpt-4-turbo', 'claude-3-5-sonnet', 'claude-3-opus', 'gemini-1.5-pro', 'yi-large', 'deepseek-chat']
   },
@@ -262,7 +262,16 @@ const Settings: React.FC = () => {
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium">System Prompt (Rules)</label>
+        <div className="flex justify-between items-center">
+            <label className="block text-sm font-medium">System Prompt (Rules)</label>
+            <button
+                type="button"
+                onClick={() => setSettings(prev => ({ ...prev, systemPrompt: DEFAULT_SETTINGS.systemPrompt }))}
+                className="text-xs text-blue-600 hover:text-blue-800 underline"
+            >
+                Reset to Default
+            </button>
+        </div>
         <textarea
           name="systemPrompt"
           value={settings.systemPrompt}

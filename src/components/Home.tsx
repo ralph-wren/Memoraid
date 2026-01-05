@@ -71,12 +71,12 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     // Check for ongoing background task when popup opens
     chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (task) => {
       if (task) {
-        updateFromTask(task);
+        updateFromTask(task, false);
       } else {
         // Fallback: Check storage directly in case message passing fails or SW was dormant
         chrome.storage.local.get(['currentTask'], (result) => {
           if (result.currentTask) {
-            updateFromTask(result.currentTask);
+            updateFromTask(result.currentTask, false);
           }
         });
       }
@@ -108,7 +108,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     }
   };
 
-  const updateFromTask = (task: any) => {
+  const updateFromTask = (task: any, allowAutoSwitch = true) => {
     if (!task) {
       // If task is null but we were loading, it might have been cancelled
       if (loading) {
@@ -153,7 +153,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
         setCurrentTitle(task.title);
       }
       // Only switch view if we are not already in result view (to avoid jumping if user is refining)
-      if (view !== 'result') {
+      if (view !== 'result' && allowAutoSwitch) {
         setView('result');
       }
     }

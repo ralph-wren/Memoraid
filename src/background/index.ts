@@ -296,9 +296,39 @@ async function startSummarization(extraction: ExtractionResult) {
 
     let summary = completion.choices[0]?.message?.content || 'No summary generated.';
     
-    // Strip wrapping markdown code blocks if present
-    // Matches ```markdown at start and ``` at end, allowing for optional newlines
-    summary = summary.replace(/^```markdown\s*/i, '').replace(/\s*```$/, '');
+    // Improved content extraction logic:
+    // 1. Try to extract content inside markdown code blocks first (most reliable)
+    const codeBlockRegex = /```(?:markdown)?\s*([\s\S]*?)\s*```/i;
+    const codeBlockMatch = summary.match(codeBlockRegex);
+    
+    if (codeBlockMatch && codeBlockMatch[1]) {
+        // If we found a code block, trust its content as the clean output
+        summary = codeBlockMatch[1];
+    } else {
+        // Fallback: If no code block, just strip potential wrapping backticks manually
+        // (This handles cases where the regex might fail or format is loose)
+        summary = summary.replace(/^```markdown\s*/i, '').replace(/\s*```$/, '');
+    }
+
+    // 2. Clean Front Matter: Ensure it starts exactly with "---"
+    // Find the FIRST occurrence of "---\n" or "---\r\n" which signifies the start of Front Matter
+    // We look for:
+    // - "---" followed by newline
+    // - followed by typical Front Matter keys like "title:", "date:", "layout:" to reduce false positives
+    const frontMatterStartRegex = /---\s*\n(?:\s*title:|\s*date:|\s*layout:)/;
+    const match = summary.match(frontMatterStartRegex);
+    
+    if (match) {
+      // If we found a valid Front Matter start, discard everything before it
+      summary = summary.slice(match.index);
+    } else {
+      // Relaxed fallback: just look for the first "---" followed by a newline if the strict check failed
+      // This helps if the model output format is slightly off but still has Front Matter
+      const simpleMatch = summary.match(/---\s*\n/);
+      if (simpleMatch && summary.indexOf('title:', simpleMatch.index!) > simpleMatch.index!) {
+         summary = summary.slice(simpleMatch.index);
+      }
+    }
 
     // Save to History
     const newItem = {
@@ -308,29 +338,6 @@ async function startSummarization(extraction: ExtractionResult) {
       content: summary,
       url: extraction.url
     };
-
-    // Clean up summary: Ensure it starts with Front Matter
-    // Some models (like Gemini) might output conversational text before the YAML block.
-    // We strip everything before the first "---"
-    const frontMatterRegex = /^[\s\S]*?(---\s*\n[\s\S]*?---)/;
-    const match = summary.match(frontMatterRegex);
-    if (match && match[1]) {
-        // If we found the YAML block, keep it and everything after it
-        // Note: The regex above captures the YAML block in group 1.
-        // We actually want to find the index of the first "---" and slice from there.
-        const firstDashIndex = summary.indexOf('---');
-        if (firstDashIndex > 0) {
-             newItem.content = summary.slice(firstDashIndex);
-             // Update the summary variable too for the UI update below
-             // Note: 'const summary' is immutable, we should have used let or a new variable.
-             // But since we can't change previous code easily in search/replace block without context,
-             // we'll handle it by updating newItem and the broadcast payload.
-             // Wait, I need to update the 'summary' variable or create a cleaned one.
-        }
-    }
-    
-    // Let's do a cleaner replacement strategy. 
-    // I will look for where 'summary' is defined and clean it there.
     
     await addHistoryItem(newItem);
 
@@ -338,10 +345,10 @@ async function startSummarization(extraction: ExtractionResult) {
       status: 'Done!', 
       message: 'Summary generated successfully!',
       progress: 100, 
-      result: summary, // Use cleaned summary
+      result: summary, 
       conversationHistory: [
         ...initialMessages as ChatMessage[],
-        { role: 'assistant', content: summary } // Use cleaned summary
+        { role: 'assistant', content: summary }
       ]
     });
 
