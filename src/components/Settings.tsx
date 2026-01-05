@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AppSettings, DEFAULT_SETTINGS, getSettings, saveSettings } from '../utils/storage';
+import { Eye, EyeOff, Github, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { validateGitHubConnection } from '../utils/github';
 
 interface ProviderConfig {
   name: string;
@@ -76,7 +78,7 @@ const getProviderLink = (provider: string): string | null => {
     default:
       return null;
   }
-};import { Eye, EyeOff } from 'lucide-react';
+};
 
 // ... (existing code)
 
@@ -85,12 +87,17 @@ const Settings: React.FC = () => {
   const [status, setStatus] = useState<string>('');
   const [selectedProvider, setSelectedProvider] = useState<string>('apiyi');
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showGithubToken, setShowGithubToken] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyStatus, setVerifyStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
   useEffect(() => {
     getSettings().then((saved) => {
       // Ensure apiKeys object exists (migration for old settings)
       const initializedSettings = {
         ...saved,
-        apiKeys: saved.apiKeys || {}
+        apiKeys: saved.apiKeys || {},
+        github: saved.github || DEFAULT_SETTINGS.github
       };
       
       // Migrate old single key if needed
@@ -151,6 +158,36 @@ const Settings: React.FC = () => {
       }));
     } else {
       setSettings(prev => ({ ...prev, [name]: value }));
+    }
+  };
+
+  const handleGithubChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setSettings(prev => ({
+      ...prev,
+      github: {
+        ...prev.github || { token: '', owner: '', repo: '', branch: 'main' },
+        [name]: value
+      }
+    }));
+  };
+
+  const handleVerifyGithub = async () => {
+    if (!settings.github?.token || !settings.github?.owner || !settings.github?.repo) {
+      alert('Please fill in Token, Owner, and Repo Name');
+      return;
+    }
+    
+    setVerifying(true);
+    setVerifyStatus('idle');
+    try {
+      const isValid = await validateGitHubConnection(settings.github);
+      setVerifyStatus(isValid ? 'success' : 'error');
+    } catch (error) {
+      console.error(error);
+      setVerifyStatus('error');
+    } finally {
+      setVerifying(false);
     }
   };
 
@@ -259,6 +296,95 @@ const Settings: React.FC = () => {
              Note: For Doubao, you usually need to use the Endpoint ID (e.g. ep-202406...) as the model name.
            </p>
         )}
+      </div>
+
+      <div className="border-t pt-4">
+        <h3 className="text-md font-semibold mb-2 flex items-center gap-2">
+          <Github className="w-4 h-4" />
+          GitHub Integration (Save Target)
+        </h3>
+        <div className="space-y-3">
+          <div className="space-y-1">
+             <label className="block text-xs font-medium text-gray-600">Personal Access Token (Repo Scope)</label>
+             <div className="relative">
+                <input
+                  type={showGithubToken ? "text" : "password"}
+                  name="token"
+                  value={settings.github?.token || ''}
+                  onChange={handleGithubChange}
+                  className="w-full p-2 border rounded pr-10 text-sm"
+                  placeholder="ghp_..."
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowGithubToken(!showGithubToken)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 p-1"
+                >
+                  {showGithubToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+               <label className="block text-xs font-medium text-gray-600">Owner (User/Org)</label>
+               <input
+                 type="text"
+                 name="owner"
+                 value={settings.github?.owner || ''}
+                 onChange={handleGithubChange}
+                 className="w-full p-2 border rounded text-sm"
+                 placeholder="e.g. facebook"
+               />
+            </div>
+            <div className="space-y-1">
+               <label className="block text-xs font-medium text-gray-600">Repo Name</label>
+               <input
+                 type="text"
+                 name="repo"
+                 value={settings.github?.repo || ''}
+                 onChange={handleGithubChange}
+                 className="w-full p-2 border rounded text-sm"
+                 placeholder="e.g. react"
+               />
+            </div>
+          </div>
+          <div className="flex gap-2 items-end">
+            <div className="space-y-1 flex-1">
+               <label className="block text-xs font-medium text-gray-600">Branch (Default: main)</label>
+               <input
+                 type="text"
+                 name="branch"
+                 value={settings.github?.branch || 'main'}
+                 onChange={handleGithubChange}
+                 className="w-full p-2 border rounded text-sm"
+                 placeholder="main"
+               />
+            </div>
+            <button
+              onClick={handleVerifyGithub}
+              disabled={verifying}
+              className={`h-[38px] px-3 rounded flex items-center gap-2 text-sm font-medium border transition ${
+                verifyStatus === 'success' 
+                  ? 'bg-green-50 border-green-200 text-green-700' 
+                  : verifyStatus === 'error'
+                  ? 'bg-red-50 border-red-200 text-red-700'
+                  : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
+              }`}
+              title="Verify Connection"
+            >
+              {verifying ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : verifyStatus === 'success' ? (
+                <CheckCircle className="w-4 h-4" />
+              ) : verifyStatus === 'error' ? (
+                <XCircle className="w-4 h-4" />
+              ) : (
+                <CheckCircle className="w-4 h-4" />
+              )}
+              {verifying ? '...' : 'Verify'}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="space-y-2">

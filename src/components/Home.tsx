@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, RefreshCw, Square } from 'lucide-react';
-import { getHistory, deleteHistoryItem, HistoryItem, clearHistory } from '../utils/storage';
+import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, RefreshCw, Square, Github, Folder, UploadCloud, Check } from 'lucide-react';
+import { getHistory, deleteHistoryItem, HistoryItem, clearHistory, getSettings } from '../utils/storage';
+import { getDirectories, pushToGitHub } from '../utils/github';
 import { ExtractionResult } from '../utils/types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -86,6 +87,18 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
   const [logMessage, setLogMessage] = useState('');
 
   const [errorMessage, setErrorMessage] = useState<React.ReactNode | null>(null);
+
+  // GitHub Save State
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [saveConfig, setSaveConfig] = useState({
+    fileName: '',
+    directory: '/',
+    message: ''
+  });
+  const [repoDirs, setRepoDirs] = useState<string[]>([]);
+  const [isLoadingDirs, setIsLoadingDirs] = useState(false);
+  const [isPushing, setIsPushing] = useState(false);
+  const [pushResultUrl, setPushResultUrl] = useState<string | null>(null);
 
   useEffect(() => {
     // Check for ongoing background task when popup opens
@@ -295,6 +308,80 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
       setErrorMessage(error.message);
       setStatus('Refine Error');
       setIsRefining(false);
+    }
+  };
+
+  const handleOpenSaveModal = async () => {
+    const settings = await getSettings();
+    if (!settings.github?.token || !settings.github?.repo) {
+      if (confirm('GitHub Integration is not configured. Go to settings?')) {
+        onOpenSettings();
+      }
+      return;
+    }
+
+    // Pre-fill
+    let safeTitle = (currentTitle || 'Untitled').replace(/[\\/:*?"<>|]/g, '-').trim();
+    if (!safeTitle.endsWith('.md')) safeTitle += '.md';
+    
+    // Load last used directory
+    let defaultDir = '/';
+    try {
+      const storage = await chrome.storage.local.get(['lastGithubDir']);
+      if (storage.lastGithubDir) {
+        defaultDir = storage.lastGithubDir;
+      }
+    } catch (e) {
+      console.error('Failed to load last dir', e);
+    }
+
+    setSaveConfig({
+      fileName: safeTitle,
+      directory: defaultDir, 
+      message: `Add ${safeTitle}`
+    });
+    setPushResultUrl(null);
+    setIsSaveModalOpen(true);
+    
+    // Fetch directories
+    setIsLoadingDirs(true);
+    try {
+      const dirs = await getDirectories(settings.github);
+      setRepoDirs(dirs);
+    } catch (e) {
+      console.error(e);
+      setRepoDirs(['/']); // Fallback
+    } finally {
+      setIsLoadingDirs(false);
+    }
+  };
+
+  const handlePush = async () => {
+    setIsPushing(true);
+    try {
+      const settings = await getSettings();
+      if (!settings.github) throw new Error('No settings');
+      
+      const dir = saveConfig.directory === '/' ? '' : saveConfig.directory;
+      // Ensure no double slashes
+      const fullPath = dir ? `${dir}/${saveConfig.fileName}` : saveConfig.fileName;
+      
+      const pushResponse = await pushToGitHub(
+        settings.github,
+        fullPath,
+        result || '',
+        saveConfig.message
+      );
+      
+      // Save last used directory
+      chrome.storage.local.set({ lastGithubDir: saveConfig.directory });
+
+      setPushResultUrl(pushResponse.url);
+      setStatus('Pushed to GitHub!');
+    } catch (e: any) {
+      alert(`Push Failed: ${e.message}`);
+    } finally {
+      setIsPushing(false);
     }
   };
 
@@ -556,25 +643,26 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                <button
                 onClick={handleCopy}
                 className="flex-1 bg-blue-600 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-blue-700 transition"
+                title="Copy"
               >
                 <Copy className="w-4 h-4" />
-                Copy
+                <span className="text-xs">Copy</span>
               </button>
                <button
                 onClick={handleDownload}
                 className="flex-1 bg-green-600 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-green-700 transition"
+                title="Download MD"
               >
                 <Download className="w-4 h-4" />
-                MD
+                <span className="text-xs">MD</span>
               </button>
               <button
-                onClick={() => {
-                  setView('home');
-                  loadHistory();
-                }}
-                className="px-4 py-2 border rounded hover:bg-gray-50 transition"
+                onClick={handleOpenSaveModal}
+                className="flex-1 bg-gray-800 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-gray-900 transition"
+                title="Save to GitHub"
               >
-                Back
+                <UploadCloud className="w-4 h-4" />
+                <span className="text-xs">Save</span>
               </button>
             </div>
             
@@ -652,6 +740,102 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
       <div className="mt-auto pt-4 border-t text-center text-xs text-gray-400 shrink-0">
         Status: {status}
       </div>
+
+      {/* Save Modal */}
+      {isSaveModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-sm flex flex-col max-h-[90vh]">
+            <div className="flex justify-between items-center p-3 border-b">
+              <h3 className="font-semibold flex items-center gap-2">
+                <Github className="w-4 h-4" /> Save to GitHub
+              </h3>
+              <button onClick={() => setIsSaveModalOpen(false)} className="text-gray-500 hover:text-black">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <div className="p-4 space-y-4 overflow-y-auto">
+              {pushResultUrl ? (
+                <div className="text-center py-4 space-y-3">
+                  <div className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto">
+                    <Check className="w-6 h-6" />
+                  </div>
+                  <p className="text-green-600 font-medium">Successfully Pushed!</p>
+                  <a 
+                    href={pushResultUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:underline text-sm break-all block"
+                  >
+                    View on GitHub
+                  </a>
+                  <button 
+                    onClick={() => setIsSaveModalOpen(false)}
+                    className="w-full bg-gray-100 text-gray-700 py-2 rounded hover:bg-gray-200"
+                  >
+                    Close
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-600">File Name</label>
+                    <input 
+                      type="text" 
+                      value={saveConfig.fileName}
+                      onChange={e => setSaveConfig({...saveConfig, fileName: e.target.value})}
+                      className="w-full p-2 border rounded text-sm"
+                    />
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-600">Directory</label>
+                    {isLoadingDirs ? (
+                      <div className="p-2 text-xs text-gray-500 flex items-center gap-2">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Loading directories...
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <select
+                          value={saveConfig.directory}
+                          onChange={e => setSaveConfig({...saveConfig, directory: e.target.value})}
+                          className="w-full p-2 border rounded text-sm appearance-none"
+                        >
+                          <option value="/">/ (Root)</option>
+                          {repoDirs.map(d => (
+                            <option key={d} value={d}>{d}</option>
+                          ))}
+                        </select>
+                        <Folder className="w-4 h-4 text-gray-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-gray-600">Commit Message</label>
+                    <input 
+                      type="text" 
+                      value={saveConfig.message}
+                      onChange={e => setSaveConfig({...saveConfig, message: e.target.value})}
+                      className="w-full p-2 border rounded text-sm"
+                      placeholder="Commit message"
+                    />
+                  </div>
+                  
+                  <button
+                    onClick={handlePush}
+                    disabled={isPushing || !saveConfig.fileName}
+                    className="w-full bg-black text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-gray-800 disabled:opacity-50 transition"
+                  >
+                    {isPushing ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                    {isPushing ? 'Pushing...' : 'Push to GitHub'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

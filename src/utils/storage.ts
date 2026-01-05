@@ -1,3 +1,10 @@
+export interface GitHubSettings {
+  token: string;
+  owner: string;
+  repo: string;
+  branch: string;
+}
+
 export interface AppSettings {
   apiKey: string; // Current active key (legacy support/fallback)
   apiKeys: Record<string, string>; // Map of provider -> apiKey
@@ -5,6 +12,7 @@ export interface AppSettings {
   model: string;
   systemPrompt: string;
   provider: string;
+  github?: GitHubSettings;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -13,6 +21,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   baseUrl: 'https://api.apiyi.com/v1',
   model: 'gpt-4o',
   provider: 'apiyi',
+  github: {
+    token: '',
+    owner: '',
+    repo: '',
+    branch: 'main'
+  },
   systemPrompt: `# 技术对话自动总结 & 知识文档生成 Prompt（优化版）
 
 ## 一、你的角色定义（必须遵守）
