@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2563eb;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#000000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  
+  <!-- Background Shape -->
+  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#bg-gradient)" />
+  
+  <!-- Chat Bubble Tail -->
+  <path d="M120 380 L80 440 L180 400 Z" fill="url(#bg-gradient)" />
+
+  <!-- Inner Content: Document/Markdown Icon -->
+  <g transform="translate(136, 136) scale(0.9)">
+    <!-- Paper Sheet -->
+    <rect x="0" y="0" width="266" height="240" rx="24" fill="white" filter="url(#shadow)"/>
+    
+    <!-- Markdown 'M' Logo stylization -->
+    <path d="M60 80 L60 160 M60 80 L100 120 L140 80 M140 80 L140 160" stroke="#2563eb" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    
+    <!-- Down Arrow (Export) -->
+    <path d="M190 60 V140 M170 120 L190 140 L210 120" stroke="#0891b2" stroke-width="20" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    
+    <!-- Bottom Line -->
+    <rect x="60" y="190" width="150" height="16" rx="8" fill="#cbd5e1"/>
+  </g>
+</svg>
