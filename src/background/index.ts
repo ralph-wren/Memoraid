@@ -1,6 +1,8 @@
 import OpenAI from 'openai';
+import { marked } from 'marked';
 import { getSettings, addHistoryItem } from '../utils/storage';
 import { ExtractionResult, ActiveTask, ChatMessage } from '../utils/types';
+import { ARTICLE_PROMPT_TEMPLATE } from '../utils/prompts';
 
 console.log('Background service worker started');
 
@@ -25,10 +27,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ success: true });
     return true; // async response
   }
+
+  if (message.type === 'START_ARTICLE_GENERATION') {
+    startArticleGeneration(message.payload);
+    sendResponse({ success: true });
+    return true; // async response
+  }
   
   if (message.type === 'START_REFINEMENT') {
     const { messages, title } = message.payload;
     startRefinement(messages, title);
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.type === 'PUBLISH_TO_TOUTIAO') {
+    handlePublishToToutiao(message.payload);
     sendResponse({ success: true });
     return true;
   }
@@ -498,4 +512,238 @@ function broadcastUpdate() {
   chrome.runtime.sendMessage({ type: 'STATUS_UPDATE', payload: currentTask }).catch(() => {
     // Popup might be closed, which is expected
   });
+}
+
+async function handlePublishToToutiao(payload: { title: string; content: string }) {
+  try {
+    const settings = await getSettings();
+    const cookieStr = settings.toutiao?.cookie;
+
+    if (cookieStr) {
+      // Parse and set cookies
+      // Cookies string format: key=value; key2=value2
+      const cookies = cookieStr.split(';').map(c => c.trim()).filter(c => c);
+      for (const cookie of cookies) {
+        const separatorIndex = cookie.indexOf('=');
+        if (separatorIndex === -1) continue;
+        
+        const name = cookie.substring(0, separatorIndex);
+        const value = cookie.substring(separatorIndex + 1);
+        
+        if (name && value) {
+          try {
+            await chrome.cookies.set({
+              url: 'https://mp.toutiao.com',
+              domain: '.toutiao.com',
+              name,
+              value,
+              path: '/',
+              secure: true,
+              sameSite: 'no_restriction'
+            });
+          } catch (e) {
+            console.error(`Failed to set cookie ${name}`, e);
+          }
+        }
+      }
+    }
+
+    // Convert Markdown to HTML for Toutiao's rich text editor
+    const htmlContent = await marked.parse(payload.content);
+
+    // Save payload to storage for content script to pick up
+    await chrome.storage.local.set({
+      pending_toutiao_publish: {
+        title: payload.title,
+        content: payload.content, // Keep original markdown just in case
+        htmlContent: htmlContent, // Add converted HTML
+        timestamp: Date.now()
+      }
+    });
+
+    const tab = await chrome.tabs.create({
+      url: 'https://mp.toutiao.com/profile_v4/graphic/publish',
+      active: true
+    });
+
+    if (!tab.id) throw new Error('Failed to create tab');
+
+    // The content script (src/content/toutiao.ts) will handle the rest
+    console.log('Opened Toutiao publish page, waiting for content script to fill...');
+
+  } catch (error) {
+    console.error('Publish failed', error);
+  }
+}
+
+async function startArticleGeneration(extraction: ExtractionResult) {
+  try {
+    abortController = new AbortController();
+    
+    // Explicitly reset task for new generation
+    currentTask = { 
+      status: 'Processing...', 
+      message: 'Initializing Article Generation...', 
+      progress: 5,
+      title: extraction.title 
+    };
+    chrome.storage.local.set({ currentTask });
+    broadcastUpdate();
+
+    const settings = await getSettings();
+    
+    let effectiveApiKey = settings.apiKeys?.[settings.provider] || settings.apiKey;
+    
+    if (!effectiveApiKey) {
+      throw new Error(`API Key for ${settings.provider} is missing. Please check settings.`);
+    }
+
+    const openai = new OpenAI({
+      apiKey: effectiveApiKey,
+      baseURL: settings.baseUrl,
+    });
+
+    updateTaskState({ status: 'Processing...', message: 'Sending request to AI...', progress: 30 });
+
+    const formattedContent = Array.isArray(extraction.messages) 
+      ? extraction.messages.map((m: any) => `### ${m.role ? m.role.toUpperCase() : 'CONTENT'}:\n${m.content}`).join('\n\n')
+      : String(extraction.messages);
+
+    const initialMessages = [
+      { role: 'system', content: ARTICLE_PROMPT_TEMPLATE },
+      { 
+        role: 'user', 
+        content: `Please generate a social media article based on the following content from ${extraction.url}.\n\nTitle: ${extraction.title}\n\nContent:\n${formattedContent}` 
+      }
+    ];
+
+    const timeoutId = setTimeout(() => {
+        if (abortController) {
+            abortController.abort();
+        }
+    }, 180000); 
+
+    const stream = await openai.chat.completions.create({
+      model: settings.model,
+      messages: initialMessages as any,
+      stream: true,
+    }, { signal: abortController.signal });
+
+    const baseMessage = 'Generating article...';
+    updateTaskState({ status: 'Processing...', message: baseMessage, progress: 50 });
+    startTimer(baseMessage);
+
+    let summary = '';
+    let lastUpdate = Date.now();
+    let hasReceivedContent = false;
+
+    try {
+        for await (const chunk of stream) {
+            if (!hasReceivedContent) {
+                hasReceivedContent = true;
+            }
+
+            const content = chunk.choices[0]?.delta?.content || '';
+            summary += content;
+            
+            const now = Date.now();
+            if (now - lastUpdate > 500) {
+                lastUpdate = now;
+                currentTask = {
+                    ...currentTask,
+                    status: 'Processing...',
+                    message: `${baseMessage} (${Math.floor(summary.length / 100)}k chars)`,
+                    result: summary,
+                    progress: 50 + Math.min(40, Math.floor(summary.length / 100))
+                } as ActiveTask;
+                broadcastUpdate();
+            }
+        }
+    } finally {
+        clearTimeout(timeoutId);
+    }
+    
+    stopTimer();
+
+    updateTaskState({ status: 'Processing...', message: 'Finalizing...', progress: 95 });
+    
+    // Cleanup logic (similar to summarization)
+    const outerCodeBlockRegex = /^```(?:markdown)?\s*([\s\S]*?)\s*```$/i;
+    const outerMatch = summary.trim().match(outerCodeBlockRegex);
+    
+    if (outerMatch && outerMatch[1]) {
+        summary = outerMatch[1];
+    } else {
+        summary = summary.trim();
+    }
+
+    // Basic Title Check (Article prompt asks for H1)
+    if (!/^\s*#\s+/.test(summary)) {
+         const titleToInsert = extraction.title || 'Untitled';
+         summary = `# ${titleToInsert}\n\n` + summary;
+    }
+
+    // Cleanup trailing fences
+    summary = summary.trim();
+    if (summary.endsWith('```')) {
+        summary = summary.substring(0, summary.length - 3).trim();
+    }
+
+    const newItem = {
+      id: Date.now().toString(),
+      title: extraction.title || 'Untitled Article',
+      date: Date.now(),
+      content: summary,
+      url: extraction.url
+    };
+    
+    await addHistoryItem(newItem);
+
+    updateTaskState({ 
+      status: 'Done!', 
+      message: 'Article generated successfully!',
+      progress: 100, 
+      result: summary, 
+      conversationHistory: [
+        ...initialMessages as ChatMessage[],
+        { role: 'assistant', content: summary }
+      ]
+    });
+
+    chrome.action.setBadgeText({ text: '1' });
+    chrome.action.setBadgeBackgroundColor({ color: '#4CAF50' });
+
+    const iconUrl = chrome.runtime.getURL('public/icon-128.png');
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: iconUrl,
+      title: 'Article Generation Complete',
+      message: `Article generated for: ${extraction.title || 'Untitled'}`
+    });
+
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      console.log('Article generation cancelled');
+      return;
+    }
+
+    console.error('Article generation error:', error);
+    updateTaskState({ 
+      status: 'Error', 
+      message: error.message || 'An error occurred',
+      progress: 0, 
+      error: error.message 
+    });
+
+    const iconUrl = chrome.runtime.getURL('public/icon-128.png');
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: iconUrl,
+      title: 'Article Generation Failed',
+      message: error.message || 'Unknown error occurred'
+    });
+  } finally {
+    stopTimer();
+    abortController = null;
+  }
 }

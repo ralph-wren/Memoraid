@@ -18,11 +18,16 @@ export default defineManifest({
     '48': 'icon-48.png',
     '128': 'icon-128.png',
   },
-  permissions: ['storage', 'activeTab', 'notifications'],
+  permissions: ['storage', 'activeTab', 'notifications', 'cookies', 'scripting'],
+  host_permissions: ['<all_urls>'],
   content_scripts: [
     {
       matches: ['<all_urls>'],
       js: ['src/content/index.ts'],
+    },
+    {
+      matches: ['*://mp.toutiao.com/*'],
+      js: ['src/content/toutiao.ts'],
     },
   ],
   background: {

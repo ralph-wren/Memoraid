@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, RefreshCw, Square, Github, Folder, UploadCloud, Check } from 'lucide-react';
+import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, RefreshCw, Square, Github, Folder, UploadCloud, Check, PenTool, Newspaper } from 'lucide-react';
 import { getHistory, deleteHistoryItem, HistoryItem, clearHistory, getSettings } from '../utils/storage';
 import { getDirectories, pushToGitHub } from '../utils/github';
 import { ExtractionResult } from '../utils/types';
@@ -124,6 +124,39 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
+
+  const handlePublishToToutiao = async () => {
+    const settings = await getSettings();
+    if (!settings.toutiao?.cookie) {
+      if (confirm('Toutiao Cookie is missing. Go to settings?')) {
+        onOpenSettings();
+      }
+      return;
+    }
+    
+    setStatus('Publishing to Toutiao...');
+    try {
+      // Send to background
+      const response = await chrome.runtime.sendMessage({
+        type: 'PUBLISH_TO_TOUTIAO',
+        payload: {
+          title: currentTitle || 'Untitled',
+          content: result
+        }
+      });
+      
+      if (response && response.success) {
+        setStatus('Published successfully!');
+        alert('Published to Toutiao successfully!');
+      } else {
+        throw new Error(response?.error || 'Unknown error');
+      }
+    } catch (e: any) {
+      console.error(e);
+      setStatus('Publish Failed');
+      alert(`Publish Failed: ${e.message}`);
+    }
+  };
 
   const handleCancel = async () => {
     try {
@@ -262,6 +295,75 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                    if (tab?.id) {
                      chrome.tabs.reload(tab.id);
                      window.close(); // Close popup to force user to reopen after refresh
+                   }
+                 }}
+                 className="text-xs bg-red-100 hover:bg-red-200 text-red-800 py-1 px-2 rounded font-medium transition w-fit"
+               >
+                 Refresh Page
+               </button>
+            </div> as any
+          );
+      } else {
+          setErrorMessage(errorMsg);
+      }
+      
+      setStatus('Error');
+      setLoading(false);
+    }
+  };
+
+  const handleGenerateArticle = async () => {
+    setLoading(true);
+    setProgress(5);
+    setStatus('Extracting content for article...');
+    setLogMessage('Extracting content from page...');
+    setResult(null);
+    setErrorMessage(null);
+    setConversationHistory([]); 
+    setUserClosedResult(false);
+
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab.id) throw new Error('No active tab');
+
+      const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_CONTENT' });
+      
+      if (!response) {
+        throw new Error('No response from content script. Refresh the page?');
+      }
+      
+      if (response.type === 'ERROR') {
+        throw new Error(response.payload);
+      }
+
+      setLogMessage('Content extracted! Starting article generation...');
+
+      const extraction: ExtractionResult = response.payload;
+      console.log('Extracted for article:', extraction);
+      
+      if (extraction.title) {
+        setCurrentTitle(extraction.title);
+      }
+
+      chrome.runtime.sendMessage({ 
+        type: 'START_ARTICLE_GENERATION', 
+        payload: extraction 
+      });
+
+    } catch (error: any) {
+      console.error(error);
+      let errorMsg = error.message;
+      
+      if (errorMsg.includes('Could not establish connection') || errorMsg.includes('Receiving end does not exist')) {
+          setErrorMessage(
+            <div className="flex flex-col gap-2">
+               <span>Connection failed. The page might need a refresh.</span>
+               <button 
+                 onClick={async () => {
+                   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                   if (tab?.id) {
+                     chrome.tabs.reload(tab.id);
+                     window.close();
                    }
                  }}
                  className="text-xs bg-red-100 hover:bg-red-200 text-red-800 py-1 px-2 rounded font-medium transition w-fit"
@@ -461,13 +563,22 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
               </p>
               
               {!loading ? (
-                <button
-                  onClick={handleSummarize}
-                  className="bg-black text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-gray-800 transition mx-auto"
-                >
-                  <FileText className="w-5 h-5" />
-                  Summarize & Export
-                </button>
+                <div className="flex flex-col gap-3 w-full items-center">
+                  <button
+                    onClick={handleSummarize}
+                    className="bg-black text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-gray-800 transition w-64 justify-center"
+                  >
+                    <FileText className="w-5 h-5" />
+                    Summarize & Export
+                  </button>
+                  <button
+                    onClick={handleGenerateArticle}
+                    className="bg-purple-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 hover:bg-purple-700 transition w-64 justify-center"
+                  >
+                    <PenTool className="w-5 h-5" />
+                    Generate Article
+                  </button>
+                </div>
               ) : (
                 <div className="w-64 mx-auto space-y-3">
                    <div className="bg-gray-100 rounded-lg p-3 border flex flex-col gap-2">
@@ -669,6 +780,17 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
               >
                 <UploadCloud className="w-4 h-4" />
                 <span className="text-xs">Save</span>
+              </button>
+            </div>
+
+            <div className="flex gap-2 shrink-0 mt-2">
+               <button
+                onClick={handlePublishToToutiao}
+                className="flex-1 bg-red-600 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-red-700 transition"
+                title="Publish to Toutiao"
+              >
+                <Newspaper className="w-4 h-4" />
+                <span className="text-xs">Publish to Toutiao</span>
               </button>
             </div>
             

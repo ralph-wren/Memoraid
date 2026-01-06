@@ -16,6 +16,9 @@ export interface AppSettings {
   systemPrompt: string;
   provider: string;
   github?: GitHubSettings;
+  toutiao?: {
+    cookie: string;
+  };
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -30,6 +33,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     owner: '',
     repo: '',
     branch: 'main'
+  },
+  toutiao: {
+    cookie: ''
   },
   systemPrompt: SYSTEM_PROMPTS['zh-CN']
 };

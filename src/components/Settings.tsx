@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AppSettings, DEFAULT_SETTINGS, getSettings, saveSettings } from '../utils/storage';
 import { SYSTEM_PROMPTS } from '../utils/prompts';
 import { getTranslation } from '../utils/i18n';
-import { Eye, EyeOff, Github, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Eye, EyeOff, Github, Loader2, CheckCircle, XCircle, Newspaper, RefreshCw } from 'lucide-react';
 import { validateGitHubConnection } from '../utils/github';
 
 const LANGUAGES = [
@@ -98,8 +98,12 @@ const Settings: React.FC = () => {
   const [selectedProvider, setSelectedProvider] = useState<string>('apiyi');
   const [showApiKey, setShowApiKey] = useState(false);
   const [showGithubToken, setShowGithubToken] = useState(false);
+  const [showToutiaoCookie, setShowToutiaoCookie] = useState(false);
+  const [fetchingToutiao, setFetchingToutiao] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [verifyingApi, setVerifyingApi] = useState(false);
   const [verifyStatus, setVerifyStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [apiVerifyStatus, setApiVerifyStatus] = useState<'idle' | 'success' | 'error'>('idle');
   
   const t = getTranslation(settings.language || 'zh-CN');
 
@@ -197,6 +201,92 @@ const Settings: React.FC = () => {
     }));
   };
 
+  const handleToutiaoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setSettings(prev => ({
+      ...prev,
+      toutiao: {
+        ...prev.toutiao || { cookie: '' },
+        [name]: value
+      }
+    }));
+  };
+
+  const handleAutoFetchToutiaoCookie = async () => {
+    if (typeof chrome === 'undefined' || !chrome.cookies) {
+      alert('This feature requires the Chrome Extension environment.');
+      return;
+    }
+
+    setFetchingToutiao(true);
+    try {
+      const cookies = await chrome.cookies.getAll({ domain: 'toutiao.com' });
+      const relevantCookies = cookies.filter(c => c.domain.includes('toutiao.com'));
+      
+      if (relevantCookies.length > 0) {
+        const cookieStr = relevantCookies.map(c => `${c.name}=${c.value}`).join('; ');
+        setSettings(prev => ({
+            ...prev,
+            toutiao: {
+                ...prev.toutiao,
+                cookie: cookieStr
+            }
+        }));
+      } else {
+        const confirmLogin = confirm('No Toutiao login cookies found. Would you like to open the Toutiao login page?');
+        if (confirmLogin) {
+            chrome.tabs.create({ url: 'https://mp.toutiao.com/' });
+        }
+      }
+    } catch (error) {
+       console.error("Failed to fetch cookies:", error);
+       alert('Failed to fetch cookies. Please try manually.');
+    } finally {
+      setFetchingToutiao(false);
+    }
+  };
+
+  const handleVerifyApi = async () => {
+    if (!settings.apiKey) {
+        alert(t.apiKeyPlaceholder);
+        return;
+    }
+    
+    setVerifyingApi(true);
+    setApiVerifyStatus('idle');
+    
+    try {
+        let url = settings.baseUrl;
+        if (!url.endsWith('/')) url += '/';
+        const endpoint = `${url}chat/completions`;
+        
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${settings.apiKey}`
+            },
+            body: JSON.stringify({
+                model: settings.model,
+                messages: [{ role: 'user', content: 'Hi' }],
+                max_tokens: 1
+            })
+        });
+
+        if (response.ok) {
+            setApiVerifyStatus('success');
+        } else {
+            console.error('Verification failed', await response.text());
+            setApiVerifyStatus('error');
+        }
+    } catch (e) {
+        console.error(e);
+        setApiVerifyStatus('error');
+    } finally {
+        setVerifyingApi(false);
+    }
+  };
+
   const handleVerifyGithub = async () => {
     if (!settings.github?.token || !settings.github?.owner || !settings.github?.repo) {
       alert(t.fillGithubAlert);
@@ -227,6 +317,49 @@ const Settings: React.FC = () => {
   return (
     <div className="p-4 space-y-4">
       <h2 className="text-xl font-bold mb-4">{t.settingsTitle}</h2>
+
+      <div className="border-t pt-4">
+        <h3 className="text-md font-semibold mb-2 flex items-center gap-2">
+          <Newspaper className="w-4 h-4" />
+          Toutiao Configuration
+        </h3>
+        <div className="space-y-3">
+          <div className="space-y-1">
+             <div className="flex justify-between items-center">
+               <label className="block text-xs font-medium text-gray-600">Cookie (Required for Publishing)</label>
+               <button
+                 type="button"
+                 onClick={handleAutoFetchToutiaoCookie}
+                 disabled={fetchingToutiao}
+                 className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-xs"
+               >
+                 {fetchingToutiao ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                 Auto Fetch
+               </button>
+             </div>
+             <div className="relative">
+                <input
+                  type={showToutiaoCookie ? "text" : "password"}
+                  name="cookie"
+                  value={settings.toutiao?.cookie || ''}
+                  onChange={handleToutiaoChange}
+                  className="w-full p-2 border rounded pr-10 text-sm"
+                  placeholder="Paste your Toutiao cookie here..."
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowToutiaoCookie(!showToutiaoCookie)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 p-1"
+                >
+                  {showToutiaoCookie ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+             </div>
+             <p className="text-[10px] text-gray-400">
+               Login to mp.toutiao.com, open DevTools, copy 'cookie' from any network request header.
+             </p>
+          </div>
+        </div>
+      </div>
 
       <div className="space-y-2">
         <label className="block text-sm font-medium">{t.languageLabel}</label>
@@ -264,16 +397,40 @@ const Settings: React.FC = () => {
       <div className="space-y-2">
         <div className="flex justify-between items-center">
           <label className="block text-sm font-medium">{t.apiKeyLabel}</label>
-          {getProviderLink(selectedProvider) && (
-            <a 
-              href={getProviderLink(selectedProvider)!} 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleVerifyApi}
+              disabled={verifyingApi}
+              className={`flex items-center gap-1 text-xs transition ${
+                apiVerifyStatus === 'success' 
+                  ? 'text-green-600' 
+                  : apiVerifyStatus === 'error'
+                  ? 'text-red-600'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
             >
-              {t.getKey} ↗
-            </a>
-          )}
+              {verifyingApi ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : apiVerifyStatus === 'success' ? (
+                <CheckCircle className="w-3 h-3" />
+              ) : apiVerifyStatus === 'error' ? (
+                <XCircle className="w-3 h-3" />
+              ) : (
+                <CheckCircle className="w-3 h-3" />
+              )}
+              {verifyingApi ? t.verifying : t.verifyButton}
+            </button>
+            {getProviderLink(selectedProvider) && (
+              <a 
+                href={getProviderLink(selectedProvider)!} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+              >
+                {t.getKey} ↗
+              </a>
+            )}
+          </div>
         </div>
         <div className="relative">
           <input
@@ -453,21 +610,14 @@ const Settings: React.FC = () => {
         />
       </div>
 
-      <div className="sticky bottom-0 bg-white pt-4 border-t mt-4 pb-2">
+      <div className="pt-2">
         <button
           onClick={handleSave}
-          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition font-medium"
+          className="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue700 transition"
         >
-          {status === t.savedMessage ? t.savedButton : t.saveButton}
+          {status || t.saveButton}
         </button>
       </div>
-
-      
-      {status && (
-        <div className="fixed top-4 right-4 bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded shadow-lg animate-in fade-in slide-in-from-top-2 z-50">
-          {status}
-        </div>
-      )}
     </div>
   );
 };
