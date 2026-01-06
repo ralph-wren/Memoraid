@@ -1,7 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { AppSettings, DEFAULT_SETTINGS, getSettings, saveSettings } from '../utils/storage';
+import { SYSTEM_PROMPTS } from '../utils/prompts';
+import { getTranslation } from '../utils/i18n';
 import { Eye, EyeOff, Github, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { validateGitHubConnection } from '../utils/github';
+
+const LANGUAGES = [
+  { code: 'zh-CN', name: '简体中文' },
+  { code: 'en', name: 'English' },
+  { code: 'ja', name: '日本語' },
+  { code: 'ko', name: '한국어' },
+  { code: 'de', name: 'Deutsch' },
+  { code: 'fr', name: 'Français' },
+  { code: 'es', name: 'Español' }
+];
 
 interface ProviderConfig {
   name: string;
@@ -80,8 +92,6 @@ const getProviderLink = (provider: string): string | null => {
   }
 };
 
-// ... (existing code)
-
 const Settings: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [status, setStatus] = useState<string>('');
@@ -90,6 +100,8 @@ const Settings: React.FC = () => {
   const [showGithubToken, setShowGithubToken] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifyStatus, setVerifyStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  
+  const t = getTranslation(settings.language || 'zh-CN');
 
   useEffect(() => {
     getSettings().then((saved) => {
@@ -144,6 +156,19 @@ const Settings: React.FC = () => {
     });
   };
 
+  const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const lang = e.target.value;
+    setSettings(prev => {
+      const isDefaultPrompt = !prev.systemPrompt || Object.values(SYSTEM_PROMPTS).includes(prev.systemPrompt);
+      return {
+        ...prev,
+        language: lang,
+        // If the current prompt is one of the defaults, switch it to the new language default
+        systemPrompt: isDefaultPrompt ? (SYSTEM_PROMPTS[lang] || prev.systemPrompt) : prev.systemPrompt
+      };
+    });
+  };
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
@@ -174,7 +199,7 @@ const Settings: React.FC = () => {
 
   const handleVerifyGithub = async () => {
     if (!settings.github?.token || !settings.github?.owner || !settings.github?.repo) {
-      alert('Please fill in Token, Owner, and Repo Name');
+      alert(t.fillGithubAlert);
       return;
     }
     
@@ -193,7 +218,7 @@ const Settings: React.FC = () => {
 
   const handleSave = async () => {
     await saveSettings(settings);
-    setStatus('Saved!');
+    setStatus(t.savedMessage);
     setTimeout(() => setStatus(''), 2000);
   };
 
@@ -201,10 +226,28 @@ const Settings: React.FC = () => {
 
   return (
     <div className="p-4 space-y-4">
-      <h2 className="text-xl font-bold mb-4">Settings</h2>
+      <h2 className="text-xl font-bold mb-4">{t.settingsTitle}</h2>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium">Provider</label>
+        <label className="block text-sm font-medium">{t.languageLabel}</label>
+        <select
+          value={settings.language || 'zh-CN'}
+          onChange={handleLanguageChange}
+          className="w-full p-2 border rounded"
+        >
+          {LANGUAGES.map(lang => (
+            <option key={lang.code} value={lang.code}>
+              {lang.name}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-gray-500">
+          {t.languageHint}
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <label className="block text-sm font-medium">{t.providerLabel}</label>
         <select
           value={selectedProvider}
           onChange={handleProviderChange}
@@ -220,7 +263,7 @@ const Settings: React.FC = () => {
       
       <div className="space-y-2">
         <div className="flex justify-between items-center">
-          <label className="block text-sm font-medium">API Key</label>
+          <label className="block text-sm font-medium">{t.apiKeyLabel}</label>
           {getProviderLink(selectedProvider) && (
             <a 
               href={getProviderLink(selectedProvider)!} 
@@ -228,7 +271,7 @@ const Settings: React.FC = () => {
               rel="noopener noreferrer"
               className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
             >
-              Get Key ↗
+              {t.getKey} ↗
             </a>
           )}
         </div>
@@ -239,7 +282,7 @@ const Settings: React.FC = () => {
             value={settings.apiKey}
             onChange={handleChange}
             className="w-full p-2 border rounded pr-10"
-            placeholder={`Enter your ${PROVIDERS[selectedProvider]?.name} API Key`}
+            placeholder={t.apiKeyPlaceholder}
           />
           <button
             type="button"
@@ -252,7 +295,7 @@ const Settings: React.FC = () => {
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium">Base URL</label>
+        <label className="block text-sm font-medium">{t.baseUrlLabel}</label>
         <input
           type="text"
           name="baseUrl"
@@ -264,36 +307,36 @@ const Settings: React.FC = () => {
       </div>
 
       <div className="space-y-2">
-        <label className="block text-sm font-medium">Model</label>
+        <label className="block text-sm font-medium">{t.modelLabel}</label>
         <div className="flex flex-col gap-2">
           {selectedProvider !== 'custom' && currentModels.length > 0 && (
-             <select 
-               name="model" 
-               value={settings.model} 
-               onChange={handleChange}
-               className="p-2 border rounded w-full"
-             >
-               {currentModels.map(m => (
-                 <option key={m} value={m}>{m}</option>
-               ))}
-               <option value="custom">Manual Input...</option>
-             </select>
+            <select 
+              name="model" 
+              value={settings.model} 
+              onChange={handleChange}
+              className="p-2 border rounded w-full"
+            >
+              {currentModels.map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+              <option value="custom">{t.manualInput}</option>
+            </select>
           )}
           
           {(selectedProvider === 'custom' || !currentModels.includes(settings.model)) && (
-             <input
-               type="text"
-               name="model"
-               value={settings.model}
-               onChange={handleChange}
-               className="w-full p-2 border rounded"
-               placeholder="e.g. yi-34b-chat-0205"
-             />
+            <input
+              type="text"
+              name="model"
+              value={settings.model}
+              onChange={handleChange}
+              className="w-full p-2 border rounded"
+              placeholder="e.g. yi-34b-chat-0205"
+            />
           )}
         </div>
         {selectedProvider === 'doubao' && (
            <p className="text-xs text-orange-600">
-             Note: For Doubao, you usually need to use the Endpoint ID (e.g. ep-202406...) as the model name.
+             {t.doubaoHint}
            </p>
         )}
       </div>
@@ -301,11 +344,11 @@ const Settings: React.FC = () => {
       <div className="border-t pt-4">
         <h3 className="text-md font-semibold mb-2 flex items-center gap-2">
           <Github className="w-4 h-4" />
-          GitHub Integration (Save Target)
+          {t.githubTitle}
         </h3>
         <div className="space-y-3">
           <div className="space-y-1">
-             <label className="block text-xs font-medium text-gray-600">Personal Access Token (Repo Scope)</label>
+             <label className="block text-xs font-medium text-gray-600">{t.tokenLabel}</label>
              <div className="relative">
                 <input
                   type={showGithubToken ? "text" : "password"}
@@ -326,7 +369,7 @@ const Settings: React.FC = () => {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-               <label className="block text-xs font-medium text-gray-600">Owner (User/Org)</label>
+               <label className="block text-xs font-medium text-gray-600">{t.ownerLabel}</label>
                <input
                  type="text"
                  name="owner"
@@ -337,7 +380,7 @@ const Settings: React.FC = () => {
                />
             </div>
             <div className="space-y-1">
-               <label className="block text-xs font-medium text-gray-600">Repo Name</label>
+               <label className="block text-xs font-medium text-gray-600">{t.repoLabel}</label>
                <input
                  type="text"
                  name="repo"
@@ -350,7 +393,7 @@ const Settings: React.FC = () => {
           </div>
           <div className="flex gap-2 items-end">
             <div className="space-y-1 flex-1">
-               <label className="block text-xs font-medium text-gray-600">Branch (Default: main)</label>
+               <label className="block text-xs font-medium text-gray-600">{t.branchLabel}</label>
                <input
                  type="text"
                  name="branch"
@@ -370,7 +413,7 @@ const Settings: React.FC = () => {
                   ? 'bg-red-50 border-red-200 text-red-700'
                   : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
               }`}
-              title="Verify Connection"
+              title={t.verifyTitle}
             >
               {verifying ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -381,7 +424,7 @@ const Settings: React.FC = () => {
               ) : (
                 <CheckCircle className="w-4 h-4" />
               )}
-              {verifying ? '...' : 'Verify'}
+              {verifying ? t.verifying : t.verifyButton}
             </button>
           </div>
         </div>
@@ -389,13 +432,16 @@ const Settings: React.FC = () => {
 
       <div className="space-y-2">
         <div className="flex justify-between items-center">
-            <label className="block text-sm font-medium">System Prompt (Rules)</label>
+            <label className="block text-sm font-medium">{t.systemPromptLabel}</label>
             <button
                 type="button"
-                onClick={() => setSettings(prev => ({ ...prev, systemPrompt: DEFAULT_SETTINGS.systemPrompt }))}
+                onClick={() => setSettings(prev => ({ 
+                  ...prev, 
+                  systemPrompt: SYSTEM_PROMPTS[prev.language || 'zh-CN'] || DEFAULT_SETTINGS.systemPrompt 
+                }))}
                 className="text-xs text-blue-600 hover:text-blue-800 underline"
             >
-                Reset to Default
+                {t.resetButton}
             </button>
         </div>
         <textarea
@@ -403,7 +449,7 @@ const Settings: React.FC = () => {
           value={settings.systemPrompt}
           onChange={handleChange}
           className="w-full p-2 border rounded h-32"
-          placeholder="Enter summarization rules..."
+          placeholder={t.promptPlaceholder}
         />
       </div>
 
@@ -412,9 +458,10 @@ const Settings: React.FC = () => {
           onClick={handleSave}
           className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition font-medium"
         >
-          {status === 'Saved!' ? 'Saved Successfully!' : 'Save Settings'}
+          {status === t.savedMessage ? t.savedButton : t.saveButton}
         </button>
       </div>
+
       
       {status && (
         <div className="fixed top-4 right-4 bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded shadow-lg animate-in fade-in slide-in-from-top-2 z-50">
