@@ -67,6 +67,10 @@ You need to transform the input content into a complete, professional, publishab
   \`\`\`
 - ⚠️ After generation, **you must check if the TOC anchors match the body text exactly**.
 
+### 4️⃣ Footer Information (Mandatory)
+- **CRITICAL RULE**: At the very end of the document, you MUST add the source URL.
+- Format: \`> Source URL: [The URL from input]\`
+
 ## V. Content Organization Principles (Core)
 ### 1️⃣ Overall Structure
 - **Shallow to Deep**: From "What is it" → "Why" → "How to implement" → "How to use well".
@@ -220,6 +224,10 @@ export const SYSTEM_PROMPTS: Record<string, string> = {
   </details>
   \`\`\`
 - ⚠️ 生成完成后 **必须检查目录锚点是否和正文完全一致**。
+
+### 4️⃣ 结尾信息（强制要求）
+- **CRITICAL RULE**: 文档末尾必须附上来源 URL。
+- 格式：\`> 原文链接：[输入中的 URL]\`
 
 ## 五、内容组织原则（核心）
 ### 1️⃣ 整体结构

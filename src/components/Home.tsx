@@ -399,7 +399,13 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'summary.md';
+    
+    // Sanitize title for filename
+    let safeTitle = (currentTitle || 'summary').replace(/[\\/:*?"<>|]/g, '-').trim();
+    if (!safeTitle) safeTitle = 'summary';
+    if (!safeTitle.toLowerCase().endsWith('.md')) safeTitle += '.md';
+    
+    a.download = safeTitle;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
