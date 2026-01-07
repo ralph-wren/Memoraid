@@ -1,0 +1,10 @@
+name = "memoraid-backend"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "memoraid-db"
+database_id = "71207763-85f4-4ebf-92b7-e2da33dd1f21"
+
+

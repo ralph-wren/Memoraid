@@ -19,6 +19,14 @@ export interface AppSettings {
   toutiao?: {
     cookie: string;
   };
+  sync?: {
+    enabled: boolean;
+    backendUrl: string; // e.g. https://my-worker.workers.dev
+    token?: string; // Session token
+    encryptionKey?: string; // User's passphrase (not stored in cloud)
+    lastSynced?: number;
+    email?: string;
+  };
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -37,7 +45,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   toutiao: {
     cookie: ''
   },
-  systemPrompt: SYSTEM_PROMPTS['zh-CN']
+  systemPrompt: SYSTEM_PROMPTS['zh-CN'],
+  sync: {
+    enabled: false,
+    backendUrl: 'https://memoraid-backend.iuyuger.workers.dev',
+  }
 };
 
 export const getSettings = async (): Promise<AppSettings> => {
@@ -99,3 +111,91 @@ export const deleteHistoryItem = async (id: string): Promise<void> => {
     });
   });
 };
+
+import { encryptData, decryptData, generateRandomString } from './crypto';
+
+export const syncSettings = async (settings: AppSettings): Promise<AppSettings> => {
+  if (!settings.sync?.enabled || !settings.sync.token || !settings.sync.backendUrl) {
+    throw new Error('Sync not configured');
+  }
+  
+  // Use provided encryption key or generate one if missing (though UI should enforce it)
+  const passphrase = settings.sync.encryptionKey || generateRandomString();
+  
+  // Prepare data to encrypt (exclude sync config itself to avoid loop/issues)
+  const dataToEncrypt = JSON.stringify({
+    ...settings,
+    sync: undefined // Don't sync the sync config itself
+  });
+  
+  const { encrypted, salt, iv } = await encryptData(dataToEncrypt, passphrase);
+  
+  const response = await fetch(`${settings.sync.backendUrl}/settings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${settings.sync.token}`
+    },
+    body: JSON.stringify({
+      encryptedData: encrypted,
+      salt,
+      iv
+    })
+  });
+  
+  if (!response.ok) {
+    throw new Error('Failed to upload settings');
+  }
+  
+  return {
+    ...settings,
+    sync: {
+      ...settings.sync,
+      lastSynced: Date.now(),
+      encryptionKey: passphrase // Ensure we save the key if we generated it
+    }
+  };
+};
+
+export const restoreSettings = async (currentSettings: AppSettings): Promise<AppSettings> => {
+  if (!currentSettings.sync?.enabled || !currentSettings.sync.token || !currentSettings.sync.backendUrl) {
+    throw new Error('Sync not configured');
+  }
+
+  const response = await fetch(`${currentSettings.sync.backendUrl}/settings`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${currentSettings.sync.token}`
+    }
+  });
+
+  if (!response.ok) {
+     if (response.status === 404) {
+       throw new Error('No remote settings found');
+     }
+     throw new Error('Failed to fetch settings');
+  }
+
+  const { encrypted_data, salt, iv } = await response.json();
+  
+  if (!currentSettings.sync.encryptionKey) {
+     throw new Error('Missing encryption key');
+  }
+
+  try {
+    const decryptedJson = await decryptData(encrypted_data, currentSettings.sync.encryptionKey, salt, iv);
+    const remoteSettings = JSON.parse(decryptedJson);
+    
+    // Merge remote settings with local sync config
+    return {
+      ...remoteSettings,
+      sync: {
+        ...currentSettings.sync,
+        lastSynced: Date.now()
+      }
+    };
+  } catch (e) {
+    throw new Error('Decryption failed. Wrong key?');
+  }
+};
+
