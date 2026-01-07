@@ -832,23 +832,93 @@ async function startArticleGeneration(extraction: ExtractionResult) {
 async function handleLogin(provider: 'google' | 'github') {
   const settings = await getSettings();
   const backendUrl = settings.sync?.backendUrl || DEFAULT_SETTINGS.sync!.backendUrl;
-  const redirectUri = chrome.identity.getRedirectURL('provider_cb');
-  const authUrl = `${backendUrl}/auth/login/${provider}?redirect_uri=${encodeURIComponent(redirectUri)}`;
+  const redirectUri = chrome.identity.getRedirectURL(); 
+
+  console.log('=== Login Debug Info ===');
+  console.log('Provider:', provider);
+  console.log('Backend URL:', backendUrl);
+  console.log('Redirect URI:', redirectUri);
+
+  // 首先从后端获取 OAuth 配置
+  let authConfig: { clientId: string; authUrl: string } | null = null;
+  
+  try {
+    console.log('Fetching OAuth config from backend...');
+    const configResponse = await fetch(`${backendUrl}/auth/config/${provider}`);
+    if (configResponse.ok) {
+      authConfig = await configResponse.json();
+      console.log('OAuth config received:', authConfig);
+    }
+  } catch (e) {
+    console.log('Failed to fetch OAuth config, will use backend redirect');
+  }
+
+  let authUrl: string;
+  
+  if (authConfig && authConfig.clientId) {
+    // 直接构建 OAuth URL，跳过后端重定向
+    if (provider === 'google') {
+      authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+        `client_id=${authConfig.clientId}` +
+        `&redirect_uri=${encodeURIComponent(backendUrl + '/auth/callback/google')}` +
+        `&response_type=code` +
+        `&scope=email%20profile` +
+        `&prompt=select_account` +
+        `&state=${encodeURIComponent(redirectUri)}`;
+    } else {
+      authUrl = `https://github.com/login/oauth/authorize?` +
+        `client_id=${authConfig.clientId}` +
+        `&redirect_uri=${encodeURIComponent(backendUrl + '/auth/callback/github')}` +
+        `&scope=user:email` +
+        `&state=${encodeURIComponent(redirectUri)}`;
+    }
+  } else {
+    // 回退到后端重定向方式
+    authUrl = `${backendUrl}/auth/login/${provider}?redirect_uri=${encodeURIComponent(redirectUri)}`;
+  }
+
+  console.log('Auth URL:', authUrl);
+  console.log('========================');
 
   return new Promise<void>((resolve, reject) => {
+    console.log('Launching WebAuthFlow...');
+    
     chrome.identity.launchWebAuthFlow({
       url: authUrl,
       interactive: true
     }, async (redirectUrl) => {
-      if (chrome.runtime.lastError || !redirectUrl) {
-        reject(new Error(chrome.runtime.lastError?.message || 'Login failed'));
+      console.log('WebAuthFlow callback received');
+      console.log('Redirect URL:', redirectUrl);
+      console.log('Last Error:', chrome.runtime.lastError);
+      
+      if (chrome.runtime.lastError) {
+        const errorMsg = chrome.runtime.lastError.message || 'Unknown error';
+        console.error('Auth Flow Error:', errorMsg);
+        reject(new Error(errorMsg));
         return;
+      }
+      
+      if (!redirectUrl) {
+         console.error('No redirect URL received');
+         reject(new Error('登录已取消或失败'));
+         return;
       }
 
       try {
+        console.log('Parsing redirect URL...');
         const url = new URL(redirectUrl);
         const token = url.searchParams.get('token');
         const email = url.searchParams.get('email');
+        const error = url.searchParams.get('error');
+
+        console.log('Token received:', !!token);
+        console.log('Email received:', email);
+        console.log('Error param:', error);
+
+        if (error) {
+          reject(new Error(`OAuth 错误: ${error}`));
+          return;
+        }
 
         if (token && email) {
           const currentSettings = await getSettings();
@@ -863,12 +933,14 @@ async function handleLogin(provider: 'google' | 'github') {
             }
           };
           await saveSettings(newSettings);
+          console.log('Login successful, settings saved');
           resolve();
         } else {
-          reject(new Error('No token received'));
+          reject(new Error('未收到认证令牌'));
         }
-      } catch (e) {
-        reject(e);
+      } catch (e: any) {
+        console.error('Error parsing redirect URL:', e);
+        reject(new Error('解析回调失败: ' + (e.message || String(e))));
       }
     });
   });

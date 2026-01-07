@@ -1,0 +1,26 @@
+# Development Environment Variables for Memoraid Backend
+# Copy this file to .dev.vars and fill in your actual values
+
+# Google OAuth Configuration
+# Get these from: https://console.cloud.google.com/apis/credentials
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+# GitHub OAuth Configuration
+# Get these from: https://github.com/settings/developers
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-client-secret
+
+# Instructions:
+# 1. For Google OAuth:
+#    - Go to https://console.cloud.google.com/apis/credentials
+#    - Create a new OAuth 2.0 Client ID (Web application)
+#    - Add authorized redirect URI: http://localhost:8787/auth/callback/google
+#    - Add authorized redirect URI: https://memoraid-backend.iuyuger.workers.dev/auth/callback/google
+#
+# 2. For GitHub OAuth:
+#    - Go to https://github.com/settings/developers
+#    - Create a new OAuth App
+#    - Set Homepage URL: https://memoraid-backend.iuyuger.workers.dev
+#    - Set Authorization callback URL: https://memoraid-backend.iuyuger.workers.dev/auth/callback/github
+#    - For local dev, also add: http://localhost:8787/auth/callback/github

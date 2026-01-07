@@ -32,7 +32,47 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // 0. Privacy Policy (Public)
+    // 0. Health Check & Config Test
+    if (url.pathname === '/health' && request.method === 'GET') {
+        const config = {
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            googleConfigured: !!env.GOOGLE_CLIENT_ID,
+            githubConfigured: !!env.GITHUB_CLIENT_ID,
+            dbConnected: !!env.DB
+        };
+        return new Response(JSON.stringify(config, null, 2), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+    }
+
+    // 0.1 OAuth Config - 返回 Client ID 供扩展直接构建 OAuth URL
+    if (url.pathname.startsWith('/auth/config/') && request.method === 'GET') {
+        const provider = url.pathname.split('/').pop();
+        let clientId = '';
+        
+        if (provider === 'google') {
+            clientId = env.GOOGLE_CLIENT_ID?.trim() || '';
+        } else if (provider === 'github') {
+            clientId = env.GITHUB_CLIENT_ID?.trim() || '';
+        }
+        
+        if (!clientId) {
+            return new Response(JSON.stringify({ error: 'Provider not configured' }), {
+                status: 404,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+        
+        return new Response(JSON.stringify({ 
+            clientId,
+            callbackUrl: url.origin + '/auth/callback/' + provider
+        }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+    }
+
+    // 0.2 Privacy Policy (Public)
     if (url.pathname === '/privacy' && request.method === 'GET') {
         const html = `
         <!DOCTYPE html>
@@ -107,16 +147,54 @@ export default {
        const provider = url.pathname.split('/').pop();
        const redirectUri = url.searchParams.get('redirect_uri');
 
-       if (!redirectUri) return new Response('Missing redirect_uri', { status: 400 });
+       console.log('Auth Init:', { provider, redirectUri, origin: url.origin });
 
-       if (provider === 'google') {
-           const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${env.GOOGLE_CLIENT_ID?.trim()}&redirect_uri=${encodeURIComponent(url.origin + '/auth/callback/google')}&response_type=code&scope=email%20profile&prompt=select_account&state=${encodeURIComponent(redirectUri)}`;
-           return Response.redirect(authUrl, 302);
-       } else if (provider === 'github') {
-           const authUrl = `https://github.com/login/oauth/authorize?client_id=${env.GITHUB_CLIENT_ID?.trim()}&redirect_uri=${encodeURIComponent(url.origin + '/auth/callback/github')}&scope=user:email&state=${encodeURIComponent(redirectUri)}`;
-           return Response.redirect(authUrl, 302);
+       if (!redirectUri) {
+           console.error('Missing redirect_uri');
+           return new Response('Missing redirect_uri', { status: 400 });
        }
-       return new Response('Invalid provider', { status: 400 });
+
+       let authUrl = '';
+       
+       if (provider === 'google') {
+           const clientId = env.GOOGLE_CLIENT_ID?.trim();
+           if (!clientId) {
+               console.error('GOOGLE_CLIENT_ID not configured');
+               return new Response('Google OAuth not configured. Please set GOOGLE_CLIENT_ID environment variable.', { status: 500 });
+           }
+           authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(url.origin + '/auth/callback/google')}&response_type=code&scope=email%20profile&prompt=select_account&state=${encodeURIComponent(redirectUri)}`;
+       } else if (provider === 'github') {
+           const clientId = env.GITHUB_CLIENT_ID?.trim();
+           if (!clientId) {
+               console.error('GITHUB_CLIENT_ID not configured');
+               return new Response('GitHub OAuth not configured. Please set GITHUB_CLIENT_ID environment variable.', { status: 500 });
+           }
+           authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(url.origin + '/auth/callback/github')}&scope=user:email&state=${encodeURIComponent(redirectUri)}`;
+       } else {
+           console.error('Invalid provider:', provider);
+           return new Response('Invalid provider', { status: 400 });
+       }
+
+       console.log('Redirecting to OAuth:', authUrl.substring(0, 100) + '...');
+       
+       // 使用 HTML meta refresh 重定向，而不是 302，以解决 Chrome 扩展 launchWebAuthFlow 的兼容性问题
+       const html = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="refresh" content="0;url=${authUrl}">
+    <title>Redirecting...</title>
+</head>
+<body>
+    <p>Redirecting to ${provider} login...</p>
+    <p>If you are not redirected, <a href="${authUrl}">click here</a>.</p>
+    <script>window.location.href = "${authUrl}";</script>
+</body>
+</html>`;
+       
+       return new Response(html, {
+           headers: { 'Content-Type': 'text/html; charset=UTF-8' }
+       });
     }
 
     // 2. Auth Callback - Exchange Code & Redirect to Extension
@@ -195,12 +273,25 @@ export default {
                 }
             }
 
-            // Create/Update User
+            // Create/Update User - 使用 INSERT OR REPLACE 来处理所有冲突情况
             const userId = `${provider}_${providerId}`;
-            await env.DB.prepare(
-                `INSERT INTO users (id, email, provider, provider_id) VALUES (?, ?, ?, ?) 
-                 ON CONFLICT(email) DO UPDATE SET id=id` // Keep existing ID if email matches
-            ).bind(userId, email, provider, providerId).run();
+            
+            // 先尝试更新现有用户，如果不存在则插入
+            const existingUser = await env.DB.prepare(
+                `SELECT id FROM users WHERE id = ? OR email = ?`
+            ).bind(userId, email).first();
+            
+            if (existingUser) {
+                // 更新现有用户
+                await env.DB.prepare(
+                    `UPDATE users SET email = ?, provider = ?, provider_id = ? WHERE id = ? OR email = ?`
+                ).bind(email, provider, providerId, userId, email).run();
+            } else {
+                // 插入新用户
+                await env.DB.prepare(
+                    `INSERT INTO users (id, email, provider, provider_id) VALUES (?, ?, ?, ?)`
+                ).bind(userId, email, provider, providerId).run();
+            }
 
             // Generate App Token (Simple Mock JWT for demo, ideally use proper JWT lib)
             // For security, use a proper JWT library with signature in production

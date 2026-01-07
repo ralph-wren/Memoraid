@@ -239,29 +239,48 @@ const Settings: React.FC = () => {
   const handleLogin = async (provider: 'google' | 'github') => {
     setSyncStatus('syncing');
     setSyncMessage(null);
+    
     try {
+        console.log('Starting login flow for:', provider);
         const response = await chrome.runtime.sendMessage({ 
             type: 'START_LOGIN', 
             payload: { provider } 
         });
 
+        console.log('Login response:', response);
+
         if (response && response.success) {
             setSyncStatus('success');
-            setSyncMessage({ type: 'success', text: 'Login successful!' });
-            // Settings will be updated via storage listener
+            setSyncMessage({ type: 'success', text: '登录成功！' });
         } else {
-            throw new Error(response?.error || 'Login failed');
+            throw new Error(response?.error || '登录失败');
         }
     } catch (e: any) {
-        console.error(e);
+        console.error('Login error:', e);
         setSyncStatus('error');
-        setSyncMessage({ type: 'error', text: 'Login Error: ' + (e.message || String(e)) });
+        setSyncMessage({ type: 'error', text: e.message || String(e) });
     } finally {
         setTimeout(() => {
             setSyncStatus('idle');
             setSyncMessage(null);
-        }, 5000);
+        }, 10000);
     }
+  };
+
+  const handleLogout = async () => {
+    const newSettings = {
+        ...settings,
+        sync: {
+            ...settings.sync!,
+            token: undefined,
+            email: undefined,
+            enabled: false
+        }
+    };
+    setSettings(newSettings);
+    await saveSettings(newSettings);
+    setSyncStatus('idle');
+    setSyncMessage(null);
   };
 
   const handleSyncNow = async () => {
@@ -474,7 +493,7 @@ const Settings: React.FC = () => {
                          <span className="text-sm font-medium text-gray-700">{settings.sync.email}</span>
                      </div>
                      <button 
-                        onClick={() => setSettings(prev => ({ ...prev, sync: { ...prev.sync!, token: undefined } }))}
+                        onClick={handleLogout}
                         className="text-xs text-red-600 hover:text-red-800"
                      >
                          Logout

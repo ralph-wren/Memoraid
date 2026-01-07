@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memoraid 登录诊断工具</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .test-item {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: #fafafa;
+        }
+        .test-item h3 {
+            margin-top: 0;
+            color: #555;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.pending { background: #ffc107; color: white; }
+        .status.success { background: #4CAF50; color: white; }
+        .status.error { background: #f44336; color: white; }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background: white;
+            border-left: 3px solid #2196F3;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .input-group {
+            margin: 15px 0;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Memoraid 登录诊断工具</h1>
+        <p>此工具将帮助您诊断 Google/GitHub 登录失败的问题。</p>
+
+        <div class="input-group">
+            <label for="backendUrl">后端服务地址：</label>
+            <input type="text" id="backendUrl" value="https://memoraid-backend.iuyuger.workers.dev" placeholder="https://your-backend.workers.dev">
+        </div>
+
+        <button onclick="runAllTests()">🚀 开始诊断</button>
+
+        <div id="tests"></div>
+    </div>
+
+    <script>
+        const tests = [
+            {
+                name: '1. 后端服务可访问性',
+                description: '检查后端服务是否在线',
+                async run(backendUrl) {
+                    const response = await fetch(`${backendUrl}/privacy`, {
+                        method: 'GET',
+                        signal: AbortSignal.timeout(10000)
+                    });
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return '✓ 后端服务正常运行';
+                }
+            },
+            {
+                name: '2. 后端配置检查',
+                description: '检查 OAuth 环境变量是否配置',
+                async run(backendUrl) {
+                    const response = await fetch(`${backendUrl}/health`, {
+                        method: 'GET',
+                        signal: AbortSignal.timeout(10000)
+                    });
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    const data = await response.json();
+                    let result = JSON.stringify(data, null, 2);
+                    
+                    if (!data.googleConfigured) {
+                        result += '\n\n⚠️ 警告: GOOGLE_CLIENT_ID 未配置！';
+                    }
+                    if (!data.githubConfigured) {
+                        result += '\n\n⚠️ 警告: GITHUB_CLIENT_ID 未配置！';
+                    }
+                    
+                    if (!data.googleConfigured || !data.githubConfigured) {
+                        throw new Error('OAuth 环境变量未配置\n' + result);
+                    }
+                    
+                    return result;
+                }
+            },
+            {
+                name: '3. Google OAuth 重定向测试',
+                description: '测试 Google OAuth 初始化',
+                async run(backendUrl) {
+                    const redirectUri = 'https://test.chromiumapp.org/';
+                    const url = `${backendUrl}/auth/login/google?redirect_uri=${encodeURIComponent(redirectUri)}`;
+                    
+                    const response = await fetch(url, {
+                        method: 'GET',
+                        redirect: 'manual',
+                        signal: AbortSignal.timeout(10000)
+                    });
+                    
+                    if (response.type === 'opaqueredirect' || response.status === 0) {
+                        return '✓ 重定向正常（浏览器阻止了跨域重定向，这是正常的）';
+                    }
+                    
+                    if (response.status === 302 || response.status === 301) {
+                        const location = response.headers.get('Location');
+                        if (location && location.includes('accounts.google.com')) {
+                            return `✓ 重定向到 Google OAuth:\n${location.substring(0, 150)}...`;
+                        }
+                        return `⚠️ 重定向到未知地址:\n${location}`;
+                    }
+                    
+                    if (response.status === 500) {
+                        const text = await response.text();
+                        throw new Error(`服务器错误: ${text}`);
+                    }
+                    
+                    throw new Error(`意外的响应状态: ${response.status}`);
+                }
+            },
+            {
+                name: '4. GitHub OAuth 重定向测试',
+                description: '测试 GitHub OAuth 初始化',
+                async run(backendUrl) {
+                    const redirectUri = 'https://test.chromiumapp.org/';
+                    const url = `${backendUrl}/auth/login/github?redirect_uri=${encodeURIComponent(redirectUri)}`;
+                    
+                    const response = await fetch(url, {
+                        method: 'GET',
+                        redirect: 'manual',
+                        signal: AbortSignal.timeout(10000)
+                    });
+                    
+                    if (response.type === 'opaqueredirect' || response.status === 0) {
+                        return '✓ 重定向正常（浏览器阻止了跨域重定向，这是正常的）';
+                    }
+                    
+                    if (response.status === 302 || response.status === 301) {
+                        const location = response.headers.get('Location');
+                        if (location && location.includes('github.com')) {
+                            return `✓ 重定向到 GitHub OAuth:\n${location.substring(0, 150)}...`;
+                        }
+                        return `⚠️ 重定向到未知地址:\n${location}`;
+                    }
+                    
+                    if (response.status === 500) {
+                        const text = await response.text();
+                        throw new Error(`服务器错误: ${text}`);
+                    }
+                    
+                    throw new Error(`意外的响应状态: ${response.status}`);
+                }
+            },
+            {
+                name: '5. 网络连接测试',
+                description: '测试到 Google 和 GitHub 的连接',
+                async run() {
+                    const results = [];
+                    
+                    try {
+                        await fetch('https://accounts.google.com', { 
+                            method: 'HEAD',
+                            signal: AbortSignal.timeout(5000)
+                        });
+                        results.push('✓ 可以访问 Google');
+                    } catch (e) {
+                        results.push('✗ 无法访问 Google: ' + e.message);
+                    }
+                    
+                    try {
+                        await fetch('https://github.com', { 
+                            method: 'HEAD',
+                            signal: AbortSignal.timeout(5000)
+                        });
+                        results.push('✓ 可以访问 GitHub');
+                    } catch (e) {
+                        results.push('✗ 无法访问 GitHub: ' + e.message);
+                    }
+                    
+                    return results.join('\n');
+                }
+            }
+        ];
+
+        async function runAllTests() {
+            const backendUrl = document.getElementById('backendUrl').value.trim().replace(/\/$/, '');
+            const container = document.getElementById('tests');
+            container.innerHTML = '';
+
+            for (const test of tests) {
+                const testDiv = document.createElement('div');
+                testDiv.className = 'test-item';
+                testDiv.innerHTML = `
+                    <h3>${test.name} <span class="status pending">运行中...</span></h3>
+                    <p>${test.description}</p>
+                    <div class="result" style="display:none;"></div>
+                `;
+                container.appendChild(testDiv);
+
+                const statusEl = testDiv.querySelector('.status');
+                const resultEl = testDiv.querySelector('.result');
+
+                try {
+                    const result = await test.run(backendUrl);
+                    statusEl.textContent = '成功';
+                    statusEl.className = 'status success';
+                    resultEl.textContent = result;
+                    resultEl.style.display = 'block';
+                } catch (error) {
+                    statusEl.textContent = '失败';
+                    statusEl.className = 'status error';
+                    resultEl.textContent = '错误: ' + error.message;
+                    resultEl.style.display = 'block';
+                    resultEl.style.borderLeftColor = '#f44336';
+                }
+
+                // 等待一下再运行下一个测试
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+        }
+    </script>
+</body>
+</html>
