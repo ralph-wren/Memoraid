@@ -256,22 +256,68 @@ export default {
 
     // 3. POST Settings
     if (url.pathname === '/settings' && request.method === 'POST') {
-      const body = await request.json() as SaveSettingsRequest;
-      const { encryptedData, salt, iv } = body;
+      try {
+        const body = await request.json() as SaveSettingsRequest;
+        const { encryptedData, salt, iv } = body;
 
-      await env.DB.prepare(
-        `INSERT INTO settings (user_id, encrypted_data, salt, iv, updated_at) 
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(user_id) DO UPDATE SET 
-           encrypted_data=excluded.encrypted_data,
-           salt=excluded.salt,
-           iv=excluded.iv,
-           updated_at=excluded.updated_at`
-      ).bind(userId, encryptedData, salt, iv, Math.floor(Date.now() / 1000)).run();
+        // Ensure user exists to satisfy Foreign Key constraint
+        // This handles cases where we use 'test_user' or db was reset but token remains
+        await env.DB.prepare(
+          `INSERT OR IGNORE INTO users (id, email, provider, provider_id) VALUES (?, ?, ?, ?)`
+        ).bind(userId, `${userId}@placeholder.com`, 'system_auto', userId).run();
 
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+        await env.DB.prepare(
+          `INSERT INTO settings (user_id, encrypted_data, salt, iv, updated_at) 
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(user_id) DO UPDATE SET 
+             encrypted_data=excluded.encrypted_data,
+             salt=excluded.salt,
+             iv=excluded.iv,
+             updated_at=excluded.updated_at`
+        ).bind(userId, encryptedData, salt, iv, Math.floor(Date.now() / 1000)).run();
+
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message || String(e) }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 4. POST Logs (Debug Mode)
+    if (url.pathname === '/logs' && request.method === 'POST') {
+      try {
+        const body = await request.json() as any;
+        const { error, stack, context, userAgent, url: pageUrl } = body;
+        
+        // We use the userId from auth middleware if available, or 'anonymous'
+        // Since logs might come from unauthenticated contexts in debug mode, we allow it.
+        const logUserId = userId || 'anonymous';
+
+        await env.DB.prepare(
+          `INSERT INTO logs (user_id, error, stack, context, user_agent, url) 
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).bind(
+          logUserId, 
+          error || 'Unknown Error', 
+          stack || '', 
+          JSON.stringify(context || {}), 
+          userAgent || '', 
+          pageUrl || ''
+        ).run();
+
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { 
+            status: 500, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        });
+      }
     }
 
     return new Response('Not Found', { status: 404, headers: corsHeaders });

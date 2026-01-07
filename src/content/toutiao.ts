@@ -1,4 +1,6 @@
 
+import { reportError } from '../utils/debug';
+
 // Toutiao Publish Content Script
 
 interface PublishData {
@@ -79,11 +81,47 @@ class AILogger {
     };
     controls.appendChild(copyBtn);
 
+    // Report Button
+    const reportBtn = document.createElement('button');
+    reportBtn.innerText = 'Report';
+    reportBtn.style.cssText = 'background:#e65100;color:white;border:none;border-radius:4px;padding:2px 6px;cursor:pointer;font-size:10px;';
+    reportBtn.title = 'Upload logs to server';
+    reportBtn.onclick = () => {
+        const text = this.logContent.innerText;
+        const originalText = reportBtn.innerText;
+        reportBtn.innerText = 'Sending...';
+        
+        reportError('Manual Log Report', { 
+            context: 'AILoggerManualReport',
+            fullLog: text 
+        }).then(() => {
+            reportBtn.innerText = 'Sent!';
+            setTimeout(() => reportBtn.innerText = originalText, 2000);
+        }).catch(err => {
+            console.error('Failed to report logs:', err);
+            reportBtn.innerText = 'Failed';
+            setTimeout(() => reportBtn.innerText = originalText, 2000);
+        });
+    };
+    controls.appendChild(reportBtn);
+
     // Close Button
     const closeBtn = document.createElement('span');
     closeBtn.innerText = '✕';
     closeBtn.style.cssText = 'cursor:pointer;margin-left:8px;';
-    closeBtn.onclick = () => this.container.style.display = 'none';
+    closeBtn.onclick = () => {
+        if (this.onStop) this.onStop(); // Stop the flow when closed
+        this.container.style.display = 'none';
+        
+        // Safety Cleanup
+        document.body.style.overflow = ''; // Restore scroll just in case
+        (document.activeElement as HTMLElement)?.blur(); // Remove focus
+        
+        // Ensure no leftover click markers
+        document.querySelectorAll('div[style*="z-index:10000"]').forEach(el => el.remove());
+        
+        console.log('Memoraid: AI Logger closed, interactions restored.');
+    };
     controls.appendChild(closeBtn);
 
     this.logContent = document.createElement('div');
@@ -120,7 +158,11 @@ class AILogger {
     
     let color = '#ccc';
     if (type === 'action') color = '#0ff'; // Cyan for actions
-    if (type === 'error') color = '#f55';  // Red for errors
+    if (type === 'error') {
+        color = '#f55';  // Red for errors
+        // Auto-report error if debug mode is on
+        reportError(message, { type, context: 'ToutiaoContentScript' });
+    }
     if (type === 'ai') color = '#f0f';     // Magenta for AI thoughts
     if (type === 'warn') color = '#fb0';   // Orange/Yellow for warnings
 
@@ -228,19 +270,7 @@ const getSimplifiedDOM = (): SimplifiedNode[] => {
 
 // --- Standard Helpers ---
 
-const waitForElement = (selector: string, timeout = 10000): Promise<HTMLElement | null> => {
-  return new Promise((resolve) => {
-    if (document.querySelector(selector)) return resolve(document.querySelector(selector) as HTMLElement);
-    const observer = new MutationObserver(() => {
-      if (document.querySelector(selector)) {
-        observer.disconnect();
-        resolve(document.querySelector(selector) as HTMLElement);
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    setTimeout(() => { observer.disconnect(); resolve(null); }, timeout);
-  });
-};
+
 
 const simulateInput = (element: HTMLElement, value: string) => {
   element.focus();

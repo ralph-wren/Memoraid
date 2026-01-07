@@ -27,6 +27,7 @@ export interface AppSettings {
     lastSynced?: number;
     email?: string;
   };
+  debugMode?: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -49,7 +50,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sync: {
     enabled: false,
     backendUrl: 'https://memoraid-backend.iuyuger.workers.dev',
-  }
+  },
+  debugMode: false
 };
 
 export const getSettings = async (): Promise<AppSettings> => {
@@ -144,8 +146,10 @@ export const syncSettings = async (settings: AppSettings): Promise<AppSettings> 
   });
   
   if (!response.ok) {
-    throw new Error('Failed to upload settings');
-  }
+      const errorText = await response.text();
+      console.error('Sync failed:', response.status, response.statusText, errorText);
+      throw new Error(`Failed to upload settings: ${response.status} ${response.statusText} - ${errorText}`);
+    }
   
   return {
     ...settings,

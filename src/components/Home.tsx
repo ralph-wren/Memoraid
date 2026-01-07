@@ -151,7 +151,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
       
       if (response && response.success) {
         setStatus('Published successfully!');
-        alert('Published to Toutiao successfully!');
+        // alert('Published to Toutiao successfully!');
       } else {
         throw new Error(response?.error || 'Unknown error');
       }
