@@ -347,6 +347,8 @@ You must output a Markdown document with the following structure:
 - Generate 5 catchy, click-worthy headlines (Toutiao style).
 - Choose the best one as the main title (H1).
 - List the other 4 as alternatives in a blockquote below the title.
+- **IMPORTANT**: If the provided Title input is generic (e.g. "Search", "Home", "Weibo"), IGNORE it and create a new one based on the content.
+- The document MUST start with the H1 title.
 
 ### 2. Cover Image Suggestion
 - Describe a compelling cover image that fits the article's mood.

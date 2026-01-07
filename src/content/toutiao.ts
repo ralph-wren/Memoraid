@@ -61,6 +61,24 @@ class AILogger {
     this.header.appendChild(controls);
     controls.appendChild(stopBtn);
 
+    // Copy Button
+    const copyBtn = document.createElement('button');
+    copyBtn.innerText = 'Copy';
+    copyBtn.style.cssText = 'background:#1976d2;color:white;border:none;border-radius:4px;padding:2px 6px;cursor:pointer;font-size:10px;';
+    copyBtn.title = 'Copy all logs to clipboard';
+    copyBtn.onclick = () => {
+        const text = this.logContent.innerText;
+        navigator.clipboard.writeText(text).then(() => {
+            const originalText = copyBtn.innerText;
+            copyBtn.innerText = 'Copied!';
+            setTimeout(() => copyBtn.innerText = originalText, 2000);
+        }).catch(err => {
+            console.error('Failed to copy logs:', err);
+            this.log('Failed to copy logs', 'error');
+        });
+    };
+    controls.appendChild(copyBtn);
+
     // Close Button
     const closeBtn = document.createElement('span');
     closeBtn.innerText = '✕';
@@ -92,7 +110,7 @@ class AILogger {
     ((this as any).stopBtn as HTMLElement).style.display = 'none';
   }
 
-  log(message: string, type: 'info' | 'action' | 'error' | 'ai' = 'info') {
+  log(message: string, type: 'info' | 'action' | 'error' | 'ai' | 'warn' = 'info') {
     this.show();
     const line = document.createElement('div');
     line.style.marginTop = '4px';
@@ -104,6 +122,7 @@ class AILogger {
     if (type === 'action') color = '#0ff'; // Cyan for actions
     if (type === 'error') color = '#f55';  // Red for errors
     if (type === 'ai') color = '#f0f';     // Magenta for AI thoughts
+    if (type === 'warn') color = '#fb0';   // Orange/Yellow for warnings
 
     line.innerHTML = `<span style="color:#666">[${time}]</span> <span style="color:${color}">${message}</span>`;
     this.logContent.appendChild(line);
@@ -133,11 +152,44 @@ const getSimplifiedDOM = (): SimplifiedNode[] => {
   const nodes: SimplifiedNode[] = [];
   
   // Select interactive elements
-  const elements = document.querySelectorAll('button, input, textarea, a, [role="button"], .syl-toolbar-tool, [tabindex], .upload-handler');
+  // Strategy:
+  // 1. Use specific selectors for known interactive elements.
+  // 2. Scan a broader set of elements (divs, spans, images) for 'cursor: pointer' style, 
+  //    which strongly indicates interactivity regardless of tag/class.
   
-  elements.forEach((el) => {
+  const selectorElements = Array.from(document.querySelectorAll(`
+    button, input, textarea, a, 
+    [role="button"], [tabindex], 
+    .syl-toolbar-tool, .upload-handler,
+    li, 
+    [class*="tab" i], [class*="btn" i], [class*="button" i], 
+    [class*="upload" i], [class*="cover" i],
+    .byte-tabs-item, .byte-btn,
+    .article-cover-add, .article-cover-img,
+    svg, img
+  `)) as HTMLElement[];
+
+  // Scan for pointer cursor elements (heuristic for clickable divs/spans)
+  // We limit this to visible elements in the viewport or reasonably close to avoid analyzing the whole footer
+  const candidates = document.querySelectorAll('div, span, i');
+  const pointerElements: HTMLElement[] = [];
+  
+  // Optimization: Batch style reads if possible, but for now simple loop
+  // To avoid performance hit on huge pages, we can limit the count or rely on the fact that this runs only when AI is invoked
+  candidates.forEach(el => {
+      // Fast check: skip if obviously not relevant (e.g. empty spans often used for spacing, though some are icons)
+      // We will check computed style.
+      const style = window.getComputedStyle(el);
+      if (style.cursor === 'pointer') {
+          pointerElements.push(el as HTMLElement);
+      }
+  });
+
+  const allElements = new Set([...selectorElements, ...pointerElements]);
+  
+  allElements.forEach((el) => {
     const rect = el.getBoundingClientRect();
-    if (rect.width < 5 || rect.height < 5 || rect.bottom < 0 || rect.top > window.innerHeight) return; // Skip invisible/tiny
+    if (rect.width < 5 || rect.height < 5) return; // Skip tiny elements, but allow off-screen ones
 
     const htmlEl = el as HTMLElement;
     const style = window.getComputedStyle(htmlEl);
@@ -211,20 +263,30 @@ const selectTextInEditor = (searchText: string): boolean => {
     const editor = document.querySelector('.ProseMirror') as HTMLElement;
     if (!editor) return false;
 
-    // Create a TreeWalker to find the text node
-    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-        if (node.textContent && node.textContent.includes(searchText)) {
-            const range = document.createRange();
-            range.selectNodeContents(node);
-            const selection = window.getSelection();
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-            node.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            return true;
+    const trySelect = (text: string) => {
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+        let node: Node | null;
+        while ((node = walker.nextNode())) {
+            if (node.textContent && node.textContent.includes(text)) {
+                const range = document.createRange();
+                range.selectNodeContents(node);
+                const selection = window.getSelection();
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+                node.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return true;
+            }
         }
+        return false;
+    };
+
+    if (trySelect(searchText)) return true;
+    
+    // Fallback: Try a shorter substring if the exact match failed
+    if (searchText.length > 15) {
+        if (trySelect(searchText.substring(0, 15))) return true;
     }
+
     return false;
 };
 
@@ -250,6 +312,9 @@ interface ImageTask {
     reason: string;
 }
 
+// Conversation History for Context Awareness
+let interactionHistory: { role: 'user' | 'assistant', content: string }[] = [];
+
 let isFlowCancelled = false;
 
 const showClickMarker = (x: number, y: number) => {
@@ -265,7 +330,30 @@ const askAIForAction = async (taskDescription: string): Promise<AIAction | null>
 
     logger.log(`Analyzing: ${taskDescription}...`, 'info');
     
-    const domNodes = getSimplifiedDOM();
+    let domNodes = getSimplifiedDOM();
+    
+    // --- Context-Aware Sorting ---
+    // Move elements relevant to the task to the top of the list to avoid truncation
+    const keywords = taskDescription.toLowerCase().split(/\s+/).filter(k => k.length > 2);
+    
+    domNodes.sort((a, b) => {
+        let scoreA = 0;
+        let scoreB = 0;
+        
+        const textA = (a.text + ' ' + a.selector + ' ' + a.tag).toLowerCase();
+        const textB = (b.text + ' ' + b.selector + ' ' + b.tag).toLowerCase();
+        
+        keywords.forEach(kw => {
+            if (textA.includes(kw)) scoreA += 1;
+            if (textB.includes(kw)) scoreB += 1;
+        });
+        
+        // Also prioritize high z-index or visible dialogs if we could detect them, 
+        // but for now, keyword matching is strong enough.
+        
+        return scoreB - scoreA;
+    });
+    
     const domSummary = JSON.stringify(domNodes.slice(0, 300)); // Limit to first 300 interactive elements
     
     // logger.log(`Extracted ${domNodes.length} interactive elements.`, 'info');
@@ -297,16 +385,53 @@ const askAIForAction = async (taskDescription: string): Promise<AIAction | null>
 
         const responsePromise = chrome.runtime.sendMessage({ 
             type: 'ANALYZE_SCREENSHOT', 
-            payload: { prompt } 
+            payload: { 
+                prompt,
+                history: interactionHistory // Send previous context
+            } 
         });
 
         const response = await Promise.race([responsePromise, timeoutPromise]) as any;
 
         if (response.success && response.result) {
             // logger.log(`AI Thought: ${response.result}`, 'ai');
+            
+            // Update History with the abstract task and the result
+            // We store the simplified task description, not the full prompt with DOM dump
+            interactionHistory.push({ role: 'user', content: `Task: ${taskDescription}` });
+            interactionHistory.push({ role: 'assistant', content: response.result });
+            
+            // Keep history manageable (last 10 turns)
+            if (interactionHistory.length > 20) {
+                interactionHistory = interactionHistory.slice(interactionHistory.length - 20);
+            }
+
             const jsonMatch = response.result.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-                return JSON.parse(jsonMatch[0]) as AIAction;
+                try {
+                    // Pre-process JSON to fix common AI errors
+                    let jsonStr = jsonMatch[0];
+                    // Fix single quotes to double quotes for property names and string values
+                    // This is a naive regex but helps with simple cases. 
+                    // Be careful not to break apostrophes inside strings.
+                    // A safer bet is to rely on the prompt, but we can try to fix strict syntax errors.
+                    
+                    return JSON.parse(jsonStr) as AIAction;
+                } catch (e: any) {
+                    logger.log(`JSON Parse Error: ${e.message}`, 'error');
+                    
+                    // Attempt to repair: sometimes AI adds comments // or trailing commas
+                    try {
+                        let looseJson = jsonMatch[0]
+                            .replace(/\/\/.*$/gm, '') // Remove comments
+                            .replace(/,\s*}/g, '}'); // Remove trailing comma
+                        
+                        return JSON.parse(looseJson) as AIAction;
+                    } catch (e2) {
+                         logger.log(`JSON Repair Failed.`, 'warn');
+                         logger.log(`Raw snippet: ${jsonMatch[0].substring(0, 100)}...`, 'warn');
+                    }
+                }
             }
         } else {
             logger.log(`AI Error: ${response.error}`, 'error');
@@ -336,13 +461,33 @@ const executeAction = async (action: AIAction): Promise<boolean> => {
         } catch (e) {}
     }
     if (!target && action.coordinates) {
-        const x = window.innerWidth * (action.coordinates.x / 100);
-        const y = window.innerHeight * (action.coordinates.y / 100);
-        showClickMarker(x, y);
-        target = document.elementFromPoint(x, y) as HTMLElement;
+        const { x: pctX, y: pctY } = action.coordinates;
+        
+        if (typeof pctX === 'number' && typeof pctY === 'number' && 
+            Number.isFinite(pctX) && Number.isFinite(pctY)) {
+            
+            const x = window.innerWidth * (pctX / 100);
+            const y = window.innerHeight * (pctY / 100);
+            
+            if (Number.isFinite(x) && Number.isFinite(y)) {
+                showClickMarker(x, y);
+                try {
+                    target = document.elementFromPoint(x, y) as HTMLElement;
+                } catch (e) {
+                    logger.log(`Coordinate lookup failed: ${e}`, 'warn');
+                }
+            } else {
+                logger.log(`Calculated coordinates non-finite: ${x}, ${y}`, 'warn');
+            }
+        } else {
+             logger.log(`Invalid coordinates received: ${JSON.stringify(action.coordinates)}`, 'warn');
+        }
     }
 
     if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        await new Promise(r => setTimeout(r, 500)); // Wait for scroll
+        
         const rect = target.getBoundingClientRect();
         showClickMarker(rect.left + rect.width/2, rect.top + rect.height/2);
         
@@ -393,11 +538,12 @@ const analyzeArticleForImages = async (): Promise<ImageTask[]> => {
     - **Do NOT include newlines or line breaks inside string values.**
     - Keep "context" and "reason" VERY SHORT (max 30 chars) to avoid cutoff.
     - Escape all double quotes inside strings with backslash.
+    - **CRITICAL: The "keyword" MUST be in Simplified Chinese (zh-CN) for accurate search.**
 
     Format:
     [
-      { "type": "cover", "keyword": "search keyword", "reason": "short reason" },
-      { "type": "inline", "keyword": "search keyword", "context": "short unique snippet", "reason": "short reason" }
+      { "type": "cover", "keyword": "中文搜索关键词", "reason": "short reason" },
+      { "type": "inline", "keyword": "中文搜索关键词", "context": "short unique snippet", "reason": "short reason" }
     ]
     `;
 
@@ -496,7 +642,15 @@ const runSingleImageSearchFlow = async (keyword: string) => {
     if (isFlowCancelled) throw new Error('Cancelled by user');
 
     // 3. Select Image
-    const step3 = await askAIForAction(`Select the most suitable image for "${keyword}" from the results.`);
+    const step3 = await askAIForAction(`
+        Look at the search results in the dialog.
+        Task: Select the SINGLE BEST image that matches the concept "${keyword}".
+        Requirements:
+        1. Do NOT automatically pick the first image. 
+        2. Analyze the visual content of the thumbnails.
+        3. Pick the one that is most high-quality and relevant.
+        4. Click that specific image thumbnail.
+    `);
     if (step3) await executeAction(step3);
 
     await new Promise(r => setTimeout(r, 1000));
@@ -509,9 +663,15 @@ const runSingleImageSearchFlow = async (keyword: string) => {
 
 const runMagicImageFlow = async () => {
     isFlowCancelled = false;
+    interactionHistory = []; // Reset history for new flow
     logger.show();
     logger.setStopCallback(() => { isFlowCancelled = true; });
     logger.log('Starting Smart Image Flow...', 'info');
+
+    // Scroll to bottom first as requested
+    logger.log('Scrolling to bottom to ensure all elements are visible...', 'info');
+    window.scrollTo(0, document.body.scrollHeight);
+    await new Promise(r => setTimeout(r, 1000));
 
     try {
         // Phase 1: Analyze Article
@@ -529,6 +689,10 @@ const runMagicImageFlow = async () => {
 
             if (task.type === 'cover') {
                 // Find Cover Upload Button
+                logger.log('Scrolling to bottom for cover settings...', 'info');
+                window.scrollTo(0, document.body.scrollHeight);
+                await new Promise(r => setTimeout(r, 1000));
+
                 const coverBtn = await askAIForAction('Find the "Set Cover" (展示封面/设置封面) "+" button or area. It is usually a large box with a plus sign.');
                 if (coverBtn) {
                     await executeAction(coverBtn);
@@ -536,20 +700,37 @@ const runMagicImageFlow = async () => {
                     await runSingleImageSearchFlow(task.keyword);
                 }
             } else if (task.type === 'inline') {
-                // Locate Text
                 if (task.context) {
-                    logger.log(`Locating context: "${task.context.substring(0, 20)}..."`, 'info');
-                    const found = selectTextInEditor(task.context);
-                    if (!found) {
-                        logger.log('Could not find context text, inserting at current cursor.', 'error');
-                    } else {
-                        // Click Image Button in Toolbar
-                        const toolbarBtn = await askAIForAction('Find and click the "Image" (图片) button in the editor toolbar.');
-                        if (toolbarBtn) {
-                            await executeAction(toolbarBtn);
-                            await new Promise(r => setTimeout(r, 1000));
-                            await runSingleImageSearchFlow(task.keyword);
+                    // 1. Locate Toolbar Button FIRST (without clicking)
+                    const imageBtnAction = await askAIForAction('Locate the "Image" (图片) button in the editor toolbar. Action: "click" (but I will execute it later).');
+
+                    if (imageBtnAction) {
+                        // 2. Locate and Select Text
+                        logger.log(`Locating context: "${task.context.substring(0, 20)}..."`, 'info');
+                        const found = selectTextInEditor(task.context);
+                        
+                        if (!found) {
+                            logger.log('Could not find context text, inserting at current cursor.', 'error');
+                            // If not found, we just click the button (might insert at end)
+                            await executeAction(imageBtnAction);
+                        } else {
+                            // 3. Delete the placeholder text
+                            try {
+                                document.execCommand('delete');
+                                logger.log('Removed placeholder text.', 'action');
+                            } catch (e) {
+                                logger.log('Failed to delete placeholder text, continuing...', 'warn');
+                            }
+                            
+                            // 4. IMMEDIATELY Click the button we found earlier
+                            // This ensures the cursor position (set by delete) is preserved
+                            await executeAction(imageBtnAction);
                         }
+
+                        await new Promise(r => setTimeout(r, 1000));
+                        await runSingleImageSearchFlow(task.keyword);
+                    } else {
+                         logger.log('Could not find Image toolbar button.', 'error');
                     }
                 }
             }

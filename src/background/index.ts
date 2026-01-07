@@ -89,7 +89,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 });
 
-async function handleAnalyzeScreenshot({ prompt }: { prompt: string }) {
+async function handleAnalyzeScreenshot({ prompt, history }: { prompt: string, history?: any[] }) {
   try {
     const settings = await getSettings();
     let effectiveApiKey = settings.apiKeys?.[settings.provider] || settings.apiKey;
@@ -109,9 +109,8 @@ async function handleAnalyzeScreenshot({ prompt }: { prompt: string }) {
     });
 
     // 2. Call AI with Vision
-    const response = await openai.chat.completions.create({
-      model: settings.model,
-      messages: [
+    const messages = [
+        ...(history || []),
         {
           role: "user",
           content: [
@@ -125,7 +124,11 @@ async function handleAnalyzeScreenshot({ prompt }: { prompt: string }) {
             }
           ]
         } as any // Cast to any to avoid type issues if installed SDK is slightly old
-      ],
+      ];
+
+    const response = await openai.chat.completions.create({
+      model: settings.model,
+      messages: messages,
       max_tokens: 300
     });
 
@@ -741,9 +744,24 @@ async function startArticleGeneration(extraction: ExtractionResult) {
     }
 
     // Basic Title Check (Article prompt asks for H1)
-    if (!/^\s*#\s+/.test(summary)) {
-         const titleToInsert = extraction.title || 'Untitled';
-         summary = `# ${titleToInsert}\n\n` + summary;
+    const hasH1 = /^\s*#\s+/.test(summary);
+    
+    if (!hasH1) {
+         const genericTitles = ['微博搜索', 'Weibo Search', '搜索', 'Search', '主页', 'Home'];
+         const isGeneric = genericTitles.some(t => extraction.title?.includes(t));
+
+         if (!isGeneric && extraction.title) {
+             summary = `# ${extraction.title}\n\n` + summary;
+         } else {
+             // Try to promote first line as title if it looks like one
+             const lines = summary.split('\n');
+             const firstLine = lines[0]?.trim();
+             if (firstLine && firstLine.length > 0 && firstLine.length < 100) {
+                 // Remove existing bolding/formatting if any
+                 const cleanTitle = firstLine.replace(/^\*\*|\*\*$/g, '').replace(/^#+\s*/, '');
+                 summary = `# ${cleanTitle}\n\n` + lines.slice(1).join('\n');
+             }
+         }
     }
 
     // Cleanup trailing fences
