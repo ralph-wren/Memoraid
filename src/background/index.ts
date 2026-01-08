@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { marked } from 'marked';
 import { getSettings, saveSettings, DEFAULT_SETTINGS, addHistoryItem } from '../utils/storage';
 import { ExtractionResult, ActiveTask, ChatMessage } from '../utils/types';
-import { ARTICLE_PROMPT_TEMPLATE } from '../utils/prompts';
+import { generateArticlePrompt } from '../utils/prompts';
 import { generateRandomString } from '../utils/crypto';
 
 console.log('Background service worker started');
@@ -627,6 +627,19 @@ async function handlePublishToToutiao(payload: { title: string; content: string 
     cleanedContent = cleanedContent.replace(/^#{1,3}\s*Cover Image Suggestion[：:].*/gim, '');
     cleanedContent = cleanedContent.replace(/^Cover Image Suggestion[：:][^\n]*\n?/gim, '');
     
+    // 3. Remove "其他备选标题" / "备选标题" section (including all variations)
+    // This removes the heading and all following lines until the next heading or double newline
+    cleanedContent = cleanedContent.replace(/^#{1,3}\s*其他备选标题[：:]?.*(\n(?!#)[^\n]*)*/gm, '');
+    cleanedContent = cleanedContent.replace(/^#{1,3}\s*备选标题[：:]?.*(\n(?!#)[^\n]*)*/gm, '');
+    cleanedContent = cleanedContent.replace(/^\*?\*?其他备选标题\*?\*?[：:]?[^\n]*(\n(?![#\n])[^\n]*)*/gm, '');
+    cleanedContent = cleanedContent.replace(/^\*?\*?备选标题\*?\*?[：:]?[^\n]*(\n(?![#\n])[^\n]*)*/gm, '');
+    cleanedContent = cleanedContent.replace(/^其他备选标题[：:]?[^\n]*(\n(?![#\n])[^\n]*)*/gm, '');
+    cleanedContent = cleanedContent.replace(/^备选标题[：:]?[^\n]*(\n(?![#\n])[^\n]*)*/gm, '');
+    
+    // 4. Remove blockquote style alternative titles (> 开头的备选标题列表)
+    cleanedContent = cleanedContent.replace(/^>\s*[\d\.\-\*]*\s*[^>\n]*标题[^\n]*\n?/gm, '');
+    cleanedContent = cleanedContent.replace(/^>\s*[\d\.\-\*]+[^\n]+\n?/gm, ''); // Remove numbered list in blockquote after title
+    
     // 3. Clean up multiple consecutive blank lines
     cleanedContent = cleanedContent.replace(/\n{3,}/g, '\n\n');
     cleanedContent = cleanedContent.trim();
@@ -714,11 +727,14 @@ async function startArticleGeneration(extraction: ExtractionResult) {
       ? extraction.messages.map((m: any) => `### ${m.role ? m.role.toUpperCase() : 'CONTENT'}:\n${m.content}`).join('\n\n')
       : String(extraction.messages);
 
+    // 根据用户设置的文章风格生成动态提示词
+    const articlePrompt = generateArticlePrompt(settings.articleStyle);
+
     const initialMessages = [
-      { role: 'system', content: ARTICLE_PROMPT_TEMPLATE },
+      { role: 'system', content: articlePrompt },
       { 
         role: 'user', 
-        content: `Please generate a social media article based on the following content from ${extraction.url}.\n\nTitle: ${extraction.title}\n\nContent:\n${formattedContent}` 
+        content: `请根据以下内容生成一篇自媒体文章。\n\n来源：${extraction.url}\n\n原标题：${extraction.title}\n\n内容：\n${formattedContent}` 
       }
     ];
 
@@ -809,9 +825,21 @@ async function startArticleGeneration(extraction: ExtractionResult) {
         summary = summary.substring(0, summary.length - 3).trim();
     }
 
+    // 从生成的文章中提取真正的标题（H1）
+    // 这样面板中显示的文件名就会和文章标题一致
+    let finalTitle = extraction.title || 'Untitled Article';
+    const h1TitleMatch = summary.match(/^#\s+(.+)$/m);
+    if (h1TitleMatch && h1TitleMatch[1]) {
+      const extractedTitle = h1TitleMatch[1].trim();
+      // 如果提取的标题有意义（长度合适），就使用它
+      if (extractedTitle.length >= 3 && extractedTitle.length <= 50) {
+        finalTitle = extractedTitle;
+      }
+    }
+
     const newItem = {
       id: Date.now().toString(),
-      title: extraction.title || 'Untitled Article',
+      title: finalTitle, // 使用从文章中提取的标题
       date: Date.now(),
       content: summary,
       url: extraction.url
@@ -824,6 +852,7 @@ async function startArticleGeneration(extraction: ExtractionResult) {
       message: 'Article generated successfully!',
       progress: 100, 
       result: summary, 
+      title: finalTitle, // 同步更新任务状态中的标题
       conversationHistory: [
         ...initialMessages as ChatMessage[],
         { role: 'assistant', content: summary }
@@ -838,7 +867,7 @@ async function startArticleGeneration(extraction: ExtractionResult) {
       type: 'basic',
       iconUrl: iconUrl,
       title: 'Article Generation Complete',
-      message: `Article generated for: ${extraction.title || 'Untitled'}`
+      message: `Article generated for: ${finalTitle}`
     });
 
   } catch (error: any) {

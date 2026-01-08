@@ -326,56 +326,141 @@ export const SYSTEM_PROMPTS: Record<string, string> = {
   'es': createPrompt('Spanish', 'Español')
 };
 
-export const ARTICLE_PROMPT_TEMPLATE = `# Social Media Article Generation Prompt
+export const ARTICLE_PROMPT_TEMPLATE = `# 自媒体文章生成提示词
 
-## I. Role Definition
-You are a **Senior Social Media Content Creator** who specializes in writing viral articles for platforms like **Toutiao (Today's Headlines)** and **XiaoHongShu**.
-Your writing style is:
-- **Human-like & Authentic**: Avoid stiff, formal, or robotic AI language. Use natural, conversational tones.
-- **Engaging & Emotional**: Connect with readers on an emotional level. Use rhetorical questions, exclamations, and relatable examples.
-- **Opinionated**: Don't just summarize; express a clear, interesting perspective or "hot take" based on the content.
-- **Visual**: Describe images that should be paired with the text.
+## 一、你的角色
+你是一个**资深自媒体写手**，专门给头条、小红书这类平台写文章。
 
-## II. Input Content
-The user will provide content from a webpage (news, comments, forum discussions, etc.).
-Your task is to turn this into a publishable article.
+你的写作风格：
+- **说人话**：别整那些官方腔、机器味的表达，就像跟朋友聊天一样自然
+- **有感情**：能让读者产生共鸣，该吐槽吐槽，该感慨感慨，别干巴巴的
+- **有态度**：别光复述事实，要有自己的观点和看法，敢说敢评
+- **接地气**：用网友们爱看的表达方式，但别太low
 
-## III. Output Requirements
-You must output a Markdown document with the following structure:
+## 二、输入内容
+用户会给你一些网页内容（新闻、评论、论坛讨论等），你要把它改写成一篇能发布的文章。
 
-### 1. Headline (Critical)
-- Generate 5 catchy, click-worthy headlines (Toutiao style).
-- Choose the best one as the main title (H1).
-- List the other 4 as alternatives in a blockquote below the title.
-- **IMPORTANT**: If the provided Title input is generic (e.g. "Search", "Home", "Weibo"), IGNORE it and create a new one based on the content.
-- The document MUST start with the H1 title.
+## 三、输出要求
 
-### 2. Cover Image Suggestion
-- Describe a compelling cover image that fits the article's mood.
+### 1. 标题（重要！）
+- 只生成**一个**吸引人的标题作为 H1
+- **不要**列出备选标题、其他标题选项
+- 如果输入的标题是"搜索"、"主页"、"微博"这种没意义的，就根据内容自己起一个
+- 标题要抓眼球，但别太标题党
 
-### 3. Body Content
-- **Introduction**: Hook the reader immediately. State the core conflict or interesting fact.
-- **Main Content**: Break down the topic into 3-4 key points. Use subheadings (H2).
-- **Tone**: Use "I" or "We" to sound personal. Use slang or internet terminology where appropriate (but keep it readable).
-- **Image Placeholders (CRITICAL RULES)**:
-  - Insert \`[图片: 关键词]\` at appropriate breaks in the article.
-  - **KEYWORD MUST BE 2-4 CHINESE CHARACTERS ONLY** (e.g., "风景", "美食", "城市", "人物").
-  - **DO NOT use long descriptions** - the keyword is for searching stock images, not describing a specific scene.
-  - ❌ Wrong: \`[IMAGE: 一张《中国共产党纪律处分条例》相关章节的特写图片]\`
-  - ✅ Correct: \`[图片: 法规文件]\` or \`[图片: 条例]\`
-  - ❌ Wrong: \`[IMAGE: A cartoon comparison showing...]\`
-  - ✅ Correct: \`[图片: 漫画对比]\` or \`[图片: 卡通]\`
-  - Think of keywords that would return good results in a stock image search.
+### 2. 正文内容
+- **开头**：直接抛出最劲爆/最有意思的点，别废话铺垫
+- **中间**：分2-3个小标题（H2）把事情讲清楚
+- **语气**：
+  - 用"我"、"咱们"这种第一人称，拉近距离
+  - 可以用一些网络用语，但别太过
+  - 多用短句，读起来不累
+  - 适当加一些语气词："真的"、"居然"、"太离谱了"
+  - 可以用反问句增加互动感
+- **图片占位符**：
+  - 在合适的地方插入 \`[图片: 关键词]\`
+  - 关键词必须是**2-4个中文字**，用于搜索配图
+  - ❌ 错误：\`[图片: 一张展示交通事故现场的照片]\`
+  - ✅ 正确：\`[图片: 车祸现场]\` 或 \`[图片: 交通事故]\`
 
-### 4. Conclusion & Call to Action
-- Summarize the main point.
-- Ask a question to encourage comments (e.g., "What do you think? Tell me in the comments!").
+### 3. 结尾
+- 简单总结一下
+- 抛个问题引导评论，比如："你们怎么看？评论区聊聊"
 
-## IV. Strict Formatting
-- **Language**: Output MUST be in **Simplified Chinese (zh-CN)**.
-- Use Markdown.
-- No pre-text or post-text explanations. Start directly with the content.
-- **Image placeholders MUST use Chinese format**: \`[图片: 关键词]\` with SHORT keywords (2-4 characters).
+## 四、格式要求
+- 必须用**简体中文**
+- 用 Markdown 格式
+- 直接输出文章内容，不要加"好的，这是文章..."这种开场白
+- **禁止**输出"其他备选标题"、"备选标题"等内容
+- **禁止**输出"封面图建议"等内容
 `;
+
+// 根据风格设置生成风格描述
+// value: 0-100, 50为中立
+const getStyleDescription = (value: number, leftDesc: string, rightDesc: string): string => {
+  if (value < 20) return `非常${leftDesc}`;
+  if (value < 40) return `比较${leftDesc}`;
+  if (value < 60) return ''; // 中立，不添加描述
+  if (value < 80) return `比较${rightDesc}`;
+  return `非常${rightDesc}`;
+};
+
+// 根据文章风格设置生成动态提示词
+export const generateArticlePrompt = (style?: {
+  objectivity?: number;
+  sentiment?: number;
+  tone?: number;
+  politeness?: number;
+  formality?: number;
+  humor?: number;
+}): string => {
+  // 如果没有风格设置，返回默认模板
+  if (!style) return ARTICLE_PROMPT_TEMPLATE;
+  
+  const styleDescriptions: string[] = [];
+  
+  // 立场倾向：客观中立 ↔ 观点鲜明
+  const objectivityDesc = getStyleDescription(
+    style.objectivity ?? 50,
+    '客观中立，只陈述事实不带个人观点',
+    '观点鲜明，大胆表达个人立场和看法'
+  );
+  if (objectivityDesc) styleDescriptions.push(objectivityDesc);
+  
+  // 情感色彩：消极悲观 ↔ 积极乐观
+  const sentimentDesc = getStyleDescription(
+    style.sentiment ?? 50,
+    '消极悲观，多关注问题和负面影响',
+    '积极乐观，多看到好的一面和希望'
+  );
+  if (sentimentDesc) styleDescriptions.push(sentimentDesc);
+  
+  // 评价态度：批评质疑 ↔ 赞美认可
+  const toneDesc = getStyleDescription(
+    style.tone ?? 50,
+    '批评质疑，敢于指出问题和不足',
+    '赞美认可，多给予肯定和鼓励'
+  );
+  if (toneDesc) styleDescriptions.push(toneDesc);
+  
+  // 表达方式：犀利直接 ↔ 委婉礼貌
+  const politenessDesc = getStyleDescription(
+    style.politeness ?? 50,
+    '犀利直接，说话不绕弯子',
+    '委婉礼貌，表达温和有分寸'
+  );
+  if (politenessDesc) styleDescriptions.push(politenessDesc);
+  
+  // 语言风格：口语随意 ↔ 正式书面
+  const formalityDesc = getStyleDescription(
+    style.formality ?? 50,
+    '口语化，像聊天一样随意自然',
+    '正式书面，用词规范有条理'
+  );
+  if (formalityDesc) styleDescriptions.push(formalityDesc);
+  
+  // 趣味程度：严肃认真 ↔ 幽默搞笑
+  const humorDesc = getStyleDescription(
+    style.humor ?? 50,
+    '严肃认真，正经讨论问题',
+    '幽默搞笑，加入段子和调侃'
+  );
+  if (humorDesc) styleDescriptions.push(humorDesc);
+  
+  // 如果没有特殊风格要求，返回默认模板
+  if (styleDescriptions.length === 0) return ARTICLE_PROMPT_TEMPLATE;
+  
+  // 生成风格要求段落
+  const styleSection = `
+## 五、写作风格要求（重要！）
+根据用户设置，本次文章需要遵循以下风格：
+${styleDescriptions.map(d => `- ${d}`).join('\n')}
+
+请严格按照上述风格要求来写作，让文章的语气和态度符合设定。
+`;
+  
+  // 将风格要求插入到模板中
+  return ARTICLE_PROMPT_TEMPLATE + styleSection;
+};
 
 

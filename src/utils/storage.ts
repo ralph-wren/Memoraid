@@ -7,6 +7,17 @@ export interface GitHubSettings {
   branch: string;
 }
 
+// 文章风格设置（滑动条范围 0-100）
+// 0 = 左侧极端，50 = 中立，100 = 右侧极端
+export interface ArticleStyleSettings {
+  objectivity: number;    // 0=客观中立 → 100=极端偏激
+  sentiment: number;      // 0=消极悲观 → 100=积极乐观
+  tone: number;           // 0=讽刺批评 → 100=表扬赞美
+  politeness: number;     // 0=粗鲁直接 → 100=礼貌委婉
+  formality: number;      // 0=口语随意 → 100=正式书面
+  humor: number;          // 0=严肃认真 → 100=幽默搞笑
+}
+
 export interface AppSettings {
   apiKey: string; // Current active key (legacy support/fallback)
   apiKeys: Record<string, string>; // Map of provider -> apiKey
@@ -28,6 +39,7 @@ export interface AppSettings {
     email?: string;
   };
   debugMode?: boolean;
+  articleStyle?: ArticleStyleSettings; // 文章风格设置
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -51,7 +63,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
     enabled: false,
     backendUrl: 'https://memoraid-backend.iuyuger.workers.dev',
   },
-  debugMode: false
+  debugMode: false,
+  // 文章风格默认值（都设为中间值50，表示中立/平衡）
+  articleStyle: {
+    objectivity: 50,   // 中立
+    sentiment: 60,     // 略微积极
+    tone: 50,          // 中立
+    politeness: 60,    // 略微礼貌
+    formality: 30,     // 偏口语化
+    humor: 40          // 略微轻松
+  }
 };
 
 export const getSettings = async (): Promise<AppSettings> => {

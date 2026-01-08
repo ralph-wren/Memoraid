@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { AppSettings, DEFAULT_SETTINGS, getSettings, saveSettings, syncSettings, restoreSettings } from '../utils/storage';
+import { AppSettings, DEFAULT_SETTINGS, getSettings, saveSettings, syncSettings, restoreSettings, ArticleStyleSettings } from '../utils/storage';
 import { SYSTEM_PROMPTS } from '../utils/prompts';
 import { getTranslation } from '../utils/i18n';
-import { Eye, EyeOff, Github, Loader2, CheckCircle, XCircle, Newspaper, RefreshCw, Cloud, Lock, Key, Bug } from 'lucide-react';
+import { Eye, EyeOff, Github, Loader2, CheckCircle, XCircle, Newspaper, RefreshCw, Cloud, Lock, Key, Bug, Palette } from 'lucide-react';
 import { validateGitHubConnection } from '../utils/github';
 import { generateRandomString } from '../utils/crypto';
 
@@ -86,6 +86,84 @@ const getProviderLink = (provider: string): string | null => {
     default:
       return null;
   }
+};
+
+// 风格滑动条组件
+interface StyleSliderProps {
+  label: string;
+  leftLabel: string;
+  rightLabel: string;
+  value: number;
+  onChange: (value: number) => void;
+}
+
+const StyleSlider: React.FC<StyleSliderProps> = ({ label, leftLabel, rightLabel, value, onChange }) => {
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between items-center">
+        <span className="text-xs font-medium text-gray-700">{label}</span>
+        <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">{value}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] text-gray-500 w-14 text-right flex-shrink-0">{leftLabel}</span>
+        <div className="flex-1 relative h-6 flex items-center">
+          <div 
+            className="absolute inset-x-0 h-2 rounded-full"
+            style={{
+              background: `linear-gradient(to right, 
+                #ef4444 0%, 
+                #f97316 15%, 
+                #eab308 30%, 
+                #22c55e 50%, 
+                #eab308 70%, 
+                #f97316 85%, 
+                #ef4444 100%)`
+            }}
+          />
+          {/* 中间标记线 */}
+          <div className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-0.5 h-4 bg-white/60 pointer-events-none z-10"></div>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={value}
+            onChange={(e) => onChange(parseInt(e.target.value))}
+            className="absolute inset-x-0 w-full h-2 appearance-none cursor-pointer bg-transparent z-20"
+            style={{
+              WebkitAppearance: 'none',
+            }}
+          />
+          <style>{`
+            input[type="range"]::-webkit-slider-thumb {
+              -webkit-appearance: none;
+              appearance: none;
+              width: 16px;
+              height: 16px;
+              border-radius: 50%;
+              background: white;
+              border: 2px solid #6366f1;
+              cursor: pointer;
+              box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+              transition: transform 0.1s;
+            }
+            input[type="range"]::-webkit-slider-thumb:hover {
+              transform: scale(1.1);
+            }
+            input[type="range"]::-moz-range-thumb {
+              width: 16px;
+              height: 16px;
+              border-radius: 50%;
+              background: white;
+              border: 2px solid #6366f1;
+              cursor: pointer;
+              box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            }
+          `}</style>
+        </div>
+        <span className="text-[10px] text-gray-500 w-14 flex-shrink-0">{rightLabel}</span>
+      </div>
+    </div>
+  );
 };
 
 const Settings: React.FC = () => {
@@ -221,6 +299,17 @@ const Settings: React.FC = () => {
       toutiao: {
         ...prev.toutiao || { cookie: '' },
         [name]: value
+      }
+    }));
+  };
+
+  // 处理文章风格滑动条变化
+  const handleStyleChange = (key: keyof ArticleStyleSettings, value: number) => {
+    setSettings(prev => ({
+      ...prev,
+      articleStyle: {
+        ...prev.articleStyle || DEFAULT_SETTINGS.articleStyle!,
+        [key]: value
       }
     }));
   };
@@ -613,6 +702,84 @@ const Settings: React.FC = () => {
                Login to mp.toutiao.com, open DevTools, copy 'cookie' from any network request header.
              </p>
           </div>
+        </div>
+      </div>
+
+      {/* Article Style Settings - 文章风格设置 */}
+      <div className="border-t pt-4">
+        <h3 className="text-md font-semibold mb-3 flex items-center gap-2">
+          <Palette className="w-4 h-4" />
+          文章风格设置
+        </h3>
+        <p className="text-xs text-gray-500 mb-4">
+          调整滑动条来控制 AI 生成文章的风格倾向
+        </p>
+        <div className="space-y-4">
+          {/* 客观性 */}
+          <StyleSlider
+            label="立场倾向"
+            leftLabel="客观中立"
+            rightLabel="观点鲜明"
+            value={settings.articleStyle?.objectivity ?? 50}
+            onChange={(v) => handleStyleChange('objectivity', v)}
+          />
+          
+          {/* 情感倾向 */}
+          <StyleSlider
+            label="情感色彩"
+            leftLabel="消极悲观"
+            rightLabel="积极乐观"
+            value={settings.articleStyle?.sentiment ?? 60}
+            onChange={(v) => handleStyleChange('sentiment', v)}
+          />
+          
+          {/* 语气 */}
+          <StyleSlider
+            label="评价态度"
+            leftLabel="批评质疑"
+            rightLabel="赞美认可"
+            value={settings.articleStyle?.tone ?? 50}
+            onChange={(v) => handleStyleChange('tone', v)}
+          />
+          
+          {/* 礼貌程度 */}
+          <StyleSlider
+            label="表达方式"
+            leftLabel="犀利直接"
+            rightLabel="委婉礼貌"
+            value={settings.articleStyle?.politeness ?? 60}
+            onChange={(v) => handleStyleChange('politeness', v)}
+          />
+          
+          {/* 正式程度 */}
+          <StyleSlider
+            label="语言风格"
+            leftLabel="口语随意"
+            rightLabel="正式书面"
+            value={settings.articleStyle?.formality ?? 30}
+            onChange={(v) => handleStyleChange('formality', v)}
+          />
+          
+          {/* 幽默程度 */}
+          <StyleSlider
+            label="趣味程度"
+            leftLabel="严肃认真"
+            rightLabel="幽默搞笑"
+            value={settings.articleStyle?.humor ?? 40}
+            onChange={(v) => handleStyleChange('humor', v)}
+          />
+          
+          {/* 重置按钮 */}
+          <button
+            type="button"
+            onClick={() => setSettings(prev => ({
+              ...prev,
+              articleStyle: DEFAULT_SETTINGS.articleStyle
+            }))}
+            className="text-xs text-blue-600 hover:text-blue-800 underline"
+          >
+            重置为默认风格
+          </button>
         </div>
       </div>
 

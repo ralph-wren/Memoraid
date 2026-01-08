@@ -2,8 +2,8 @@ import { defineManifest } from '@crxjs/vite-plugin'
 
 export default defineManifest({
   name: 'Memoraid',
-  description: 'Export AI chat to Markdown with summarization',
-  version: '1.0.0',
+  description: 'Memoraid 是一款强大的 AI 内容处理工具，帮助您高效地总结网页内容、生成自媒体文章，并一键发布到头条号。',
+  version: '1.1.1',
   manifest_version: 3,
   action: {
     default_popup: 'index.html',
