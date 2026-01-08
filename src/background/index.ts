@@ -614,14 +614,53 @@ async function handlePublishToToutiao(payload: { title: string; content: string 
       }
     }
 
+    // Clean up content before publishing
+    let cleanedContent = payload.content;
+    
+    // 1. Remove "封面图建议" section (including variations)
+    // Pattern: "封面图建议：..." or "### 封面图建议" or "## 封面图建议" followed by content until next heading or double newline
+    cleanedContent = cleanedContent.replace(/^#{1,3}\s*封面图建议[：:].*/gm, ''); // Remove heading style
+    cleanedContent = cleanedContent.replace(/^\*?\*?封面图建议\*?\*?[：:][^\n]*(\n(?![#\n])[^\n]*)*/gm, ''); // Remove paragraph style with continuation
+    cleanedContent = cleanedContent.replace(/^封面图建议[：:][^\n]*\n?/gm, ''); // Simple single line
+    
+    // 2. Remove "Cover Image Suggestion" (English version)
+    cleanedContent = cleanedContent.replace(/^#{1,3}\s*Cover Image Suggestion[：:].*/gim, '');
+    cleanedContent = cleanedContent.replace(/^Cover Image Suggestion[：:][^\n]*\n?/gim, '');
+    
+    // 3. Clean up multiple consecutive blank lines
+    cleanedContent = cleanedContent.replace(/\n{3,}/g, '\n\n');
+    cleanedContent = cleanedContent.trim();
+    
+    // 4. Extract the real title from the content (H1 heading)
+    let articleTitle = payload.title;
+    const h1Match = cleanedContent.match(/^#\s+(.+)$/m);
+    if (h1Match && h1Match[1]) {
+      const extractedTitle = h1Match[1].trim();
+      // Only use extracted title if it's meaningful (not generic)
+      const genericTitles = ['微博搜索', 'Weibo Search', '搜索', 'Search', '主页', 'Home', 'Untitled'];
+      const isGeneric = genericTitles.some(t => payload.title?.includes(t));
+      if (isGeneric || !payload.title || payload.title.length < 3) {
+        articleTitle = extractedTitle;
+      }
+      // If payload.title is meaningful, keep it but ensure it matches the H1
+      // Actually, we should prefer the H1 title from the generated article
+      if (extractedTitle.length > 3 && extractedTitle.length <= 30) {
+        articleTitle = extractedTitle;
+      }
+    }
+    
+    // 5. Remove the H1 title from content (Toutiao has separate title field)
+    cleanedContent = cleanedContent.replace(/^#\s+.+\n+/, '');
+    cleanedContent = cleanedContent.trim();
+
     // Convert Markdown to HTML for Toutiao's rich text editor
-    const htmlContent = await marked.parse(payload.content);
+    const htmlContent = await marked.parse(cleanedContent);
 
     // Save payload to storage for content script to pick up
     await chrome.storage.local.set({
       pending_toutiao_publish: {
-        title: payload.title,
-        content: payload.content, // Keep original markdown just in case
+        title: articleTitle,
+        content: cleanedContent, // Keep cleaned markdown
         htmlContent: htmlContent, // Add converted HTML
         timestamp: Date.now()
       }

@@ -1583,19 +1583,37 @@ const fillContent = async () => {
       const editorEl = findElement(SELECTORS.editor);
 
       if (titleEl && editorEl) {
-        simulateInput(titleEl, payload.title);
-        logger.log('✅ 标题已填充', 'success');
+        // 检查标题是否已存在（不为空）
+        const existingTitle = titleEl instanceof HTMLInputElement || titleEl instanceof HTMLTextAreaElement
+          ? titleEl.value?.trim()
+          : titleEl.innerText?.trim();
+        
+        if (!existingTitle || existingTitle.length === 0) {
+          // 只有在标题为空时才填充
+          simulateInput(titleEl, payload.title);
+          logger.log('✅ 标题已填充', 'success');
+        } else {
+          logger.log(`ℹ️ 标题已存在: "${existingTitle}"，跳过填充`, 'info');
+        }
 
         editorEl.click();
         editorEl.focus();
         await new Promise(r => setTimeout(r, 300));
         
-        if (payload.htmlContent) {
-          document.execCommand('insertHTML', false, payload.htmlContent);
-          logger.log('✅ 内容已填充 (HTML)', 'success');
+        // 检查编辑器是否已有内容
+        const existingContent = editorEl.innerText?.trim();
+        const hasPlaceholderOnly = existingContent === '请输入正文' || existingContent === '';
+        
+        if (hasPlaceholderOnly) {
+          if (payload.htmlContent) {
+            document.execCommand('insertHTML', false, payload.htmlContent);
+            logger.log('✅ 内容已填充 (HTML)', 'success');
+          } else {
+            document.execCommand('insertText', false, payload.content);
+            logger.log('✅ 内容已填充 (文本)', 'success');
+          }
         } else {
-          document.execCommand('insertText', false, payload.content);
-          logger.log('✅ 内容已填充 (文本)', 'success');
+          logger.log(`ℹ️ 编辑器已有内容，跳过填充`, 'info');
         }
         
         chrome.storage.local.remove('pending_toutiao_publish');
