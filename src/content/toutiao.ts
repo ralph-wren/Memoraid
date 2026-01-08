@@ -76,15 +76,18 @@ const SELECTORS = {
     '.byte-input__inner[placeholder*="搜索"]'
   ],
   
-  // 搜索按钮 - Playwright: .btn-search
+  // 搜索按钮 - Playwright 录制: .ui-search > span
   searchButton: [
+    '.ui-search > span',
+    '.ui-search',
     '.btn-search',
     '.search-btn',
     '[class*="btn-search"]'
   ],
   
-  // 图片列表项 - Playwright: li:nth-child(8), getByRole('listitem')
+  // 图片列表项 - Playwright 录制: .img, getByRole('listitem')
   imageItem: [
+    '.img',
     'li',
     '[role="listitem"]',
     '.image-item',
@@ -251,36 +254,33 @@ const waitForDialogClose = async (timeout = 3000): Promise<boolean> => {
 };
 
 /**
- * 模拟点击 - 增强版
+ * 模拟点击 - 增强版（同步执行）
  */
 const simulateClick = (element: HTMLElement) => {
   // 确保元素可见
-  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  element.scrollIntoView({ behavior: 'instant', block: 'center' });
   
-  // 等待滚动完成
-  setTimeout(() => {
-    // 触发完整的鼠标事件序列
-    const rect = element.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    
-    const eventOptions = {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      clientX: centerX,
-      clientY: centerY
-    };
-    
-    element.dispatchEvent(new MouseEvent('mouseover', eventOptions));
-    element.dispatchEvent(new MouseEvent('mouseenter', eventOptions));
-    element.dispatchEvent(new MouseEvent('mousedown', eventOptions));
-    element.dispatchEvent(new MouseEvent('mouseup', eventOptions));
-    element.dispatchEvent(new MouseEvent('click', eventOptions));
-    
-    // 备用：直接调用 click
-    element.click();
-  }, 100);
+  // 触发完整的鼠标事件序列
+  const rect = element.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  
+  const eventOptions = {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: centerX,
+    clientY: centerY
+  };
+  
+  element.dispatchEvent(new MouseEvent('mouseover', eventOptions));
+  element.dispatchEvent(new MouseEvent('mouseenter', eventOptions));
+  element.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+  element.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+  element.dispatchEvent(new MouseEvent('click', eventOptions));
+  
+  // 备用：直接调用 click
+  element.click();
 };
 
 /**
@@ -489,7 +489,8 @@ class AILogger {
   constructor() {
     this.container = document.createElement('div');
     this.container.id = 'memoraid-ai-logger';
-    this.container.style.cssText = 'position:fixed;top:20px;right:20px;width:380px;max-height:500px;background:rgba(0,0,0,0.9);color:#0f0;font-family:Consolas,Monaco,monospace;font-size:12px;border-radius:8px;padding:12px;z-index:20000;display:none;flex-direction:column;box-shadow:0 4px 20px rgba(0,0,0,0.6);border:1px solid #333;';
+    // 移到左上角，避免遮挡右侧的图片选择区域和确定按钮
+    this.container.style.cssText = 'position:fixed;top:20px;left:20px;width:380px;max-height:500px;background:rgba(0,0,0,0.9);color:#0f0;font-family:Consolas,Monaco,monospace;font-size:12px;border-radius:8px;padding:12px;z-index:20000;display:none;flex-direction:column;box-shadow:0 4px 20px rgba(0,0,0,0.6);border:1px solid #333;';
 
     const header = document.createElement('div');
     header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #444;padding-bottom:8px;margin-bottom:8px;';
@@ -784,10 +785,10 @@ const switchToHotLibrary = async (): Promise<boolean> => {
 
 /**
  * 在图库中搜索图片
- * Playwright: 
+ * Playwright 录制: 
  *   await page.getByRole('textbox', { name: '建议输入关键词组合，如：苹果 绿色' }).click();
- *   await page.getByRole('textbox', { name: '建议输入关键词组合，如：苹果 绿色' }).fill('日本女孩');
- *   await page.locator('.btn-search').click();
+ *   await page.getByRole('textbox', { name: '建议输入关键词组合，如：苹果 绿色' }).fill('富士山');
+ *   await page.locator('.ui-search > span').click();
  */
 const searchInLibrary = async (keyword: string): Promise<boolean> => {
   logger.log(`搜索关键词: "${keyword}"`, 'info');
@@ -842,8 +843,20 @@ const searchInLibrary = async (keyword: string): Promise<boolean> => {
   searchInput.dispatchEvent(new Event('change', { bubbles: true }));
   await new Promise(r => setTimeout(r, 300));
   
-  // 点击搜索按钮 - Playwright: .btn-search
-  const searchBtn = document.querySelector('.btn-search') as HTMLElement;
+  // 点击搜索按钮 - Playwright 录制: .ui-search > span
+  let searchBtn = document.querySelector('.ui-search > span') as HTMLElement;
+  
+  // 备用选择器
+  if (!searchBtn) {
+    searchBtn = document.querySelector('.ui-search') as HTMLElement;
+  }
+  if (!searchBtn) {
+    searchBtn = document.querySelector('.btn-search') as HTMLElement;
+  }
+  if (!searchBtn) {
+    searchBtn = document.querySelector('[class*="search"] button, [class*="search"] span') as HTMLElement;
+  }
+  
   if (searchBtn) {
     logger.log('点击搜索按钮', 'action');
     simulateClick(searchBtn);
@@ -862,9 +875,17 @@ const searchInLibrary = async (keyword: string): Promise<boolean> => {
 
 /**
  * 选择图片（支持选择第N张）
- * Playwright: 
- *   await page.locator('li:nth-child(8)').click();  // 封面选第8张
- *   await page.getByRole('listitem').nth(2).click(); // 文章配图选第3张
+ * 
+ * 热点图库的选择流程（两步）：
+ * 1. 搜索后显示图片列表（左侧搜索结果，每个是一组图片 li.item）
+ * 2. 点击图片组后，右侧会展示该组的子图片列表
+ * 3. 点击右侧子图片列表中的图片 → 确认按钮出现
+ * 
+ * 关键：左侧 li.item 有标题文字，右侧子图片 li 是空文本的
+ * 
+ * Playwright 录制: 
+ *   await page.locator('.img').first().click();  // 第一次点击：选择图片组（左侧）
+ *   await page.getByRole('listitem').filter({ hasText: /^$/ }).first().click();  // 第二次点击：选择具体图片（右侧，空文本）
  */
 const selectImage = async (index = 0): Promise<boolean> => {
   logger.log(`查找图片列表，准备选择第 ${index + 1} 张...`, 'info');
@@ -873,59 +894,83 @@ const selectImage = async (index = 0): Promise<boolean> => {
   const dialog = findElement(SELECTORS.imageDialog);
   const searchContainer = dialog || document;
   
-  // 使用 Playwright 录制的选择器: li (listitem)
-  // 查找图片列表中的 li 元素
-  const imageItems = searchContainer.querySelectorAll('li');
+  // ========== 第一步: 点击左侧 .img 选择图片组 ==========
+  let imgElements = Array.from(searchContainer.querySelectorAll('.img'))
+    .filter(el => isElementVisible(el as HTMLElement));
   
-  // 过滤出可见的、包含图片的列表项
-  let visibleImages: Element[] = Array.from(imageItems).filter(li => {
-    // 检查是否可见
-    if (!isElementVisible(li as HTMLElement)) return false;
-    // 检查是否包含图片或者是图片容器
-    const hasImg = li.querySelector('img') !== null;
-    const hasBgImage = (li as HTMLElement).style.backgroundImage !== '';
-    const isImageItem = li.classList.contains('image-item') || 
-                        li.classList.contains('pic-item') ||
-                        li.className.includes('image') ||
-                        li.className.includes('pic');
-    return hasImg || hasBgImage || isImageItem;
-  });
+  logger.log(`通过 .img 找到 ${imgElements.length} 个图片组`, 'info');
   
-  // 如果没找到，尝试其他选择器
-  if (visibleImages.length === 0) {
-    const altSelectors = [
-      '[role="listitem"]',
-      '.image-item',
-      '.pic-item',
-      '[class*="image-item"]',
-      '[class*="pic-item"]'
-    ];
-    
-    for (const selector of altSelectors) {
-      const items = searchContainer.querySelectorAll(selector);
-      const visible = Array.from(items).filter(el => isElementVisible(el as HTMLElement));
-      if (visible.length > 0) {
-        visibleImages = visible;
-        logger.log(`通过选择器 "${selector}" 找到 ${visible.length} 个图片`, 'info');
-        break;
-      }
-    }
-  }
-  
-  if (visibleImages.length === 0) {
+  if (imgElements.length === 0) {
     logger.log('未找到可选择的图片', 'error');
     return false;
   }
   
-  logger.log(`找到 ${visibleImages.length} 张可见图片`, 'info');
+  // 选择指定索引的图片组
+  const targetIndex = Math.min(index, imgElements.length - 1);
+  const targetImage = imgElements[targetIndex] as HTMLElement;
   
-  // 选择指定索引的图片（Playwright 使用 nth-child 从1开始，这里 index 从0开始）
-  const targetIndex = Math.min(index, visibleImages.length - 1);
-  const targetImage = visibleImages[targetIndex] as HTMLElement;
+  logger.log(`点击第 ${targetIndex + 1} 个图片组（左侧）`, 'action');
+  targetImage.click();
   
-  logger.log(`选择第 ${targetIndex + 1} 张图片`, 'action');
-  simulateClick(targetImage);
-  await new Promise(r => setTimeout(r, 500));
+  // 等待右侧图片列表展示
+  logger.log('等待右侧子图片列表展示...', 'info');
+  await new Promise(r => setTimeout(r, 1500));
+  
+  // ========== 第二步: 在右侧子图片列表中选择具体图片 ==========
+  // 关键：右侧子图片是空文本的 li 元素（没有标题）
+  // Playwright: getByRole('listitem').filter({ hasText: /^$/ })
+  logger.log('查找右侧子图片列表（空文本的 li）...', 'info');
+  
+  // 重新获取对话框
+  const updatedDialog = findElement(SELECTORS.imageDialog);
+  const updatedContainer = updatedDialog || document;
+  
+  // 查找所有 li 元素
+  const allLiElements = updatedContainer.querySelectorAll('li');
+  logger.log(`找到 ${allLiElements.length} 个 li 元素`, 'info');
+  
+  // 筛选出空文本的 li（右侧子图片）
+  const emptyTextLiElements: HTMLElement[] = [];
+  const hasTextLiElements: HTMLElement[] = [];
+  
+  for (const li of allLiElements) {
+    const el = li as HTMLElement;
+    if (!isElementVisible(el)) continue;
+    
+    const text = el.innerText?.trim() || '';
+    if (text === '') {
+      emptyTextLiElements.push(el);
+    } else {
+      hasTextLiElements.push(el);
+    }
+  }
+  
+  logger.log(`空文本 li: ${emptyTextLiElements.length} 个, 有文本 li: ${hasTextLiElements.length} 个`, 'info');
+  
+  // 优先点击空文本的 li（右侧子图片）
+  if (emptyTextLiElements.length > 0) {
+    const selectedImage = emptyTextLiElements[0];
+    logger.log(`点击右侧子图片（空文本 li）: ${selectedImage.className}`, 'action');
+    selectedImage.click();
+    
+    // 等待选中状态更新
+    await new Promise(r => setTimeout(r, 1000));
+    logger.log('图片已选中，等待确认按钮出现...', 'info');
+  } else {
+    // 备用方案：查找未选中的 li.item
+    logger.log('未找到空文本 li，尝试查找未选中的 li.item...', 'warn');
+    
+    const allListItems = updatedContainer.querySelectorAll('li.item');
+    for (const item of allListItems) {
+      const el = item as HTMLElement;
+      if (isElementVisible(el) && !el.classList.contains('select')) {
+        logger.log(`点击未选中的 li.item: ${el.className}`, 'action');
+        el.click();
+        await new Promise(r => setTimeout(r, 1000));
+        break;
+      }
+    }
+  }
   
   return true;
 };
@@ -933,57 +978,63 @@ const selectImage = async (index = 0): Promise<boolean> => {
 /**
  * 点击确认按钮
  * Playwright: await page.getByRole('button', { name: '确定' }).click();
+ * 注意：确认按钮只有在图片被选中后才会出现/可用
  */
 const clickConfirmButton = async (): Promise<boolean> => {
   logger.log('查找确认按钮...', 'info');
-  await new Promise(r => setTimeout(r, 300));
   
-  const dialog = findElement(SELECTORS.imageDialog);
-  
-  // 方法1: 通过文本内容查找 "确定" 按钮（模拟 Playwright 的 getByRole）
+  // 等待确认按钮出现（最多等待 3 秒，每 500ms 检查一次）
   let confirmBtn: HTMLElement | null = null;
-  const buttons = document.querySelectorAll('button');
+  const maxAttempts = 6;
   
-  for (const btn of buttons) {
-    const text = (btn as HTMLElement).innerText?.trim();
-    if (text === '确定') {
-      // 确保按钮在对话框内或可见
-      if (dialog?.contains(btn) || isElementVisible(btn as HTMLElement)) {
-        confirmBtn = btn as HTMLElement;
-        logger.log('找到确定按钮', 'success');
-        break;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await new Promise(r => setTimeout(r, 500));
+    
+    // 方法1: 直接查找所有按钮，找文本为"确定"的
+    const allButtons = document.querySelectorAll('button');
+    for (const btn of allButtons) {
+      const text = (btn as HTMLElement).innerText?.trim();
+      if (text === '确定' && isElementVisible(btn as HTMLElement)) {
+        // 检查按钮是否可用（不是禁用状态）
+        const isDisabled = btn.hasAttribute('disabled') ||
+                           btn.classList.contains('byte-btn-disabled') ||
+                           btn.classList.contains('disabled');
+        if (!isDisabled) {
+          confirmBtn = btn as HTMLElement;
+          logger.log(`找到确定按钮 (尝试 ${attempt + 1}/${maxAttempts})`, 'success');
+          break;
+        }
       }
     }
-  }
-  
-  // 方法2: 查找主要按钮
-  if (!confirmBtn && dialog) {
-    confirmBtn = dialog.querySelector('.byte-btn-primary') as HTMLElement;
-  }
-  
-  // 方法3: 查找对话框底部的按钮
-  if (!confirmBtn && dialog) {
-    const footer = dialog.querySelector('.byte-modal-footer, [class*="modal-footer"]');
-    if (footer) {
-      const primaryBtn = footer.querySelector('.byte-btn-primary, button:last-child');
-      if (primaryBtn) {
-        confirmBtn = primaryBtn as HTMLElement;
+    
+    if (confirmBtn) break;
+    
+    // 方法2: 查找 .byte-btn-primary 按钮
+    if (!confirmBtn) {
+      const primaryBtns = document.querySelectorAll('.byte-btn-primary');
+      for (const btn of primaryBtns) {
+        const text = (btn as HTMLElement).innerText?.trim();
+        if ((text === '确定' || text.includes('确定')) && isElementVisible(btn as HTMLElement)) {
+          const isDisabled = btn.hasAttribute('disabled') ||
+                             btn.classList.contains('byte-btn-disabled');
+          if (!isDisabled) {
+            confirmBtn = btn as HTMLElement;
+            logger.log(`找到确定按钮 (.byte-btn-primary, 尝试 ${attempt + 1})`, 'success');
+            break;
+          }
+        }
       }
+    }
+    
+    if (confirmBtn) break;
+    
+    if (attempt < maxAttempts - 1) {
+      logger.log(`等待确认按钮出现... (${attempt + 1}/${maxAttempts})`, 'info');
     }
   }
   
   if (!confirmBtn) {
-    logger.log('未找到确认按钮', 'error');
-    return false;
-  }
-  
-  // 检查按钮是否可用
-  const isDisabled = confirmBtn.hasAttribute('disabled') ||
-                     confirmBtn.classList.contains('byte-btn-disabled') ||
-                     confirmBtn.classList.contains('disabled');
-  
-  if (isDisabled) {
-    logger.log('确认按钮当前不可用，可能需要先选择图片', 'warn');
+    logger.log('未找到可用的确认按钮', 'error');
     return false;
   }
   
@@ -992,7 +1043,7 @@ const clickConfirmButton = async (): Promise<boolean> => {
   await new Promise(r => setTimeout(r, 1000));
   
   // 等待对话框关闭
-  const closed = await waitForDialogClose(2000);
+  const closed = await waitForDialogClose(3000);
   if (closed) {
     logger.log('对话框已关闭', 'success');
   }
