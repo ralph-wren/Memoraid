@@ -267,14 +267,41 @@ const openImageDialog = async (): Promise<boolean> => {
     await new Promise(r => setTimeout(r, 300));
   }
   
-  // 查找图片按钮
-  let imageBtn = document.querySelector('button[aria-label="图片"]') as HTMLElement;
+  // 查找图片按钮 - Playwright: getByRole('button', { name: '图片' })
+  let imageBtn: HTMLElement | null = null;
   
+  // 方法1: 通过 aria-label (最精确)
+  imageBtn = document.querySelector('button[aria-label="图片"]') as HTMLElement;
+  if (imageBtn) {
+    logger.log('通过 aria-label 找到图片按钮', 'info');
+  }
+  
+  // 方法2: 通过 data-tooltip
+  if (!imageBtn) {
+    imageBtn = document.querySelector('button[data-tooltip="图片"]') as HTMLElement;
+    if (imageBtn) {
+      logger.log('通过 data-tooltip 找到图片按钮', 'info');
+    }
+  }
+  
+  // 方法3: 通过按钮文本精确匹配
   if (!imageBtn) {
     const buttons = document.querySelectorAll('button');
     for (const btn of buttons) {
-      if ((btn as HTMLElement).innerText?.includes('图片') || 
-          btn.getAttribute('data-tooltip')?.includes('图片')) {
+      const text = (btn as HTMLElement).innerText?.trim();
+      if (text === '图片' && isElementVisible(btn as HTMLElement)) {
+        imageBtn = btn as HTMLElement;
+        logger.log('通过文本找到图片按钮', 'info');
+        break;
+      }
+    }
+  }
+  
+  // 方法4: 通过包含"图片"的按钮
+  if (!imageBtn) {
+    const buttons = document.querySelectorAll('button');
+    for (const btn of buttons) {
+      if ((btn as HTMLElement).innerText?.includes('图片') && isElementVisible(btn as HTMLElement)) {
         imageBtn = btn as HTMLElement;
         break;
       }
@@ -287,62 +314,325 @@ const openImageDialog = async (): Promise<boolean> => {
   }
   
   logger.log('点击图片按钮', 'action');
-  simulateClick(imageBtn);
+  
+  // 使用更完整的点击模拟，确保下拉菜单能弹出
+  imageBtn.focus();
+  await new Promise(r => setTimeout(r, 100));
+  
+  // 先尝试直接 click
+  imageBtn.click();
   await new Promise(r => setTimeout(r, 500));
+  
+  // 检查是否有下拉菜单出现
+  let menuAppeared = false;
+  const checkMenu = () => {
+    // 查找可能的下拉菜单
+    const menus = document.querySelectorAll('[class*="Popover"], [class*="popover"], [class*="Dropdown"], [class*="dropdown"], [class*="Menu"], [class*="menu"], [role="menu"], [role="listbox"]');
+    for (const menu of menus) {
+      if (isElementVisible(menu as HTMLElement)) {
+        const text = (menu as HTMLElement).innerText;
+        if (text?.includes('公共图片库') || text?.includes('本地上传')) {
+          return true;
+        }
+      }
+    }
+    // 也检查是否有"公共图片库"文本出现
+    const xpath = "//*[contains(text(), '公共图片库')]";
+    const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+    for (let i = 0; i < result.snapshotLength; i++) {
+      const el = result.snapshotItem(i) as HTMLElement;
+      if (el && isElementVisible(el)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  
+  menuAppeared = checkMenu();
+  
+  // 如果菜单没出现，尝试用 simulateClick
+  if (!menuAppeared) {
+    logger.log('下拉菜单未出现，尝试模拟点击...', 'info');
+    simulateClick(imageBtn);
+    await new Promise(r => setTimeout(r, 800));
+    menuAppeared = checkMenu();
+  }
+  
+  // 如果还是没出现，再试一次
+  if (!menuAppeared) {
+    logger.log('再次尝试点击图片按钮...', 'info');
+    // 尝试 mousedown + mouseup
+    const rect = imageBtn.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    
+    imageBtn.dispatchEvent(new MouseEvent('mousedown', {
+      bubbles: true, cancelable: true, view: window,
+      clientX: centerX, clientY: centerY, button: 0
+    }));
+    await new Promise(r => setTimeout(r, 50));
+    imageBtn.dispatchEvent(new MouseEvent('mouseup', {
+      bubbles: true, cancelable: true, view: window,
+      clientX: centerX, clientY: centerY, button: 0
+    }));
+    await new Promise(r => setTimeout(r, 800));
+    menuAppeared = checkMenu();
+  }
+  
+  if (menuAppeared) {
+    logger.log('图片菜单已弹出', 'success');
+  } else {
+    logger.log('图片菜单可能未完全加载，继续尝试...', 'warn');
+  }
+  
+  // 等待图片上传弹窗出现
+  logger.log('等待图片弹窗加载...', 'info');
+  await new Promise(r => setTimeout(r, 1000));
   
   return true;
 };
 
 const clickPublicLibrary = async (): Promise<boolean> => {
   logger.log('查找公共图片库按钮...', 'info');
-  await new Promise(r => setTimeout(r, 500));
   
-  const buttons = document.querySelectorAll('button');
+  // 重试机制：最多尝试 8 次，每次间隔 500ms
+  const maxAttempts = 8;
   let publicBtn: HTMLElement | null = null;
   
-  for (const btn of buttons) {
-    if ((btn as HTMLElement).innerText?.includes('公共图片库')) {
-      publicBtn = btn as HTMLElement;
-      break;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await new Promise(r => setTimeout(r, 500));
+    
+    // 方法1: 通过按钮文本精确匹配 (button 标签)
+    const buttons = document.querySelectorAll('button');
+    for (const btn of buttons) {
+      const text = (btn as HTMLElement).innerText?.trim();
+      if (text === '公共图片库' || text?.includes('公共图片库')) {
+        if (isElementVisible(btn as HTMLElement)) {
+          publicBtn = btn as HTMLElement;
+          logger.log(`找到公共图片库按钮 [button] (尝试 ${attempt}/${maxAttempts})`, 'success');
+          break;
+        }
+      }
+    }
+    
+    if (publicBtn) break;
+    
+    // 方法2: 查找弹出层/模态框内的元素
+    // 知乎的图片上传弹窗可能使用特定的 class
+    const popups = document.querySelectorAll('[class*="Popover"], [class*="popover"], [class*="Modal"], [class*="modal"], [class*="Dropdown"], [class*="dropdown"], [class*="Menu"], [class*="menu"], [role="dialog"], [role="menu"], [role="listbox"]');
+    for (const popup of popups) {
+      if (!isElementVisible(popup as HTMLElement)) continue;
+      
+      // 在弹出层内查找包含"公共图片库"文本的元素
+      const allInPopup = popup.querySelectorAll('*');
+      for (const el of allInPopup) {
+        const text = (el as HTMLElement).innerText?.trim();
+        if (text === '公共图片库' && isElementVisible(el as HTMLElement)) {
+          publicBtn = el as HTMLElement;
+          logger.log(`在弹出层中找到公共图片库 (尝试 ${attempt}/${maxAttempts})`, 'success');
+          break;
+        }
+      }
+      if (publicBtn) break;
+    }
+    
+    if (publicBtn) break;
+    
+    // 方法3: 全局搜索所有包含"公共图片库"文本的可见元素
+    if (!publicBtn) {
+      const allElements = document.querySelectorAll('div, span, a, li, p, label');
+      for (const el of allElements) {
+        // 只检查直接文本内容，避免匹配父容器
+        const directText = Array.from(el.childNodes)
+          .filter(node => node.nodeType === Node.TEXT_NODE)
+          .map(node => node.textContent?.trim())
+          .join('');
+        
+        if (directText === '公共图片库' && isElementVisible(el as HTMLElement)) {
+          publicBtn = el as HTMLElement;
+          logger.log(`通过直接文本找到公共图片库 (尝试 ${attempt}/${maxAttempts})`, 'success');
+          break;
+        }
+        
+        // 备用：检查 innerText 但确保是叶子节点
+        const text = (el as HTMLElement).innerText?.trim();
+        if (text === '公共图片库' && isElementVisible(el as HTMLElement)) {
+          const children = el.querySelectorAll('*');
+          let hasChildWithSameText = false;
+          for (const child of children) {
+            if ((child as HTMLElement).innerText?.trim() === '公共图片库') {
+              hasChildWithSameText = true;
+              break;
+            }
+          }
+          if (!hasChildWithSameText) {
+            publicBtn = el as HTMLElement;
+            logger.log(`通过叶子节点找到公共图片库 (尝试 ${attempt}/${maxAttempts})`, 'success');
+            break;
+          }
+        }
+      }
+    }
+    
+    if (publicBtn) break;
+    
+    // 方法4: 使用 XPath 查找包含"公共图片库"文本的元素
+    if (!publicBtn) {
+      const xpath = "//*[contains(text(), '公共图片库')]";
+      const result = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+      for (let i = 0; i < result.snapshotLength; i++) {
+        const el = result.snapshotItem(i) as HTMLElement;
+        if (el && isElementVisible(el)) {
+          publicBtn = el;
+          logger.log(`通过 XPath 找到公共图片库 (尝试 ${attempt}/${maxAttempts})`, 'success');
+          break;
+        }
+      }
+    }
+    
+    if (publicBtn) break;
+    
+    if (attempt < maxAttempts) {
+      logger.log(`未找到公共图片库按钮，重试 ${attempt}/${maxAttempts}...`, 'info');
     }
   }
   
   if (!publicBtn) {
     logger.log('未找到公共图片库按钮', 'warn');
+    // 打印调试信息 - 查找所有包含"图片"或"库"的元素
+    logger.log('调试: 搜索包含"公共"或"图片库"的元素...', 'info');
+    const allElements = document.querySelectorAll('*');
+    let foundCount = 0;
+    allElements.forEach((el) => {
+      const text = (el as HTMLElement).innerText?.trim();
+      if (text && (text.includes('公共') || text.includes('图片库')) && text.length < 20) {
+        const visible = isElementVisible(el as HTMLElement);
+        const tag = el.tagName.toLowerCase();
+        if (visible && foundCount < 10) {
+          logger.log(`  <${tag}>: "${text}"`, 'info');
+          foundCount++;
+        }
+      }
+    });
     return false;
   }
   
   logger.log('点击公共图片库', 'action');
   simulateClick(publicBtn);
-  await new Promise(r => setTimeout(r, 1000));
+  
+  // 等待公共图片库界面加载
+  logger.log('等待公共图片库界面加载...', 'info');
+  await new Promise(r => setTimeout(r, 2000));
   
   return true;
 };
 
 const searchImage = async (keyword: string): Promise<boolean> => {
   logger.log(`搜索图片: ${keyword}`, 'info');
+  await new Promise(r => setTimeout(r, 500));
   
-  let searchInput = document.querySelector('input[placeholder*="输入关键字"]') as HTMLElement;
+  // 方法1: Playwright 录制的选择器 - getByRole('textbox', { name: '输入关键字查找图片' })
+  let searchInput = document.querySelector('input[placeholder*="输入关键字查找图片"]') as HTMLElement;
+  
+  // 方法2: 部分匹配
+  if (!searchInput) {
+    searchInput = document.querySelector('input[placeholder*="输入关键字"]') as HTMLElement;
+  }
+  if (!searchInput) {
+    searchInput = document.querySelector('input[placeholder*="关键字查找"]') as HTMLElement;
+  }
   if (!searchInput) {
     searchInput = document.querySelector('input[placeholder*="查找图片"]') as HTMLElement;
   }
   
+  // 方法3: 查找所有可见的 input 元素
+  if (!searchInput) {
+    const inputs = document.querySelectorAll('input[type="text"], input:not([type])');
+    for (const input of inputs) {
+      const placeholder = input.getAttribute('placeholder') || '';
+      if (placeholder.includes('关键') || placeholder.includes('查找') || placeholder.includes('搜索')) {
+        if (isElementVisible(input as HTMLElement)) {
+          searchInput = input as HTMLElement;
+          logger.log(`找到搜索框 (placeholder: ${placeholder})`, 'info');
+          break;
+        }
+      }
+    }
+  }
+  
+  // 方法4: 查找对话框内的第一个可见 input
+  if (!searchInput) {
+    const modal = document.querySelector('[class*="Modal"], [class*="modal"], [class*="Dialog"], [role="dialog"]');
+    if (modal) {
+      const inputs = modal.querySelectorAll('input');
+      for (const input of inputs) {
+        if (isElementVisible(input as HTMLElement)) {
+          searchInput = input as HTMLElement;
+          logger.log('在对话框中找到输入框', 'info');
+          break;
+        }
+      }
+    }
+  }
+  
   if (!searchInput) {
     logger.log('未找到搜索框', 'error');
+    // 打印页面上所有 input 的信息用于调试
+    const allInputs = document.querySelectorAll('input');
+    logger.log(`页面上共有 ${allInputs.length} 个 input 元素`, 'info');
+    allInputs.forEach((input, i) => {
+      const placeholder = input.getAttribute('placeholder') || '(无)';
+      const visible = isElementVisible(input as HTMLElement);
+      logger.log(`  input[${i}]: placeholder="${placeholder}", visible=${visible}`, 'info');
+    });
     return false;
   }
   
+  logger.log('点击搜索框', 'action');
   simulateClick(searchInput);
-  await new Promise(r => setTimeout(r, 200));
-  simulateInput(searchInput, keyword);
+  await new Promise(r => setTimeout(r, 300));
   
-  // 按回车搜索
-  searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-  searchInput.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-  searchInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+  logger.log('输入搜索关键词', 'action');
+  simulateInput(searchInput, keyword);
+  await new Promise(r => setTimeout(r, 300));
+  
+  // 根据 Playwright 录制：await page.locator('.css-13oeh20').click();
+  // .css-13oeh20 是搜索确认按钮
+  logger.log('查找搜索确认按钮 (.css-13oeh20)...', 'info');
+  const searchConfirmBtn = document.querySelector('.css-13oeh20') as HTMLElement;
+  
+  if (searchConfirmBtn && isElementVisible(searchConfirmBtn)) {
+    logger.log('点击搜索确认按钮 (.css-13oeh20)', 'action');
+    simulateClick(searchConfirmBtn);
+    await new Promise(r => setTimeout(r, 500));
+  } else {
+    // 备用方法：按回车键或点击搜索按钮
+    const searchBtns = document.querySelectorAll('button');
+    let searchBtn: HTMLElement | null = null;
+    for (const btn of searchBtns) {
+      const text = (btn as HTMLElement).innerText?.trim();
+      if (text === '搜索' || text?.includes('搜索')) {
+        if (isElementVisible(btn as HTMLElement)) {
+          searchBtn = btn as HTMLElement;
+          break;
+        }
+      }
+    }
+    
+    if (searchBtn) {
+      logger.log('点击搜索按钮', 'action');
+      simulateClick(searchBtn);
+    } else {
+      // 按回车键
+      logger.log('按回车键搜索', 'action');
+      searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+      searchInput.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+      searchInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    }
+  }
   
   logger.log('等待搜索结果...', 'info');
-  await new Promise(r => setTimeout(r, 2000));
+  await new Promise(r => setTimeout(r, 2500));
   
   return true;
 };
@@ -351,54 +641,154 @@ const selectImage = async (index = 0): Promise<boolean> => {
   logger.log('选择图片...', 'info');
   await new Promise(r => setTimeout(r, 500));
   
-  // 查找图片列表
-  let images = document.querySelectorAll('.css-128iodx, [class*="ImageSearch"] img, .Image-item img');
+  // 严格按照 Playwright 录制的步骤：
+  // await page.locator('.css-128iodx').first().click();
+  // 只点击一次 .css-128iodx 元素来选中图片
   
-  if (images.length === 0) {
-    // 备用：查找所有可点击的图片
-    images = document.querySelectorAll('[role="link"] img, .ImageSearch img');
+  const imageElements = document.querySelectorAll('.css-128iodx');
+  logger.log(`找到 ${imageElements.length} 个 .css-128iodx 元素`, 'info');
+  
+  if (imageElements.length > 0) {
+    const targetIndex = Math.min(index, imageElements.length - 1);
+    const targetElement = imageElements[targetIndex] as HTMLElement;
+    
+    if (isElementVisible(targetElement)) {
+      logger.log(`点击第 ${targetIndex + 1} 个图片 (.css-128iodx)`, 'action');
+      
+      // 只使用一种点击方式，避免重复点击导致取消选中
+      const rect = targetElement.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      
+      const mouseEventInit = {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: centerX,
+        clientY: centerY,
+        button: 0,
+        buttons: 1
+      };
+      
+      targetElement.dispatchEvent(new MouseEvent('mousedown', mouseEventInit));
+      await new Promise(r => setTimeout(r, 50));
+      targetElement.dispatchEvent(new MouseEvent('mouseup', mouseEventInit));
+      targetElement.dispatchEvent(new MouseEvent('click', mouseEventInit));
+      
+      await new Promise(r => setTimeout(r, 800));
+      
+      logger.log('图片选择完成', 'success');
+      return true;
+    } else {
+      logger.log('.css-128iodx 元素不可见', 'warn');
+    }
   }
   
-  logger.log(`找到 ${images.length} 张图片`, 'info');
-  
-  if (images.length === 0) {
-    logger.log('未找到可选择的图片', 'error');
-    return false;
+  // 备用方法：查找模态框内的图片
+  logger.log('尝试备用方法查找图片...', 'info');
+  const modal = document.querySelector('[role="dialog"], [class*="Modal"], [class*="modal"]');
+  if (modal) {
+    const imgs = modal.querySelectorAll('img');
+    const validImgs: HTMLElement[] = [];
+    
+    imgs.forEach(img => {
+      const rect = img.getBoundingClientRect();
+      if (rect.width >= 80 && rect.height >= 80 && isElementVisible(img as HTMLElement)) {
+        validImgs.push(img as HTMLElement);
+      }
+    });
+    
+    logger.log(`在模态框中找到 ${validImgs.length} 张图片`, 'info');
+    
+    if (validImgs.length > 0) {
+      const targetImg = validImgs[Math.min(index, validImgs.length - 1)];
+      logger.log('点击图片', 'action');
+      targetImg.click();
+      await new Promise(r => setTimeout(r, 500));
+      return true;
+    }
   }
   
-  const targetIndex = Math.min(index, images.length - 1);
-  const targetImage = images[targetIndex] as HTMLElement;
-  
-  logger.log(`点击第 ${targetIndex + 1} 张图片`, 'action');
-  simulateClick(targetImage);
-  await new Promise(r => setTimeout(r, 1000));
-  
-  return true;
+  logger.log('未找到可选择的图片', 'error');
+  return false;
 };
 
 const clickInsertImage = async (): Promise<boolean> => {
   logger.log('查找插入图片按钮...', 'info');
   await new Promise(r => setTimeout(r, 500));
   
-  const buttons = document.querySelectorAll('button');
   let insertBtn: HTMLElement | null = null;
   
+  // 方法1: 查找包含"插入图片"文本的按钮
+  const buttons = document.querySelectorAll('button');
   for (const btn of buttons) {
-    if ((btn as HTMLElement).innerText?.includes('插入图片')) {
-      insertBtn = btn as HTMLElement;
-      break;
+    const text = (btn as HTMLElement).innerText?.trim();
+    if (text === '插入图片' || text?.includes('插入图片')) {
+      if (isElementVisible(btn as HTMLElement)) {
+        insertBtn = btn as HTMLElement;
+        logger.log('找到插入图片按钮', 'info');
+        break;
+      }
+    }
+  }
+  
+  // 方法2: 查找模态框内的插入按钮
+  if (!insertBtn) {
+    const modal = document.querySelector('[role="dialog"], [class*="Modal"], [class*="modal"]');
+    if (modal) {
+      const btns = modal.querySelectorAll('button');
+      for (const btn of btns) {
+        const text = (btn as HTMLElement).innerText?.trim();
+        if (text === '插入图片' || text?.includes('插入')) {
+          if (isElementVisible(btn as HTMLElement)) {
+            insertBtn = btn as HTMLElement;
+            logger.log('在模态框中找到插入图片按钮', 'info');
+            break;
+          }
+        }
+      }
     }
   }
   
   if (!insertBtn) {
     logger.log('未找到插入图片按钮', 'error');
+    // 调试：打印所有可见按钮
+    const allBtns = document.querySelectorAll('button');
+    logger.log(`页面上共有 ${allBtns.length} 个按钮`, 'info');
+    allBtns.forEach((btn, i) => {
+      const text = (btn as HTMLElement).innerText?.trim();
+      if (text && isElementVisible(btn as HTMLElement) && text.length < 20) {
+        logger.log(`  button[${i}]: "${text}"`, 'info');
+      }
+    });
     return false;
   }
   
-  logger.log('点击插入图片', 'action');
-  simulateClick(insertBtn);
-  await new Promise(r => setTimeout(r, 1000));
+  logger.log('点击插入图片按钮', 'action');
   
+  // 使用与选择图片相同的点击方式
+  const rect = insertBtn.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  
+  const mouseEventInit = {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: centerX,
+    clientY: centerY,
+    button: 0,
+    buttons: 1
+  };
+  
+  insertBtn.dispatchEvent(new MouseEvent('mousedown', mouseEventInit));
+  await new Promise(r => setTimeout(r, 50));
+  insertBtn.dispatchEvent(new MouseEvent('mouseup', mouseEventInit));
+  insertBtn.dispatchEvent(new MouseEvent('click', mouseEventInit));
+  
+  await new Promise(r => setTimeout(r, 1500));
+  
+  logger.log('插入图片按钮已点击', 'success');
   return true;
 };
 
@@ -502,9 +892,11 @@ const runSmartImageFlow = async (keyword?: string, autoPublish = false) => {
     if (!await openImageDialog()) return;
     if (isFlowCancelled) return;
     
-    // 2. 点击公共图片库
-    if (!await clickPublicLibrary()) {
-      logger.log('跳过公共图片库，尝试直接搜索', 'warn');
+    // 2. 点击公共图片库（必须成功，否则无法搜索）
+    const publicLibrarySuccess = await clickPublicLibrary();
+    if (!publicLibrarySuccess) {
+      logger.log('无法打开公共图片库，跳过图片插入', 'error');
+      return;
     }
     if (isFlowCancelled) return;
     
