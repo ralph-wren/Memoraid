@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AppSettings, DEFAULT_SETTINGS, getSettings, saveSettings, syncSettings, restoreSettings, ArticleStyleSettings } from '../utils/storage';
 import { SYSTEM_PROMPTS } from '../utils/prompts';
 import { getTranslation } from '../utils/i18n';
-import { Eye, EyeOff, Github, Loader2, CheckCircle, XCircle, Newspaper, RefreshCw, Cloud, Lock, Key, Bug, Palette } from 'lucide-react';
+import { Eye, EyeOff, Github, Loader2, CheckCircle, XCircle, Newspaper, RefreshCw, Cloud, Lock, Key, Bug, Palette, Send } from 'lucide-react';
 import { validateGitHubConnection } from '../utils/github';
 import { generateRandomString } from '../utils/crypto';
 
@@ -701,6 +701,34 @@ const Settings: React.FC = () => {
              <p className="text-[10px] text-gray-400">
                Login to mp.toutiao.com, open DevTools, copy 'cookie' from any network request header.
              </p>
+          </div>
+          
+          {/* 自动发布开关 */}
+          <div className="bg-white rounded-lg border border-gray-100 p-3 mt-3">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <Send className={`w-4 h-4 ${settings.toutiao?.autoPublish ? 'text-green-500' : 'text-gray-400'}`} />
+                    <div>
+                        <span className="font-medium text-gray-800 text-sm">自动发布</span>
+                        <p className="text-[10px] text-gray-500">生成文章后自动发布到头条并跳转到发布页面</p>
+                    </div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                        type="checkbox" 
+                        className="sr-only peer"
+                        checked={settings.toutiao?.autoPublish || false}
+                        onChange={(e) => setSettings({ 
+                          ...settings, 
+                          toutiao: {
+                            ...settings.toutiao || { cookie: '' },
+                            autoPublish: e.target.checked
+                          }
+                        })}
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-green-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
+                </label>
+            </div>
           </div>
         </div>
       </div>

@@ -870,6 +870,24 @@ async function startArticleGeneration(extraction: ExtractionResult) {
       message: `Article generated for: ${finalTitle}`
     });
 
+    // 检查是否开启了自动发布
+    if (settings.toutiao?.autoPublish && settings.toutiao?.cookie) {
+      console.log('Auto-publish enabled, publishing to Toutiao...');
+      updateTaskState({ 
+        status: 'Publishing...', 
+        message: 'Auto-publishing to Toutiao...',
+        progress: 100, 
+        result: summary, 
+        title: finalTitle
+      });
+      
+      // 自动发布到头条
+      await handlePublishToToutiao({
+        title: finalTitle,
+        content: summary
+      });
+    }
+
   } catch (error: any) {
     if (error.name === 'AbortError') {
       console.log('Article generation cancelled');

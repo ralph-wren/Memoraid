@@ -15,3 +15,4 @@ Insert overview text here. The agent will only see this should they choose to ap
 8. 代码仓库地址 https://github.com/ralph-wren/memoraid
 9. 所有内容部署到cloudflare page
 10. 本地已经安装和cloudflare的d1，r1数据库的交互命令
+11. 任务完成后检查下是否符合要求

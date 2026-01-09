@@ -117,6 +117,20 @@ const SELECTORS = {
     '[aria-label="Close"]'
   ],
   
+  // 预览并发布按钮 - Playwright: getByRole('button', { name: '预览并发布' })
+  publishPreviewButton: [
+    'button:contains("预览并发布")',
+    '.byte-btn:contains("预览并发布")',
+    '[class*="publish"] button'
+  ],
+  
+  // 确认发布按钮 - Playwright: getByRole('button', { name: '确认发布' })
+  confirmPublishButton: [
+    'button:contains("确认发布")',
+    '.byte-btn-primary:contains("确认发布")',
+    '.byte-modal button:contains("确认发布")'
+  ],
+  
   // 预览按钮 - Playwright: getByRole('button', { name: '预览', exact: true })
   previewButton: [
     'button:contains("预览")'
@@ -1318,6 +1332,119 @@ const replaceAllImagePlaceholders = async (): Promise<number> => {
 };
 
 /**
+ * 点击"预览并发布"按钮
+ * Playwright: await page.getByRole('button', { name: '预览并发布' }).click();
+ */
+const clickPublishPreviewButton = async (): Promise<boolean> => {
+  logger.log('查找"预览并发布"按钮...', 'info');
+  
+  // 方法1: 通过文本内容查找按钮
+  const allButtons = document.querySelectorAll('button');
+  let publishBtn: HTMLElement | null = null;
+  
+  for (const btn of allButtons) {
+    const text = (btn as HTMLElement).innerText?.trim();
+    if (text === '预览并发布' && isElementVisible(btn as HTMLElement)) {
+      publishBtn = btn as HTMLElement;
+      break;
+    }
+  }
+  
+  // 方法2: 查找包含"预览并发布"文本的按钮
+  if (!publishBtn) {
+    for (const btn of allButtons) {
+      const text = (btn as HTMLElement).innerText?.trim();
+      if (text?.includes('预览并发布') && isElementVisible(btn as HTMLElement)) {
+        publishBtn = btn as HTMLElement;
+        break;
+      }
+    }
+  }
+  
+  if (!publishBtn) {
+    logger.log('未找到"预览并发布"按钮', 'error');
+    return false;
+  }
+  
+  logger.log('点击"预览并发布"按钮', 'action');
+  simulateClick(publishBtn);
+  await new Promise(r => setTimeout(r, 2000));
+  
+  return true;
+};
+
+/**
+ * 点击"确认发布"按钮
+ * Playwright: await page.getByRole('button', { name: '确认发布' }).click();
+ */
+const clickConfirmPublishButton = async (): Promise<boolean> => {
+  logger.log('查找"确认发布"按钮...', 'info');
+  
+  // 等待确认对话框出现
+  await new Promise(r => setTimeout(r, 1000));
+  
+  // 方法1: 通过文本内容查找按钮
+  const allButtons = document.querySelectorAll('button');
+  let confirmBtn: HTMLElement | null = null;
+  
+  for (const btn of allButtons) {
+    const text = (btn as HTMLElement).innerText?.trim();
+    if (text === '确认发布' && isElementVisible(btn as HTMLElement)) {
+      confirmBtn = btn as HTMLElement;
+      break;
+    }
+  }
+  
+  // 方法2: 在模态框中查找
+  if (!confirmBtn) {
+    const modal = document.querySelector('.byte-modal, [role="dialog"]');
+    if (modal) {
+      const modalButtons = modal.querySelectorAll('button');
+      for (const btn of modalButtons) {
+        const text = (btn as HTMLElement).innerText?.trim();
+        if (text === '确认发布' || text?.includes('确认发布')) {
+          confirmBtn = btn as HTMLElement;
+          break;
+        }
+      }
+    }
+  }
+  
+  if (!confirmBtn) {
+    logger.log('未找到"确认发布"按钮', 'error');
+    return false;
+  }
+  
+  logger.log('点击"确认发布"按钮', 'action');
+  simulateClick(confirmBtn);
+  await new Promise(r => setTimeout(r, 2000));
+  
+  logger.log('✅ 文章已发布！', 'success');
+  return true;
+};
+
+/**
+ * 自动发布文章（点击预览并发布 -> 确认发布）
+ */
+const autoPublishArticle = async (): Promise<boolean> => {
+  logger.log('🚀 开始自动发布流程...', 'info');
+  
+  // 第一步：点击"预览并发布"
+  if (!await clickPublishPreviewButton()) {
+    logger.log('自动发布失败：无法点击预览并发布按钮', 'error');
+    return false;
+  }
+  
+  // 第二步：点击"确认发布"
+  if (!await clickConfirmPublishButton()) {
+    logger.log('自动发布失败：无法点击确认发布按钮', 'error');
+    return false;
+  }
+  
+  return true;
+};
+
+/**
  * 检查封面是否已设置
  */
 const isCoverSet = (): boolean => {
@@ -1416,7 +1543,7 @@ ${content.substring(0, 3000)}
 // 主流程 - 智能图片处理
 // ============================================
 
-const runSmartImageFlow = async () => {
+const runSmartImageFlow = async (autoPublish = false) => {
   isFlowCancelled = false;
   logger.clear();
   logger.show();
@@ -1455,6 +1582,13 @@ const runSmartImageFlow = async () => {
     }
     
     logger.log('✅ 图片处理完成！', 'success');
+    
+    // 3. 如果开启了自动发布，执行发布流程
+    if (autoPublish && !isFlowCancelled) {
+      logger.log('📤 步骤3: 自动发布文章...', 'info');
+      await new Promise(r => setTimeout(r, 1000)); // 等待页面稳定
+      await autoPublishArticle();
+    }
     
   } catch (e: unknown) {
     const errorMsg = e instanceof Error ? e.message : String(e);
@@ -1572,7 +1706,14 @@ const fillContent = async () => {
       return;
     }
 
+    // 读取自动发布设置
+    const settings = await chrome.storage.sync.get(['toutiao']);
+    const autoPublish = settings.toutiao?.autoPublish || false;
+
     logger.log(`📄 准备填充内容: ${payload.title}`, 'info');
+    if (autoPublish) {
+      logger.log('🔔 自动发布已开启', 'info');
+    }
     logger.log('⏳ 等待编辑器加载...', 'info');
 
     let attempts = 0;
@@ -1632,7 +1773,7 @@ const fillContent = async () => {
           logger.log('❌ 自动填充失败：未找到编辑器', 'error');
         } else {
           logger.log('⏳ 2秒后开始智能图片处理...', 'info');
-          setTimeout(() => runSmartImageFlow(), 2000);
+          setTimeout(() => runSmartImageFlow(autoPublish), 2000);
         }
       }
     }, 1000);

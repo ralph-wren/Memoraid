@@ -29,6 +29,7 @@ export interface AppSettings {
   github?: GitHubSettings;
   toutiao?: {
     cookie: string;
+    autoPublish?: boolean; // 生成文章后是否自动发布
   };
   sync?: {
     enabled: boolean;
@@ -56,7 +57,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     branch: 'main'
   },
   toutiao: {
-    cookie: ''
+    cookie: '',
+    autoPublish: false
   },
   systemPrompt: SYSTEM_PROMPTS['zh-CN'],
   sync: {
