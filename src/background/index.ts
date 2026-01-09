@@ -875,17 +875,23 @@ async function startArticleGeneration(extraction: ExtractionResult) {
       console.log('Auto-publish enabled, publishing to Toutiao...');
       updateTaskState({ 
         status: 'Publishing...', 
-        message: 'Auto-publishing to Toutiao...',
+        message: 'Opening Toutiao publish page...',
         progress: 100, 
         result: summary, 
         title: finalTitle
       });
       
-      // 自动发布到头条
+      // 自动发布到头条（这会打开发布页面，内容脚本会处理后续操作）
       await handlePublishToToutiao({
         title: finalTitle,
         content: summary
       });
+      
+      // 清除任务状态，因为后续操作在内容脚本中完成
+      // 用户会被跳转到头条发布页面
+      currentTask = null;
+      chrome.storage.local.remove('currentTask');
+      broadcastUpdate();
     }
 
   } catch (error: any) {
