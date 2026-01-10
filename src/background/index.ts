@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { marked } from 'marked';
 import { getSettings, saveSettings, DEFAULT_SETTINGS, addHistoryItem } from '../utils/storage';
 import { ExtractionResult, ActiveTask, ChatMessage } from '../utils/types';
-import { generateArticlePrompt } from '../utils/prompts';
+import { generateArticlePrompt, TOUTIAO_DEFAULT_PROMPT, WEIXIN_DEFAULT_PROMPT, ZHIHU_DEFAULT_PROMPT } from '../utils/prompts';
 import { generateRandomString } from '../utils/crypto';
 
 console.log('Background service worker started');
@@ -1293,13 +1293,31 @@ async function startArticleGenerationAndPublish(extraction: ExtractionResult, pl
       ? extraction.messages.map((m: any) => `### ${m.role ? m.role.toUpperCase() : 'CONTENT'}:\n${m.content}`).join('\n\n')
       : String(extraction.messages);
 
+    // 根据用户设置的文章风格生成动态提示词（通用模板）
     const articlePrompt = generateArticlePrompt(settings.articleStyle);
+    
+    // 根据目标平台获取专属提示词
+    // 通用提示词 + 平台专属提示词 = 完整提示词
+    let platformPrompt = '';
+    if (platform === 'toutiao') {
+      // 头条：使用用户自定义提示词或默认头条提示词
+      platformPrompt = settings.toutiao?.customPrompt || TOUTIAO_DEFAULT_PROMPT;
+    } else if (platform === 'zhihu') {
+      // 知乎：使用用户自定义提示词或默认知乎提示词
+      platformPrompt = settings.zhihu?.customPrompt || ZHIHU_DEFAULT_PROMPT;
+    } else if (platform === 'weixin') {
+      // 公众号：使用用户自定义提示词或默认公众号提示词
+      platformPrompt = settings.weixin?.customPrompt || WEIXIN_DEFAULT_PROMPT;
+    }
+    
+    // 组合完整提示词：通用模板 + 平台专属指南
+    const fullPrompt = `${articlePrompt}\n\n${platformPrompt}`;
 
     const initialMessages = [
-      { role: 'system', content: articlePrompt },
+      { role: 'system', content: fullPrompt },
       { 
         role: 'user', 
-        content: `请根据以下内容生成一篇自媒体文章。\n\n来源：${extraction.url}\n\n原标题：${extraction.title}\n\n内容：\n${formattedContent}` 
+        content: `请根据以下内容生成一篇自媒体文章，目标平台是${platformName}。\n\n来源：${extraction.url}\n\n原标题：${extraction.title}\n\n内容：\n${formattedContent}` 
       }
     ];
 
