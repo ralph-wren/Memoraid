@@ -634,10 +634,11 @@ const clickAIImage = async (): Promise<boolean> => {
 
 /**
  * 生成 AI 配图
- * @param prompt 图片描述提示词（复杂一点效果更好）
+ * 输入关键词后会自动从图片库中搜索相关图片，选择第一张插入即可
+ * @param prompt 图片描述关键词
  */
 const generateAIImage = async (prompt: string): Promise<boolean> => {
-  logger.log(`AI 配图提示词: ${prompt}`, 'info');
+  logger.log(`AI 配图关键词: ${prompt}`, 'info');
   
   // 查找输入框
   const promptInput = await waitForElement(SELECTORS.aiPromptInput, 5000);
@@ -657,152 +658,162 @@ const generateAIImage = async (prompt: string): Promise<boolean> => {
       }
     }
   } else {
-    logger.log('输入图片描述', 'action');
+    logger.log('输入图片关键词', 'action');
     simulateClick(promptInput);
     await new Promise(r => setTimeout(r, 200));
     simulateInput(promptInput, prompt);
   }
   
-  await new Promise(r => setTimeout(r, 500));
+  // 等待图片库自动搜索并显示相关图片
+  logger.log('⏳ 等待图片库搜索结果...', 'info');
+  await new Promise(r => setTimeout(r, 2000));
   
-  // 点击开始创作
-  logger.log('查找开始创作按钮...', 'info');
-  const createBtn = findElementByText('开始创作', ['button', 'div', 'span']);
-  if (!createBtn) {
-    logger.log('未找到开始创作按钮', 'error');
-    return false;
-  }
-  
-  logger.log('点击开始创作', 'action');
-  simulateClick(createBtn);
-  
-  // AI 生成图片需要较长时间，等待 30-60 秒
-  logger.log('⏳ 等待 AI 生成图片（可能需要 30-60 秒）...', 'warn');
-  
-  // 轮询检查图片是否生成完成
-  const maxWaitTime = 90000; // 最多等待 90 秒
-  const startTime = Date.now();
-  
-  while (Date.now() - startTime < maxWaitTime) {
-    if (isFlowCancelled) return false;
-    
-    await new Promise(r => setTimeout(r, 3000));
-    
-    // 检查是否有生成的图片（查找插入按钮或图片列表）
-    const aiImageList = document.querySelector('.ai-image-list');
-    const insertBtns = document.querySelectorAll('.ai-image-operation-group');
-    
-    if (aiImageList && insertBtns.length > 0) {
-      logger.log('AI 图片生成完成', 'success');
-      return true;
-    }
-    
-    // 检查是否有错误提示
-    const errorMsg = document.querySelector('.ai-image-error, .error-message');
-    if (errorMsg && isElementVisible(errorMsg as HTMLElement)) {
-      logger.log(`AI 生成失败: ${(errorMsg as HTMLElement).innerText}`, 'error');
-      return false;
-    }
-    
-    const elapsed = Math.round((Date.now() - startTime) / 1000);
-    logger.log(`等待中... ${elapsed}秒`, 'info');
-  }
-  
-  logger.log('AI 生成超时', 'error');
-  return false;
+  // 图片库会自动显示相关图片，不需要点击"开始创作"
+  // 直接返回 true，让 insertAIImage 去选择图片
+  logger.log('图片库已加载', 'success');
+  return true;
 };
 
 /**
- * 选择并插入 AI 生成的图片
- * @param index 选择第几张图片（从 0 开始），-1 表示选择最后一张（最新生成的）
+ * 选择并插入 AI 配图
+ * 从图片库搜索结果中选择第一张图片插入
+ * 需要先悬浮在图片上显示"插入"按钮，然后点击
  */
-const insertAIImage = async (index = -1): Promise<boolean> => {
-  logger.log('查找 AI 生成的图片...', 'info');
+const insertAIImage = async (): Promise<boolean> => {
+  logger.log('查找图片库搜索结果...', 'info');
   
-  // 等待图片列表完全加载
-  await new Promise(r => setTimeout(r, 1000));
+  // 等待图片列表加载
+  await new Promise(r => setTimeout(r, 1500));
   
-  // 查找 AI 图片列表中的图片项
-  // 新生成的图片通常在列表的后面，历史图片在前面
-  // 我们需要找到最新生成的图片（通常是最后几张）
-  
-  // 方法1: 查找 .ai-image-operation-group（每张图片都有操作按钮组）
-  let operationGroups = document.querySelectorAll('.ai-image-operation-group');
-  
-  // 方法2: 如果没找到，尝试查找图片容器
-  if (operationGroups.length === 0) {
-    // 查找 AI 配图面板中的图片
-    const aiPanel = document.querySelector('[class*="ai-image"], .ai-image-dialog, .weui-desktop-dialog');
-    if (aiPanel) {
-      operationGroups = aiPanel.querySelectorAll('.ai-image-operation-group, [class*="operation"]');
-    }
-  }
-  
-  if (operationGroups.length === 0) {
-    logger.log('未找到 AI 图片操作按钮，尝试直接查找插入按钮', 'warn');
-    
-    // 方法3: 直接查找"插入"按钮
-    const insertBtns = document.querySelectorAll('div, span, button');
-    for (const btn of insertBtns) {
-      const text = (btn as HTMLElement).innerText?.trim();
-      if (text === '插入' && isElementVisible(btn as HTMLElement)) {
-        logger.log('找到插入按钮，点击插入', 'action');
-        simulateClick(btn as HTMLElement);
-        await new Promise(r => setTimeout(r, 1000));
-        logger.log('AI 图片已插入', 'success');
-        return true;
-      }
-    }
-    
-    logger.log('未找到 AI 图片操作按钮', 'error');
-    return false;
-  }
-  
-  // 选择最后一张图片（最新生成的）
-  // index = -1 表示最后一张，index = 0 表示第一张
-  let targetIndex: number;
-  if (index < 0) {
-    // 选择最后一张（最新生成的）
-    targetIndex = operationGroups.length - 1;
-    logger.log(`选择最后一张 AI 图片（第 ${targetIndex + 1} 张，共 ${operationGroups.length} 张）`, 'info');
-  } else {
-    targetIndex = Math.min(index, operationGroups.length - 1);
-    logger.log(`选择第 ${targetIndex + 1} 张 AI 图片（共 ${operationGroups.length} 张）`, 'info');
-  }
-  
-  const operationGroup = operationGroups[targetIndex];
-  
-  // 先悬浮在图片上，显示操作按钮
-  const parentImage = operationGroup.closest('[class*="image-item"], [class*="ai-image"]') as HTMLElement;
-  if (parentImage) {
-    logger.log('悬浮在图片上...', 'info');
-    parentImage.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-    parentImage.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-    await new Promise(r => setTimeout(r, 500));
-  }
-  
-  // 找到插入按钮
-  // 操作按钮组通常包含：换风格、插入 两个按钮
   let insertBtn: HTMLElement | null = null;
   
-  // 方法1: 查找文本为"插入"的按钮
-  const btnsInGroup = operationGroup.querySelectorAll('div, span, button');
-  for (const btn of btnsInGroup) {
-    const text = (btn as HTMLElement).innerText?.trim();
-    if (text === '插入') {
-      insertBtn = btn as HTMLElement;
-      break;
+  // 方法1: 查找"已在图片库中找到以下图片"区域，然后找到第一张图片并悬浮
+  // 这个区域包含搜索结果的图片
+  const searchResultArea = Array.from(document.querySelectorAll('div')).find(div => {
+    const text = div.textContent || '';
+    return text.includes('已在图片库中找到以下图片') && div.querySelector('img');
+  });
+  
+  if (searchResultArea) {
+    logger.log('找到图片库搜索结果区域', 'info');
+    
+    // 查找该区域内的第一张图片
+    const images = searchResultArea.querySelectorAll('img');
+    if (images.length > 0) {
+      const firstImage = images[0] as HTMLElement;
+      const imageContainer = firstImage.closest('div') as HTMLElement;
+      
+      if (imageContainer) {
+        logger.log('悬浮在第一张图片上...', 'action');
+        
+        // 滚动到图片位置
+        imageContainer.scrollIntoView({ behavior: 'instant', block: 'center' });
+        await new Promise(r => setTimeout(r, 300));
+        
+        // 模拟鼠标悬浮
+        const rect = imageContainer.getBoundingClientRect();
+        const hoverOptions = {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2
+        };
+        
+        imageContainer.dispatchEvent(new MouseEvent('mouseenter', hoverOptions));
+        imageContainer.dispatchEvent(new MouseEvent('mouseover', hoverOptions));
+        imageContainer.dispatchEvent(new MouseEvent('mousemove', hoverOptions));
+        
+        // 等待"插入"按钮出现
+        await new Promise(r => setTimeout(r, 800));
+        
+        // 在图片容器内查找"插入"按钮
+        const btnsInContainer = imageContainer.querySelectorAll('div, span, button');
+        for (const btn of btnsInContainer) {
+          const text = (btn as HTMLElement).innerText?.trim();
+          if (text === '插入' && isElementVisible(btn as HTMLElement)) {
+            insertBtn = btn as HTMLElement;
+            logger.log('在图片容器内找到插入按钮', 'info');
+            break;
+          }
+        }
+        
+        // 如果容器内没找到，在整个搜索结果区域内查找
+        if (!insertBtn) {
+          const btnsInArea = searchResultArea.querySelectorAll('div, span, button');
+          for (const btn of btnsInArea) {
+            const text = (btn as HTMLElement).innerText?.trim();
+            if (text === '插入' && isElementVisible(btn as HTMLElement)) {
+              insertBtn = btn as HTMLElement;
+              logger.log('在搜索结果区域内找到插入按钮', 'info');
+              break;
+            }
+          }
+        }
+      }
     }
   }
   
-  // 方法2: 通常是第二个 div（第一个是"换风格"）
+  // 方法2: 如果方法1失败，查找 AI 配图弹窗内的图片
   if (!insertBtn) {
-    insertBtn = operationGroup.querySelector('div:nth-child(2)') as HTMLElement;
+    logger.log('尝试在 AI 配图弹窗内查找...', 'info');
+    
+    // 查找 AI 配图弹窗
+    const aiDialog = document.querySelector('.weui-desktop-dialog, [class*="ai-image-dialog"], [class*="dialog"]');
+    if (aiDialog) {
+      // 查找弹窗内的图片
+      const images = aiDialog.querySelectorAll('img');
+      
+      // 跳过历史图片（通常在顶部，较小），找到搜索结果图片
+      for (const img of images) {
+        const imgEl = img as HTMLElement;
+        const rect = imgEl.getBoundingClientRect();
+        
+        // 搜索结果图片通常较大
+        if (rect.width > 80 && rect.height > 80) {
+          const imageContainer = imgEl.closest('div') as HTMLElement;
+          if (imageContainer) {
+            logger.log('悬浮在图片上...', 'action');
+            
+            // 模拟悬浮
+            imageContainer.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+            imageContainer.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 800));
+            
+            // 查找插入按钮
+            const btns = imageContainer.querySelectorAll('div, span, button');
+            for (const btn of btns) {
+              const text = (btn as HTMLElement).innerText?.trim();
+              if (text === '插入' && isElementVisible(btn as HTMLElement)) {
+                insertBtn = btn as HTMLElement;
+                break;
+              }
+            }
+            
+            if (insertBtn) break;
+          }
+        }
+      }
+    }
   }
   
-  // 方法3: 查找最后一个子元素
+  // 方法3: 直接查找可见的"插入"按钮，选择在 AI 配图区域内的第一个
   if (!insertBtn) {
-    insertBtn = operationGroup.lastElementChild as HTMLElement;
+    logger.log('尝试直接查找插入按钮...', 'info');
+    
+    const allInsertBtns = document.querySelectorAll('div, span, button');
+    for (const btn of allInsertBtns) {
+      const text = (btn as HTMLElement).innerText?.trim();
+      if (text === '插入' && isElementVisible(btn as HTMLElement)) {
+        // 检查是否在 AI 配图相关区域内
+        const parent = btn.closest('.weui-desktop-dialog, [class*="ai-image"], [class*="dialog"]');
+        if (parent) {
+          insertBtn = btn as HTMLElement;
+          logger.log('找到 AI 配图区域内的插入按钮', 'info');
+          break;
+        }
+      }
+    }
   }
   
   if (!insertBtn) {
@@ -1315,7 +1326,7 @@ const runPublishFlow = async (options: {
             
             // 插入最后一张图片（最新生成的，-1 表示最后一张）
             // 历史图片在前面，新生成的在后面
-            await insertAIImage(-1);
+            await insertAIImage();
           }
         }
       }
@@ -1400,7 +1411,7 @@ const runSmartImageFlow = async (_autoPublish = false) => {
         if (await openImageDialog()) {
           if (await clickAIImage()) {
             if (await generateAIImage(prompt)) {
-              await insertAIImage(-1);  // 选择最后一张（最新生成的）
+              await insertAIImage();  // 选择新生成的图片
               logger.log('✅ AI 配图插入成功', 'success');
             }
           }
@@ -1421,7 +1432,7 @@ const runSmartImageFlow = async (_autoPublish = false) => {
         if (await openImageDialog()) {
           if (await clickAIImage()) {
             if (await generateAIImage(prompt)) {
-              await insertAIImage(-1);  // 选择最后一张（最新生成的）
+              await insertAIImage();  // 选择最后一张（最新生成的）
               logger.log(`✅ 第 ${i + 1} 张图片插入成功`, 'success');
             }
           }
@@ -1709,7 +1720,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (await openImageDialog()) {
         if (await clickAIImage()) {
           await generateAIImage(message.prompt);
-          await insertAIImage(-1);  // 选择最后一张（最新生成的）
+          await insertAIImage();  // 选择最后一张（最新生成的）
         }
       }
     })();
