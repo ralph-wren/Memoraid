@@ -177,7 +177,7 @@ const simulateInput = (element: HTMLElement, value: string) => {
 };
 
 // ============================================
-// Logger UI
+// Logger UI - 与头条保持一致
 // ============================================
 class ZhihuLogger {
   private container: HTMLDivElement;
@@ -208,6 +208,15 @@ class ZhihuLogger {
       this.stopBtn.style.display = 'none';
     };
 
+    const copyBtn = document.createElement('button');
+    copyBtn.innerText = '复制';
+    copyBtn.style.cssText = 'background:#1976d2;color:white;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px;';
+    copyBtn.onclick = () => {
+      navigator.clipboard.writeText(this.logContent.innerText);
+      copyBtn.innerText = '已复制';
+      setTimeout(() => { copyBtn.innerText = '复制'; }, 1500);
+    };
+
     const closeBtn = document.createElement('span');
     closeBtn.innerText = '✕';
     closeBtn.style.cssText = 'cursor:pointer;color:#888;font-size:16px;margin-left:8px;';
@@ -217,6 +226,7 @@ class ZhihuLogger {
     };
 
     controls.appendChild(this.stopBtn);
+    controls.appendChild(copyBtn);
     controls.appendChild(closeBtn);
     header.appendChild(title);
     header.appendChild(controls);
@@ -639,48 +649,61 @@ const searchImage = async (keyword: string): Promise<boolean> => {
 
 const selectImage = async (index = 0): Promise<boolean> => {
   logger.log('选择图片...', 'info');
-  await new Promise(r => setTimeout(r, 500));
+  
+  // 等待搜索结果完全加载（增加等待时间）
+  await new Promise(r => setTimeout(r, 1500));
   
   // 严格按照 Playwright 录制的步骤：
   // await page.locator('.css-128iodx').first().click();
   // 只点击一次 .css-128iodx 元素来选中图片
   
-  const imageElements = document.querySelectorAll('.css-128iodx');
-  logger.log(`找到 ${imageElements.length} 个 .css-128iodx 元素`, 'info');
+  // 重试机制：最多尝试 5 次
+  const maxAttempts = 5;
   
-  if (imageElements.length > 0) {
-    const targetIndex = Math.min(index, imageElements.length - 1);
-    const targetElement = imageElements[targetIndex] as HTMLElement;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const imageElements = document.querySelectorAll('.css-128iodx');
+    logger.log(`找到 ${imageElements.length} 个 .css-128iodx 元素 (尝试 ${attempt}/${maxAttempts})`, 'info');
     
-    if (isElementVisible(targetElement)) {
-      logger.log(`点击第 ${targetIndex + 1} 个图片 (.css-128iodx)`, 'action');
+    if (imageElements.length > 0) {
+      const targetIndex = Math.min(index, imageElements.length - 1);
+      const targetElement = imageElements[targetIndex] as HTMLElement;
       
-      // 只使用一种点击方式，避免重复点击导致取消选中
-      const rect = targetElement.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
-      
-      const mouseEventInit = {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        clientX: centerX,
-        clientY: centerY,
-        button: 0,
-        buttons: 1
-      };
-      
-      targetElement.dispatchEvent(new MouseEvent('mousedown', mouseEventInit));
-      await new Promise(r => setTimeout(r, 50));
-      targetElement.dispatchEvent(new MouseEvent('mouseup', mouseEventInit));
-      targetElement.dispatchEvent(new MouseEvent('click', mouseEventInit));
-      
-      await new Promise(r => setTimeout(r, 800));
-      
-      logger.log('图片选择完成', 'success');
-      return true;
-    } else {
-      logger.log('.css-128iodx 元素不可见', 'warn');
+      if (isElementVisible(targetElement)) {
+        logger.log(`点击第 ${targetIndex + 1} 个图片 (.css-128iodx)`, 'action');
+        
+        // 只使用一种点击方式，避免重复点击导致取消选中
+        const rect = targetElement.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        
+        const mouseEventInit = {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: centerX,
+          clientY: centerY,
+          button: 0,
+          buttons: 1
+        };
+        
+        targetElement.dispatchEvent(new MouseEvent('mousedown', mouseEventInit));
+        await new Promise(r => setTimeout(r, 50));
+        targetElement.dispatchEvent(new MouseEvent('mouseup', mouseEventInit));
+        targetElement.dispatchEvent(new MouseEvent('click', mouseEventInit));
+        
+        await new Promise(r => setTimeout(r, 800));
+        
+        logger.log('图片选择完成', 'success');
+        return true;
+      } else {
+        logger.log('.css-128iodx 元素不可见', 'warn');
+      }
+    }
+    
+    // 等待后重试
+    if (attempt < maxAttempts) {
+      logger.log(`等待图片加载...`, 'info');
+      await new Promise(r => setTimeout(r, 1000));
     }
   }
   
@@ -874,6 +897,155 @@ const clickPublish = async (): Promise<boolean> => {
   return true;
 };
 
+// 关闭图片对话框的辅助函数
+const closeImageDialog = async (): Promise<void> => {
+  // 尝试多种方式关闭对话框
+  const closeSelectors = [
+    '[aria-label="关闭"]',
+    '[class*="close"]',
+    'button[aria-label="Close"]',
+    '.Modal-closeButton',
+    '[class*="Modal"] [class*="close"]'
+  ];
+  
+  for (const selector of closeSelectors) {
+    const closeBtn = document.querySelector(selector) as HTMLElement;
+    if (closeBtn && isElementVisible(closeBtn)) {
+      closeBtn.click();
+      await new Promise(r => setTimeout(r, 500));
+      return;
+    }
+  }
+  
+  // 尝试按 ESC 键关闭
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+  await new Promise(r => setTimeout(r, 500));
+  
+  // 点击对话框外部关闭
+  const modal = document.querySelector('[class*="Modal-mask"], [class*="modal-mask"], [class*="Overlay"]') as HTMLElement;
+  if (modal && isElementVisible(modal)) {
+    modal.click();
+    await new Promise(r => setTimeout(r, 500));
+  }
+};
+
+/**
+ * 在编辑器中选中指定文本
+ */
+const selectTextInEditor = (searchText: string): boolean => {
+  const editor = findElement(SELECTORS.editor);
+  if (!editor) return false;
+
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    if (node.textContent && node.textContent.includes(searchText)) {
+      const range = document.createRange();
+      const startIndex = node.textContent.indexOf(searchText);
+      range.setStart(node, startIndex);
+      range.setEnd(node, startIndex + searchText.length);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      node.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return true;
+    }
+  }
+  return false;
+};
+
+/**
+ * 查找所有图片占位符
+ */
+const findImagePlaceholders = (): { text: string; keyword: string }[] => {
+  const editor = findElement(SELECTORS.editor);
+  if (!editor) return [];
+  
+  const content = editor.innerText || '';
+  const placeholders: { text: string; keyword: string }[] = [];
+  
+  // 匹配多种格式的图片占位符
+  const patterns = [
+    /\[图片[：:]\s*([^\]]+)\]/g,
+    /【图片[：:]\s*([^】]+)】/g,
+    /\[配图[：:]\s*([^\]]+)\]/g,
+    /【配图[：:]\s*([^】]+)】/g,
+  ];
+  
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(content)) !== null) {
+      placeholders.push({ 
+        text: match[0], 
+        keyword: match[1].trim()
+      });
+    }
+  }
+  
+  return placeholders;
+};
+
+/**
+ * 在占位符位置插入图片（先删除占位符，再插入图片）
+ */
+const insertImageAtPlaceholder = async (placeholder: { text: string; keyword: string }): Promise<boolean> => {
+  if (isFlowCancelled) return false;
+  
+  logger.log(`处理占位符: ${placeholder.text}`, 'info');
+  
+  // 1. 选中占位符文本
+  if (!selectTextInEditor(placeholder.text)) {
+    logger.log(`未找到占位符文本: ${placeholder.text}`, 'warn');
+    return false;
+  }
+  
+  // 2. 删除占位符
+  logger.log('删除占位符文本', 'action');
+  document.execCommand('delete');
+  await new Promise(r => setTimeout(r, 300));
+  
+  // 3. 打开图片对话框
+  if (!await openImageDialog()) {
+    logger.log('无法打开图片对话框', 'error');
+    return false;
+  }
+  if (isFlowCancelled) return false;
+  
+  // 4. 点击公共图片库
+  const publicLibrarySuccess = await clickPublicLibrary();
+  if (!publicLibrarySuccess) {
+    logger.log('无法打开公共图片库', 'error');
+    await closeImageDialog();
+    return false;
+  }
+  if (isFlowCancelled) return false;
+  
+  // 5. 搜索图片
+  if (!await searchImage(placeholder.keyword)) {
+    logger.log('搜索图片失败', 'error');
+    await closeImageDialog();
+    return false;
+  }
+  if (isFlowCancelled) return false;
+  
+  // 6. 选择图片
+  if (!await selectImage(0)) {
+    logger.log('选择图片失败', 'error');
+    await closeImageDialog();
+    return false;
+  }
+  if (isFlowCancelled) return false;
+  
+  // 7. 插入图片
+  if (!await clickInsertImage()) {
+    logger.log('插入图片失败', 'error');
+    return false;
+  }
+  
+  logger.log(`占位符 "${placeholder.text}" 已替换为图片`, 'success');
+  return true;
+};
+
 // ============================================
 // 主流程
 // ============================================
@@ -886,34 +1058,74 @@ const runSmartImageFlow = async (keyword?: string, autoPublish = false) => {
   logger.log('🚀 开始知乎图片处理...', 'info');
   
   try {
-    const searchKeyword = keyword || extractKeywordFromTitle() || '风景';
+    // 查找所有图片占位符
+    const placeholders = findImagePlaceholders();
     
-    // 1. 打开图片对话框
-    if (!await openImageDialog()) return;
-    if (isFlowCancelled) return;
-    
-    // 2. 点击公共图片库（必须成功，否则无法搜索）
-    const publicLibrarySuccess = await clickPublicLibrary();
-    if (!publicLibrarySuccess) {
-      logger.log('无法打开公共图片库，跳过图片插入', 'error');
-      return;
+    if (placeholders.length === 0) {
+      // 如果没有找到图片占位符，使用默认关键词在末尾插入一张图片
+      const searchKeyword = keyword || extractKeywordFromTitle() || '风景';
+      logger.log(`未找到图片占位符，使用关键词: ${searchKeyword}`, 'info');
+      
+      // 移动光标到编辑器末尾
+      const editor = findElement(SELECTORS.editor);
+      if (editor) {
+        editor.focus();
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
+      
+      // 插入图片
+      if (await openImageDialog()) {
+        if (await clickPublicLibrary()) {
+          if (await searchImage(searchKeyword)) {
+            if (await selectImage(0)) {
+              await clickInsertImage();
+              logger.log('✅ 图片插入成功！', 'success');
+            }
+          }
+        }
+      }
+    } else {
+      logger.log(`找到 ${placeholders.length} 个图片占位符`, 'info');
+      placeholders.forEach((p, i) => {
+        logger.log(`  ${i + 1}. ${p.text}`, 'info');
+      });
+      
+      let successCount = 0;
+      
+      // 按顺序处理每个占位符（从后往前处理，避免位置偏移）
+      const reversedPlaceholders = [...placeholders].reverse();
+      
+      for (let i = 0; i < reversedPlaceholders.length; i++) {
+        if (isFlowCancelled) {
+          logger.log('用户取消操作', 'warn');
+          break;
+        }
+        
+        const placeholder = reversedPlaceholders[i];
+        const displayIndex = placeholders.length - i;
+        logger.log(`\n📷 处理第 ${displayIndex}/${placeholders.length} 个占位符: ${placeholder.keyword}`, 'info');
+        
+        const success = await insertImageAtPlaceholder(placeholder);
+        
+        if (success) {
+          successCount++;
+        } else {
+          logger.log(`第 ${displayIndex} 个占位符处理失败`, 'error');
+        }
+        
+        // 等待图片加载完成后再继续下一个
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      
+      logger.log(`\n🎉 图片处理完成！成功替换 ${successCount}/${placeholders.length} 个占位符`, 'success');
     }
-    if (isFlowCancelled) return;
     
-    // 3. 搜索图片
-    if (!await searchImage(searchKeyword)) return;
-    if (isFlowCancelled) return;
-    
-    // 4. 选择图片
-    if (!await selectImage(0)) return;
-    if (isFlowCancelled) return;
-    
-    // 5. 插入图片
-    if (!await clickInsertImage()) return;
-    
-    logger.log('✅ 图片插入完成！', 'success');
-    
-    // 6. 如果开启自动发布
+    // 如果开启自动发布
     if (autoPublish && !isFlowCancelled) {
       logger.log('📤 自动发布文章...', 'info');
       await new Promise(r => setTimeout(r, 1000));

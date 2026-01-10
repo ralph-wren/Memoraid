@@ -973,29 +973,8 @@ async function startArticleGeneration(extraction: ExtractionResult) {
       message: `Article generated for: ${finalTitle}`
     });
 
-    // 检查是否开启了自动发布
-    if (settings.toutiao?.autoPublish && settings.toutiao?.cookie) {
-      console.log('Auto-publish enabled, publishing to Toutiao...');
-      updateTaskState({ 
-        status: 'Publishing...', 
-        message: 'Opening Toutiao publish page...',
-        progress: 100, 
-        result: summary, 
-        title: finalTitle
-      });
-      
-      // 自动发布到头条（这会打开发布页面，内容脚本会处理后续操作）
-      await handlePublishToToutiao({
-        title: finalTitle,
-        content: summary
-      });
-      
-      // 清除任务状态，因为后续操作在内容脚本中完成
-      // 用户会被跳转到头条发布页面
-      currentTask = null;
-      chrome.storage.local.remove('currentTask');
-      broadcastUpdate();
-    }
+    // 注意：已移除自动发布功能
+    // 用户可以在结果页面手动选择发布到头条或知乎
 
   } catch (error: any) {
     if (error.name === 'AbortError') {
