@@ -482,6 +482,335 @@ export default {
       }
     }
 
+    // ==================== 远程调试系统 API ====================
+
+    // 6.1 POST /debug/session - 插件注册调试会话（生成验证码）
+    if (url.pathname === '/debug/session' && request.method === 'POST') {
+      try {
+        const body = await request.json() as any;
+        const { pluginInfo } = body;
+        
+        // 生成6位随机验证码
+        const verificationCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        
+        // 创建调试会话
+        await env.DB.prepare(
+          `INSERT INTO debug_sessions (verification_code, plugin_info, is_active, last_heartbeat) 
+           VALUES (?, ?, 1, ?)`
+        ).bind(verificationCode, JSON.stringify(pluginInfo || {}), Math.floor(Date.now() / 1000)).run();
+
+        return new Response(JSON.stringify({ 
+          success: true,
+          verificationCode,
+          message: '调试会话已创建，请在后台使用此验证码发送命令'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        });
+      }
+    }
+
+    // 6.2 POST /debug/command - 发送调试命令到指定插件
+    if (url.pathname === '/debug/command' && request.method === 'POST') {
+      try {
+        const body = await request.json() as any;
+        const { verificationCode, commandType, commandData } = body;
+
+        if (!verificationCode || !commandType) {
+          return new Response(JSON.stringify({ error: '缺少验证码或命令类型' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 验证会话是否存在且活跃
+        const session = await env.DB.prepare(
+          `SELECT * FROM debug_sessions WHERE verification_code = ? AND is_active = 1`
+        ).bind(verificationCode).first();
+
+        if (!session) {
+          return new Response(JSON.stringify({ error: '无效的验证码或会话已过期' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 插入命令
+        const expiresAt = Math.floor(Date.now() / 1000) + 300; // 5分钟过期
+        const result = await env.DB.prepare(
+          `INSERT INTO debug_commands (verification_code, command_type, command_data, status, expires_at) 
+           VALUES (?, ?, ?, 'pending', ?)`
+        ).bind(verificationCode, commandType, JSON.stringify(commandData || {}), expiresAt).run();
+
+        return new Response(JSON.stringify({ 
+          success: true,
+          commandId: result.meta.last_row_id,
+          message: '命令已发送，等待插件执行'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        });
+      }
+    }
+
+    // 6.3 GET /debug/poll/:code - 插件轮询待执行的命令
+    if (url.pathname.startsWith('/debug/poll/') && request.method === 'GET') {
+      try {
+        const verificationCode = url.pathname.split('/').pop();
+        
+        if (!verificationCode) {
+          return new Response(JSON.stringify({ error: '缺少验证码' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 更新会话心跳
+        await env.DB.prepare(
+          `UPDATE debug_sessions SET last_heartbeat = ? WHERE verification_code = ?`
+        ).bind(Math.floor(Date.now() / 1000), verificationCode).run();
+
+        // 获取待执行的命令（只取最早的一条）
+        const now = Math.floor(Date.now() / 1000);
+        const command = await env.DB.prepare(
+          `SELECT id, command_type, command_data, created_at 
+           FROM debug_commands 
+           WHERE verification_code = ? AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?)
+           ORDER BY created_at ASC 
+           LIMIT 1`
+        ).bind(verificationCode, now).first();
+
+        if (!command) {
+          return new Response(JSON.stringify({ 
+            hasCommand: false,
+            message: '暂无待执行命令'
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 标记命令为执行中
+        await env.DB.prepare(
+          `UPDATE debug_commands SET status = 'executing' WHERE id = ?`
+        ).bind(command.id).run();
+
+        return new Response(JSON.stringify({ 
+          hasCommand: true,
+          command: {
+            id: command.id,
+            type: command.command_type,
+            data: JSON.parse(command.command_data as string || '{}')
+          }
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        });
+      }
+    }
+
+    // 6.4 POST /debug/result - 插件上报命令执行结果
+    if (url.pathname === '/debug/result' && request.method === 'POST') {
+      try {
+        const body = await request.json() as any;
+        const { commandId, verificationCode, resultType, resultData, screenshotBase64, executionTime } = body;
+
+        if (!commandId || !verificationCode) {
+          return new Response(JSON.stringify({ error: '缺少命令ID或验证码' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 更新命令状态
+        const newStatus = resultType === 'success' ? 'completed' : 'failed';
+        await env.DB.prepare(
+          `UPDATE debug_commands SET status = ? WHERE id = ?`
+        ).bind(newStatus, commandId).run();
+
+        // 插入结果
+        await env.DB.prepare(
+          `INSERT INTO debug_results (command_id, verification_code, result_type, result_data, screenshot_base64, execution_time) 
+           VALUES (?, ?, ?, ?, ?, ?)`
+        ).bind(
+          commandId, 
+          verificationCode, 
+          resultType || 'success',
+          JSON.stringify(resultData || {}),
+          screenshotBase64 || null,
+          executionTime || 0
+        ).run();
+
+        return new Response(JSON.stringify({ 
+          success: true,
+          message: '结果已上报'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        });
+      }
+    }
+
+    // 6.5 GET /debug/result/:commandId - 获取命令执行结果
+    if (url.pathname.startsWith('/debug/result/') && request.method === 'GET') {
+      try {
+        const commandId = url.pathname.split('/').pop();
+        
+        if (!commandId) {
+          return new Response(JSON.stringify({ error: '缺少命令ID' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 获取命令状态
+        const command = await env.DB.prepare(
+          `SELECT id, command_type, command_data, status, created_at FROM debug_commands WHERE id = ?`
+        ).bind(commandId).first();
+
+        if (!command) {
+          return new Response(JSON.stringify({ error: '命令不存在' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 获取结果
+        const result = await env.DB.prepare(
+          `SELECT result_type, result_data, screenshot_base64, execution_time, created_at 
+           FROM debug_results WHERE command_id = ? ORDER BY created_at DESC LIMIT 1`
+        ).bind(commandId).first();
+
+        return new Response(JSON.stringify({ 
+          command: {
+            id: command.id,
+            type: command.command_type,
+            data: JSON.parse(command.command_data as string || '{}'),
+            status: command.status
+          },
+          result: result ? {
+            type: result.result_type,
+            data: JSON.parse(result.result_data as string || '{}'),
+            screenshot: result.screenshot_base64,
+            executionTime: result.execution_time,
+            timestamp: result.created_at
+          } : null
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        });
+      }
+    }
+
+    // 6.6 GET /debug/sessions - 获取所有活跃的调试会话
+    if (url.pathname === '/debug/sessions' && request.method === 'GET') {
+      try {
+        const sessions = await env.DB.prepare(
+          `SELECT verification_code, plugin_info, last_heartbeat, created_at 
+           FROM debug_sessions 
+           WHERE is_active = 1 AND last_heartbeat > ?
+           ORDER BY created_at DESC`
+        ).bind(Math.floor(Date.now() / 1000) - 300).all(); // 5分钟内有心跳的会话
+
+        return new Response(JSON.stringify({ 
+          sessions: sessions.results.map((s: any) => ({
+            code: s.verification_code,
+            pluginInfo: JSON.parse(s.plugin_info || '{}'),
+            lastHeartbeat: s.last_heartbeat,
+            createdAt: s.created_at
+          }))
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        });
+      }
+    }
+
+    // 6.7 DELETE /debug/session/:code - 关闭调试会话
+    if (url.pathname.startsWith('/debug/session/') && request.method === 'DELETE') {
+      try {
+        const verificationCode = url.pathname.split('/').pop();
+        
+        await env.DB.prepare(
+          `UPDATE debug_sessions SET is_active = 0 WHERE verification_code = ?`
+        ).bind(verificationCode).run();
+
+        return new Response(JSON.stringify({ 
+          success: true,
+          message: '调试会话已关闭'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        });
+      }
+    }
+
+    // 6.8 GET /debug/history/:code - 获取会话的命令历史
+    if (url.pathname.startsWith('/debug/history/') && request.method === 'GET') {
+      try {
+        const verificationCode = url.pathname.split('/').pop();
+        
+        const commands = await env.DB.prepare(
+          `SELECT c.id, c.command_type, c.command_data, c.status, c.created_at,
+                  r.result_type, r.result_data, r.execution_time
+           FROM debug_commands c
+           LEFT JOIN debug_results r ON c.id = r.command_id
+           WHERE c.verification_code = ?
+           ORDER BY c.created_at DESC
+           LIMIT 50`
+        ).bind(verificationCode).all();
+
+        return new Response(JSON.stringify({ 
+          history: commands.results.map((c: any) => ({
+            id: c.id,
+            type: c.command_type,
+            data: JSON.parse(c.command_data || '{}'),
+            status: c.status,
+            createdAt: c.created_at,
+            result: c.result_type ? {
+              type: c.result_type,
+              data: JSON.parse(c.result_data || '{}'),
+              executionTime: c.execution_time
+            } : null
+          }))
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { 
+          status: 500, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        });
+      }
+    }
+
     return new Response('Not Found', { status: 404, headers: corsHeaders });
   },
 };

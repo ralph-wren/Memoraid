@@ -20,6 +20,12 @@ export default defineManifest({
   },
   permissions: ['storage', 'activeTab', 'notifications', 'cookies', 'scripting', 'identity'],
   host_permissions: ['<all_urls>'],
+  web_accessible_resources: [
+    {
+      resources: ['debug-bridge.js'],
+      matches: ['<all_urls>'],
+    },
+  ],
   content_scripts: [
     {
       matches: ['<all_urls>'],

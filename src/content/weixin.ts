@@ -44,9 +44,14 @@ const SELECTORS = {
   ],
   
   // AI 配图输入框 - Playwright: getByRole('textbox', { name: '请描述你想要创作的内容' })
+  // 远程调试发现: id="ai-image-prompt", class="chat_textarea"
   aiPromptInput: [
-    'input[placeholder*="请描述你想要创作的内容"]',
+    '#ai-image-prompt',                                    // 精确ID选择器（远程调试发现）
+    'textarea.chat_textarea',                              // 精确class选择器
     'textarea[placeholder*="请描述你想要创作的内容"]',
+    'input[placeholder*="请描述你想要创作的内容"]',
+    'textarea[placeholder*="描述"]',
+    'input[placeholder*="描述"]',
     '.ai-image-input input',
     '.ai-image-input textarea'
   ],
@@ -2838,6 +2843,44 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 });
 
+// ============================================
+// 远程调试功能
+// ============================================
+import { showDebugPanel, startDebugSession, stopDebugSession, getDebugSessionStatus } from '../utils/remoteDebug';
+
+// 导出远程调试功能到全局
+(window as any).memoraidDebug = {
+  showPanel: showDebugPanel,
+  start: startDebugSession,
+  stop: stopDebugSession,
+  status: getDebugSessionStatus
+};
+
+// 监听调试消息
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === 'SHOW_DEBUG_PANEL') {
+    showDebugPanel();
+    sendResponse({ success: true });
+    return true;
+  }
+  
+  if (message.type === 'START_DEBUG_SESSION') {
+    startDebugSession().then(code => {
+      sendResponse({ success: true, verificationCode: code });
+    }).catch(err => {
+      sendResponse({ success: false, error: err.message });
+    });
+    return true;
+  }
+  
+  if (message.type === 'STOP_DEBUG_SESSION') {
+    stopDebugSession().then(() => {
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+});
+
 console.log(`
 📱 Memoraid 微信公众号助手已加载
 
@@ -2850,6 +2893,12 @@ console.log(`
   memoraidWeixinSetCover()               - 设置封面（从正文选择）
   memoraidWeixinDeclareOriginal('作者')   - 声明原创
   memoraidWeixinPreview()                - 预览文章
+
+🔧 远程调试命令：
+  memoraidDebug.showPanel()              - 显示调试面板
+  memoraidDebug.start()                  - 启动调试会话（返回验证码）
+  memoraidDebug.stop()                   - 停止调试会话
+  memoraidDebug.status()                 - 获取调试状态
 
 注意：AI 配图生成需要 30-60 秒，请耐心等待
 `)

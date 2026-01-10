@@ -1,7 +1,86 @@
 import { ExtractionResult, ChatMessage } from '../utils/types';
 import { Readability } from '@mozilla/readability';
+import { showDebugPanel, startDebugSession, stopDebugSession, getDebugSessionStatus } from '../utils/remoteDebug';
 
 console.log('Chat Export Content Script Loaded');
+
+// ============================================
+// 远程调试功能 - 全局可用，无需开启 debug 模式
+// ============================================
+
+// 监听来自页面的调试请求（通过 CustomEvent）
+window.addEventListener('memoraid-debug-request', async (event: Event) => {
+  const customEvent = event as CustomEvent;
+  const { action, requestId } = customEvent.detail || {};
+  
+  let result: any = { success: false, error: 'Unknown action' };
+  
+  try {
+    switch (action) {
+      case 'showPanel':
+        showDebugPanel();
+        result = { success: true };
+        break;
+      case 'start':
+        const code = await startDebugSession();
+        result = { success: true, verificationCode: code };
+        break;
+      case 'stop':
+        await stopDebugSession();
+        result = { success: true };
+        break;
+      case 'status':
+        result = { success: true, ...getDebugSessionStatus() };
+        break;
+    }
+  } catch (e: any) {
+    result = { success: false, error: e.message };
+  }
+  
+  // 发送响应回页面
+  window.dispatchEvent(new CustomEvent('memoraid-debug-response', {
+    detail: { requestId, ...result }
+  }));
+});
+
+// 请求 background script 注入调试桥接脚本到页面 MAIN world
+// 这样可以绕过 CSP 限制
+chrome.runtime.sendMessage({ type: 'INJECT_DEBUG_BRIDGE' }).catch(() => {
+  // 可能 background 还没准备好，忽略错误
+});
+
+// 监听调试相关消息（来自 popup 或 background）
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === 'SHOW_DEBUG_PANEL') {
+    showDebugPanel();
+    sendResponse({ success: true });
+    return true;
+  }
+  
+  if (message.type === 'START_DEBUG_SESSION') {
+    startDebugSession().then(code => {
+      sendResponse({ success: true, verificationCode: code });
+    }).catch(err => {
+      sendResponse({ success: false, error: err.message });
+    });
+    return true;
+  }
+  
+  if (message.type === 'STOP_DEBUG_SESSION') {
+    stopDebugSession().then(() => {
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+  
+  if (message.type === 'DEBUG_BRIDGE_INJECTED') {
+    console.log('[Memoraid] 调试桥接已通过 background 注入');
+    sendResponse({ success: true });
+    return true;
+  }
+  
+  return false;
+});
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'EXTRACT_CONTENT') {
