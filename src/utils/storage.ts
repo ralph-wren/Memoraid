@@ -1,4 +1,4 @@
-import { SYSTEM_PROMPTS } from './prompts';
+import { SYSTEM_PROMPTS, TOUTIAO_DEFAULT_PROMPT, ZHIHU_DEFAULT_PROMPT } from './prompts';
 
 export interface GitHubSettings {
   token: string;
@@ -30,10 +30,12 @@ export interface AppSettings {
   toutiao?: {
     cookie: string;
     autoPublish?: boolean; // 生成文章后是否自动发布
+    customPrompt?: string; // 自定义提示词
   };
   zhihu?: {
     cookie: string;
     autoPublish?: boolean; // 生成文章后是否自动发布到知乎
+    customPrompt?: string; // 自定义提示词
   };
   sync?: {
     enabled: boolean;
@@ -62,11 +64,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   toutiao: {
     cookie: '',
-    autoPublish: false
+    autoPublish: false,
+    customPrompt: TOUTIAO_DEFAULT_PROMPT
   },
   zhihu: {
     cookie: '',
-    autoPublish: false
+    autoPublish: false,
+    customPrompt: ZHIHU_DEFAULT_PROMPT
   },
   systemPrompt: SYSTEM_PROMPTS['zh-CN'],
   sync: {

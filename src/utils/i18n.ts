@@ -137,6 +137,12 @@ export interface Translation {
   
   // Misc
   downloadMarkdown: string;
+  
+  // Custom prompts for platforms
+  customPromptLabel: string;
+  customPromptHint: string;
+  customPromptPlaceholder: string;
+  resetToDefault: string;
 }
 
 export const TRANSLATIONS: Record<string, Translation> = {
@@ -279,6 +285,12 @@ export const TRANSLATIONS: Record<string, Translation> = {
     
     // Misc
     downloadMarkdown: 'Download',
+    
+    // Custom prompts for platforms
+    customPromptLabel: 'Custom Prompt',
+    customPromptHint: 'Customize the AI generation prompt for this platform. Leave empty to use default.',
+    customPromptPlaceholder: 'Enter custom prompt for article generation...',
+    resetToDefault: 'Reset to Default',
   },
   'zh-CN': {
     // Settings page
@@ -419,6 +431,12 @@ export const TRANSLATIONS: Record<string, Translation> = {
     
     // Misc
     downloadMarkdown: '下载',
+    
+    // Custom prompts for platforms
+    customPromptLabel: '自定义提示词',
+    customPromptHint: '自定义该平台的 AI 生成提示词，留空则使用默认提示词。',
+    customPromptPlaceholder: '输入文章生成的自定义提示词...',
+    resetToDefault: '恢复默认',
   },
   'ja': {
     // Settings page
@@ -559,6 +577,12 @@ export const TRANSLATIONS: Record<string, Translation> = {
     
     // Misc
     downloadMarkdown: 'ダウンロード',
+    
+    // Custom prompts for platforms
+    customPromptLabel: 'カスタムプロンプト',
+    customPromptHint: 'このプラットフォーム用のAI生成プロンプトをカスタマイズします。空のままにするとデフォルトが使用されます。',
+    customPromptPlaceholder: '記事生成用のカスタムプロンプトを入力...',
+    resetToDefault: 'デフォルトに戻す',
   },
   'ko': {
     // Settings page
@@ -699,6 +723,12 @@ export const TRANSLATIONS: Record<string, Translation> = {
     
     // Misc
     downloadMarkdown: '다운로드',
+    
+    // Custom prompts for platforms
+    customPromptLabel: '사용자 정의 프롬프트',
+    customPromptHint: '이 플랫폼의 AI 생성 프롬프트를 사용자 정의합니다. 비워두면 기본값이 사용됩니다.',
+    customPromptPlaceholder: '기사 생성을 위한 사용자 정의 프롬프트 입력...',
+    resetToDefault: '기본값으로 복원',
   },
   'de': {
     // Settings page
@@ -839,6 +869,12 @@ export const TRANSLATIONS: Record<string, Translation> = {
     
     // Misc
     downloadMarkdown: 'Herunterladen',
+    
+    // Custom prompts for platforms
+    customPromptLabel: 'Benutzerdefinierter Prompt',
+    customPromptHint: 'Passen Sie den KI-Generierungsprompt für diese Plattform an. Leer lassen für Standard.',
+    customPromptPlaceholder: 'Benutzerdefinierten Prompt für Artikelgenerierung eingeben...',
+    resetToDefault: 'Standard wiederherstellen',
   },
   'fr': {
     // Settings page
@@ -979,6 +1015,12 @@ export const TRANSLATIONS: Record<string, Translation> = {
     
     // Misc
     downloadMarkdown: 'Télécharger',
+    
+    // Custom prompts for platforms
+    customPromptLabel: 'Prompt personnalisé',
+    customPromptHint: 'Personnalisez le prompt de génération IA pour cette plateforme. Laissez vide pour utiliser le défaut.',
+    customPromptPlaceholder: 'Entrez un prompt personnalisé pour la génération d\'articles...',
+    resetToDefault: 'Restaurer par défaut',
   },
   'es': {
     // Settings page
@@ -1119,6 +1161,12 @@ export const TRANSLATIONS: Record<string, Translation> = {
     
     // Misc
     downloadMarkdown: 'Descargar',
+    
+    // Custom prompts for platforms
+    customPromptLabel: 'Prompt personalizado',
+    customPromptHint: 'Personalice el prompt de generación de IA para esta plataforma. Deje vacío para usar el predeterminado.',
+    customPromptPlaceholder: 'Ingrese un prompt personalizado para la generación de artículos...',
+    resetToDefault: 'Restaurar predeterminado',
   }
 };
 

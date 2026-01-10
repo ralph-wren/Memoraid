@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { AppSettings, DEFAULT_SETTINGS, getSettings, saveSettings, syncSettings, restoreSettings, ArticleStyleSettings } from '../utils/storage';
-import { SYSTEM_PROMPTS } from '../utils/prompts';
+import { SYSTEM_PROMPTS, TOUTIAO_DEFAULT_PROMPT, ZHIHU_DEFAULT_PROMPT } from '../utils/prompts';
 import { getTranslation } from '../utils/i18n';
-import { Eye, EyeOff, Github, Loader2, CheckCircle, XCircle, Newspaper, RefreshCw, Cloud, Lock, Key, Bug, Palette, Send, BookOpen } from 'lucide-react';
+import { Eye, EyeOff, Github, Loader2, CheckCircle, XCircle, Newspaper, RefreshCw, Cloud, Lock, Key, Bug, Palette, Send, BookOpen, RotateCcw } from 'lucide-react';
 import { validateGitHubConnection } from '../utils/github';
 import { generateRandomString } from '../utils/crypto';
 
@@ -294,7 +294,7 @@ const Settings: React.FC = () => {
     }));
   };
 
-  const handleToutiaoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleToutiaoChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setSettings(prev => ({
       ...prev,
@@ -305,7 +305,7 @@ const Settings: React.FC = () => {
     }));
   };
 
-  const handleZhihuChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleZhihuChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setSettings(prev => ({
       ...prev,
@@ -586,6 +586,535 @@ const Settings: React.FC = () => {
     <div className="p-4 space-y-4">
       <h2 className="text-xl font-bold mb-4">{t.settingsTitle}</h2>
 
+      {/* ========== 公共设置 ========== */}
+      
+      {/* 语言设置 */}
+      <div className="space-y-2">
+        <label className="block text-sm font-medium">{t.languageLabel}</label>
+        <select
+          value={settings.language || 'zh-CN'}
+          onChange={handleLanguageChange}
+          className="w-full p-2 border rounded"
+        >
+          {LANGUAGES.map(lang => (
+            <option key={lang.code} value={lang.code}>
+              {lang.name}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-gray-500">
+          {t.languageHint}
+        </p>
+      </div>
+
+      {/* AI 模型配置 */}
+      <div className="border-t pt-4 space-y-4">
+        <div className="space-y-2">
+          <label className="block text-sm font-medium">{t.providerLabel}</label>
+          <select
+            value={selectedProvider}
+            onChange={handleProviderChange}
+            className="w-full p-2 border rounded"
+          >
+            {Object.entries(PROVIDERS).map(([key, config]) => (
+              <option key={key} value={key}>
+                {config.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        
+        <div className="space-y-2">
+          <div className="flex justify-between items-center">
+            <label className="block text-sm font-medium">{t.apiKeyLabel}</label>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleVerifyApi}
+                disabled={verifyingApi}
+                className={`flex items-center gap-1 text-xs transition ${
+                  apiVerifyStatus === 'success' 
+                    ? 'text-green-600' 
+                    : apiVerifyStatus === 'error'
+                    ? 'text-red-600'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {verifyingApi ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : apiVerifyStatus === 'success' ? (
+                  <CheckCircle className="w-3 h-3" />
+                ) : apiVerifyStatus === 'error' ? (
+                  <XCircle className="w-3 h-3" />
+                ) : (
+                  <CheckCircle className="w-3 h-3" />
+                )}
+                {verifyingApi ? t.verifying : t.verifyButton}
+              </button>
+              {getProviderLink(selectedProvider) && (
+                <a 
+                  href={getProviderLink(selectedProvider)!} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                >
+                  {t.getKey} ↗
+                </a>
+              )}
+            </div>
+          </div>
+          <div className="relative">
+            <input
+              type={showApiKey ? "text" : "password"}
+              name="apiKey"
+              value={settings.apiKey}
+              onChange={handleChange}
+              className="w-full p-2 border rounded pr-10"
+              placeholder={t.apiKeyPlaceholder}
+            />
+            <button
+              type="button"
+              onClick={() => setShowApiKey(!showApiKey)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 p-1"
+            >
+              {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium">{t.baseUrlLabel}</label>
+          <input
+            type="text"
+            name="baseUrl"
+            value={settings.baseUrl}
+            onChange={handleChange}
+            className="w-full p-2 border rounded"
+            placeholder="https://api.example.com/v1"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-medium">{t.modelLabel}</label>
+          <div className="flex flex-col gap-2">
+            {selectedProvider !== 'custom' && currentModels.length > 0 && (
+              <select 
+                name="model" 
+                value={settings.model} 
+                onChange={handleChange}
+                className="p-2 border rounded w-full"
+              >
+                {currentModels.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+                <option value="custom">{t.manualInput}</option>
+              </select>
+            )}
+            
+            {(selectedProvider === 'custom' || !currentModels.includes(settings.model)) && (
+              <input
+                type="text"
+                name="model"
+                value={settings.model}
+                onChange={handleChange}
+                className="w-full p-2 border rounded"
+                placeholder="e.g. yi-34b-chat-0205"
+              />
+            )}
+          </div>
+          {selectedProvider === 'doubao' && (
+             <p className="text-xs text-orange-600">
+               {t.doubaoHint}
+             </p>
+          )}
+        </div>
+      </div>
+
+      {/* 文章风格设置 */}
+      <div className="border-t pt-4">
+        <h3 className="text-md font-semibold mb-3 flex items-center gap-2">
+          <Palette className="w-4 h-4" />
+          {t.articleStyleTitle}
+        </h3>
+        <p className="text-xs text-gray-500 mb-4">
+          {t.articleStyleHint}
+        </p>
+        <div className="space-y-4">
+          <StyleSlider
+            label={t.styleStance}
+            leftLabel={t.styleStanceLeft}
+            rightLabel={t.styleStanceRight}
+            value={settings.articleStyle?.objectivity ?? 50}
+            onChange={(v) => handleStyleChange('objectivity', v)}
+          />
+          <StyleSlider
+            label={t.styleEmotion}
+            leftLabel={t.styleEmotionLeft}
+            rightLabel={t.styleEmotionRight}
+            value={settings.articleStyle?.sentiment ?? 60}
+            onChange={(v) => handleStyleChange('sentiment', v)}
+          />
+          <StyleSlider
+            label={t.styleTone}
+            leftLabel={t.styleToneLeft}
+            rightLabel={t.styleToneRight}
+            value={settings.articleStyle?.tone ?? 50}
+            onChange={(v) => handleStyleChange('tone', v)}
+          />
+          <StyleSlider
+            label={t.stylePoliteness}
+            leftLabel={t.stylePolitenessLeft}
+            rightLabel={t.stylePolitenessRight}
+            value={settings.articleStyle?.politeness ?? 60}
+            onChange={(v) => handleStyleChange('politeness', v)}
+          />
+          <StyleSlider
+            label={t.styleFormality}
+            leftLabel={t.styleFormalityLeft}
+            rightLabel={t.styleFormalityRight}
+            value={settings.articleStyle?.formality ?? 30}
+            onChange={(v) => handleStyleChange('formality', v)}
+          />
+          <StyleSlider
+            label={t.styleHumor}
+            leftLabel={t.styleHumorLeft}
+            rightLabel={t.styleHumorRight}
+            value={settings.articleStyle?.humor ?? 40}
+            onChange={(v) => handleStyleChange('humor', v)}
+          />
+          <button
+            type="button"
+            onClick={() => setSettings(prev => ({
+              ...prev,
+              articleStyle: DEFAULT_SETTINGS.articleStyle
+            }))}
+            className="text-xs text-blue-600 hover:text-blue-800 underline"
+          >
+            {t.resetToDefaultStyle}
+          </button>
+        </div>
+      </div>
+
+      {/* 系统提示词 */}
+      <div className="border-t pt-4 space-y-2">
+        <div className="flex justify-between items-center">
+            <label className="block text-sm font-medium">{t.systemPromptLabel}</label>
+            <button
+                type="button"
+                onClick={() => setSettings(prev => ({ 
+                  ...prev, 
+                  systemPrompt: SYSTEM_PROMPTS[prev.language || 'zh-CN'] || DEFAULT_SETTINGS.systemPrompt 
+                }))}
+                className="text-xs text-blue-600 hover:text-blue-800 underline"
+            >
+                {t.resetButton}
+            </button>
+        </div>
+        <textarea
+          name="systemPrompt"
+          value={settings.systemPrompt}
+          onChange={handleChange}
+          className="w-full p-2 border rounded h-32"
+          placeholder={t.promptPlaceholder}
+        />
+      </div>
+
+      {/* ========== 头条配置 ========== */}
+      <div className="border-t pt-4">
+        <h3 className="text-md font-semibold mb-2 flex items-center gap-2">
+          <Newspaper className="w-4 h-4 text-red-500" />
+          {t.toutiaoConfigTitle}
+        </h3>
+        <div className="space-y-3">
+          <div className="space-y-1">
+             <div className="flex justify-between items-center">
+               <label className="block text-xs font-medium text-gray-600">{t.cookieLabel}</label>
+               <button
+                 type="button"
+                 onClick={handleAutoFetchToutiaoCookie}
+                 disabled={fetchingToutiao}
+                 className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-xs"
+               >
+                 {fetchingToutiao ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                 {t.autoFetch}
+               </button>
+             </div>
+             <div className="relative">
+                <input
+                  type={showToutiaoCookie ? "text" : "password"}
+                  name="cookie"
+                  value={settings.toutiao?.cookie || ''}
+                  onChange={handleToutiaoChange}
+                  className="w-full p-2 border rounded pr-10 text-sm"
+                  placeholder="Paste your Toutiao cookie here..."
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowToutiaoCookie(!showToutiaoCookie)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 p-1"
+                >
+                  {showToutiaoCookie ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+             </div>
+             <p className="text-[10px] text-gray-400">
+               {t.cookieHint}
+             </p>
+          </div>
+          
+          {/* 头条自定义提示词 */}
+          <div className="space-y-1">
+            <div className="flex justify-between items-center">
+              <label className="block text-xs font-medium text-gray-600">{t.customPromptLabel}</label>
+              <button
+                type="button"
+                onClick={() => setSettings(prev => ({
+                  ...prev,
+                  toutiao: {
+                    ...prev.toutiao || { cookie: '' },
+                    customPrompt: TOUTIAO_DEFAULT_PROMPT
+                  }
+                }))}
+                className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-xs"
+              >
+                <RotateCcw className="w-3 h-3" />
+                {t.resetToDefault}
+              </button>
+            </div>
+            <textarea
+              name="customPrompt"
+              value={settings.toutiao?.customPrompt || TOUTIAO_DEFAULT_PROMPT}
+              onChange={handleToutiaoChange}
+              className="w-full p-2 border rounded h-32 text-sm font-mono"
+              placeholder={t.customPromptPlaceholder}
+            />
+            <p className="text-[10px] text-gray-400">
+              {t.customPromptHint}
+            </p>
+          </div>
+          
+          {/* 自动发布开关 */}
+          <div className="bg-white rounded-lg border border-gray-100 p-3">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <Send className={`w-4 h-4 ${settings.toutiao?.autoPublish ? 'text-green-500' : 'text-gray-400'}`} />
+                    <div>
+                        <span className="font-medium text-gray-800 text-sm">{t.autoPublish}</span>
+                        <p className="text-[10px] text-gray-500">{t.autoPublishHintToutiao}</p>
+                    </div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                        type="checkbox" 
+                        className="sr-only peer"
+                        checked={settings.toutiao?.autoPublish || false}
+                        onChange={(e) => setSettings({ 
+                          ...settings, 
+                          toutiao: {
+                            ...settings.toutiao || { cookie: '' },
+                            autoPublish: e.target.checked
+                          }
+                        })}
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-red-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-500"></div>
+                </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ========== 知乎配置 ========== */}
+      <div className="border-t pt-4">
+        <h3 className="text-md font-semibold mb-2 flex items-center gap-2">
+          <BookOpen className="w-4 h-4 text-blue-500" />
+          {t.zhihuConfigTitle}
+        </h3>
+        <div className="space-y-3">
+          <div className="space-y-1">
+             <div className="flex justify-between items-center">
+               <label className="block text-xs font-medium text-gray-600">{t.cookieLabel}</label>
+               <button
+                 type="button"
+                 onClick={handleAutoFetchZhihuCookie}
+                 disabled={fetchingZhihu}
+                 className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-xs"
+               >
+                 {fetchingZhihu ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                 {t.autoFetch}
+               </button>
+             </div>
+             <div className="relative">
+                <input
+                  type={showZhihuCookie ? "text" : "password"}
+                  name="cookie"
+                  value={settings.zhihu?.cookie || ''}
+                  onChange={handleZhihuChange}
+                  className="w-full p-2 border rounded pr-10 text-sm"
+                  placeholder={t.cookieLabel}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowZhihuCookie(!showZhihuCookie)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 p-1"
+                >
+                  {showZhihuCookie ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+             </div>
+             <p className="text-[10px] text-gray-400">
+               {t.cookieHint}
+             </p>
+          </div>
+          
+          {/* 知乎自定义提示词 */}
+          <div className="space-y-1">
+            <div className="flex justify-between items-center">
+              <label className="block text-xs font-medium text-gray-600">{t.customPromptLabel}</label>
+              <button
+                type="button"
+                onClick={() => setSettings(prev => ({
+                  ...prev,
+                  zhihu: {
+                    ...prev.zhihu || { cookie: '' },
+                    customPrompt: ZHIHU_DEFAULT_PROMPT
+                  }
+                }))}
+                className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-xs"
+              >
+                <RotateCcw className="w-3 h-3" />
+                {t.resetToDefault}
+              </button>
+            </div>
+            <textarea
+              name="customPrompt"
+              value={settings.zhihu?.customPrompt || ZHIHU_DEFAULT_PROMPT}
+              onChange={handleZhihuChange}
+              className="w-full p-2 border rounded h-32 text-sm font-mono"
+              placeholder={t.customPromptPlaceholder}
+            />
+            <p className="text-[10px] text-gray-400">
+              {t.customPromptHint}
+            </p>
+          </div>
+          
+          {/* 知乎自动发布开关 */}
+          <div className="bg-white rounded-lg border border-gray-100 p-3">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <Send className={`w-4 h-4 ${settings.zhihu?.autoPublish ? 'text-blue-500' : 'text-gray-400'}`} />
+                    <div>
+                        <span className="font-medium text-gray-800 text-sm">{t.autoPublish}</span>
+                        <p className="text-[10px] text-gray-500">{t.autoPublishHintZhihu}</p>
+                    </div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                        type="checkbox" 
+                        className="sr-only peer"
+                        checked={settings.zhihu?.autoPublish || false}
+                        onChange={(e) => setSettings({ 
+                          ...settings, 
+                          zhihu: {
+                            ...settings.zhihu || { cookie: '' },
+                            autoPublish: e.target.checked
+                          }
+                        })}
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ========== GitHub 集成 ========== */}
+      <div className="border-t pt-4">
+        <h3 className="text-md font-semibold mb-2 flex items-center gap-2">
+          <Github className="w-4 h-4" />
+          {t.githubTitle}
+        </h3>
+        <div className="space-y-3">
+          <div className="space-y-1">
+             <label className="block text-xs font-medium text-gray-600">{t.tokenLabel}</label>
+             <div className="relative">
+                <input
+                  type={showGithubToken ? "text" : "password"}
+                  name="token"
+                  value={settings.github?.token || ''}
+                  onChange={handleGithubChange}
+                  className="w-full p-2 border rounded pr-10 text-sm"
+                  placeholder="ghp_..."
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowGithubToken(!showGithubToken)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 p-1"
+                >
+                  {showGithubToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                </button>
+             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+               <label className="block text-xs font-medium text-gray-600">{t.ownerLabel}</label>
+               <input
+                 type="text"
+                 name="owner"
+                 value={settings.github?.owner || ''}
+                 onChange={handleGithubChange}
+                 className="w-full p-2 border rounded text-sm"
+                 placeholder="e.g. facebook"
+               />
+            </div>
+            <div className="space-y-1">
+               <label className="block text-xs font-medium text-gray-600">{t.repoLabel}</label>
+               <input
+                 type="text"
+                 name="repo"
+                 value={settings.github?.repo || ''}
+                 onChange={handleGithubChange}
+                 className="w-full p-2 border rounded text-sm"
+                 placeholder="e.g. react"
+               />
+            </div>
+          </div>
+          <div className="flex gap-2 items-end">
+            <div className="space-y-1 flex-1">
+               <label className="block text-xs font-medium text-gray-600">{t.branchLabel}</label>
+               <input
+                 type="text"
+                 name="branch"
+                 value={settings.github?.branch || 'main'}
+                 onChange={handleGithubChange}
+                 className="w-full p-2 border rounded text-sm"
+                 placeholder="main"
+               />
+            </div>
+            <button
+              onClick={handleVerifyGithub}
+              disabled={verifying}
+              className={`h-[38px] px-3 rounded flex items-center gap-2 text-sm font-medium border transition ${
+                verifyStatus === 'success' 
+                  ? 'bg-green-50 border-green-200 text-green-700' 
+                  : verifyStatus === 'error'
+                  ? 'bg-red-50 border-red-200 text-red-700'
+                  : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
+              }`}
+              title={t.verifyTitle}
+            >
+              {verifying ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : verifyStatus === 'success' ? (
+                <CheckCircle className="w-4 h-4" />
+              ) : verifyStatus === 'error' ? (
+                <XCircle className="w-4 h-4" />
+              ) : (
+                <CheckCircle className="w-4 h-4" />
+              )}
+              {verifying ? t.verifying : t.verifyButton}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ========== 同步与备份 ========== */}
       <div className="border-t pt-4">
         <h3 className="text-md font-semibold mb-2 flex items-center gap-2">
             <Cloud className="w-4 h-4" />
@@ -709,502 +1238,35 @@ const Settings: React.FC = () => {
         )}
       </div>
 
+      {/* ========== 调试模式 ========== */}
       <div className="border-t pt-4">
-        <h3 className="text-md font-semibold mb-2 flex items-center gap-2">
-          <Newspaper className="w-4 h-4" />
-          {t.toutiaoConfigTitle}
-        </h3>
-        <div className="space-y-3">
-          <div className="space-y-1">
-             <div className="flex justify-between items-center">
-               <label className="block text-xs font-medium text-gray-600">{t.cookieLabel}</label>
-               <button
-                 type="button"
-                 onClick={handleAutoFetchToutiaoCookie}
-                 disabled={fetchingToutiao}
-                 className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-xs"
-               >
-                 {fetchingToutiao ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                 {t.autoFetch}
-               </button>
-             </div>
-             <div className="relative">
-                <input
-                  type={showToutiaoCookie ? "text" : "password"}
-                  name="cookie"
-                  value={settings.toutiao?.cookie || ''}
-                  onChange={handleToutiaoChange}
-                  className="w-full p-2 border rounded pr-10 text-sm"
-                  placeholder="Paste your Toutiao cookie here..."
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowToutiaoCookie(!showToutiaoCookie)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 p-1"
-                >
-                  {showToutiaoCookie ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                </button>
-             </div>
-             <p className="text-[10px] text-gray-400">
-               {t.cookieHint}
-             </p>
-          </div>
-          
-          {/* 自动发布开关 */}
-          <div className="bg-white rounded-lg border border-gray-100 p-3 mt-3">
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <Send className={`w-4 h-4 ${settings.toutiao?.autoPublish ? 'text-green-500' : 'text-gray-400'}`} />
-                    <div>
-                        <span className="font-medium text-gray-800 text-sm">{t.autoPublish}</span>
-                        <p className="text-[10px] text-gray-500">{t.autoPublishHintToutiao}</p>
-                    </div>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                        type="checkbox" 
-                        className="sr-only peer"
-                        checked={settings.toutiao?.autoPublish || false}
-                        onChange={(e) => setSettings({ 
-                          ...settings, 
-                          toutiao: {
-                            ...settings.toutiao || { cookie: '' },
-                            autoPublish: e.target.checked
-                          }
-                        })}
-                    />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-green-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
-                </label>
-            </div>
+        <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
+          <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                  <Bug className={`w-5 h-5 ${settings.debugMode ? 'text-orange-500' : 'text-gray-400'}`} />
+                  <div>
+                      <span className="font-medium text-gray-800">{t.debugModeTitle}</span>
+                      <p className="text-xs text-gray-500">{t.debugModeHint}</p>
+                  </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                  <input 
+                      type="checkbox" 
+                      className="sr-only peer"
+                      checked={settings.debugMode || false}
+                      onChange={(e) => setSettings({ ...settings, debugMode: e.target.checked })}
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-orange-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+              </label>
           </div>
         </div>
       </div>
 
-      {/* Zhihu Configuration - 知乎配置 */}
-      <div className="border-t pt-4">
-        <h3 className="text-md font-semibold mb-2 flex items-center gap-2">
-          <BookOpen className="w-4 h-4" />
-          {t.zhihuConfigTitle}
-        </h3>
-        <div className="space-y-3">
-          <div className="space-y-1">
-             <div className="flex justify-between items-center">
-               <label className="block text-xs font-medium text-gray-600">{t.cookieLabel}</label>
-               <button
-                 type="button"
-                 onClick={handleAutoFetchZhihuCookie}
-                 disabled={fetchingZhihu}
-                 className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-xs"
-               >
-                 {fetchingZhihu ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                 {t.autoFetch}
-               </button>
-             </div>
-             <div className="relative">
-                <input
-                  type={showZhihuCookie ? "text" : "password"}
-                  name="cookie"
-                  value={settings.zhihu?.cookie || ''}
-                  onChange={handleZhihuChange}
-                  className="w-full p-2 border rounded pr-10 text-sm"
-                  placeholder={t.cookieLabel}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowZhihuCookie(!showZhihuCookie)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 p-1"
-                >
-                  {showZhihuCookie ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                </button>
-             </div>
-             <p className="text-[10px] text-gray-400">
-               {t.cookieHint}
-             </p>
-          </div>
-          
-          {/* 知乎自动发布开关 */}
-          <div className="bg-white rounded-lg border border-gray-100 p-3 mt-3">
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <Send className={`w-4 h-4 ${settings.zhihu?.autoPublish ? 'text-blue-500' : 'text-gray-400'}`} />
-                    <div>
-                        <span className="font-medium text-gray-800 text-sm">{t.autoPublish}</span>
-                        <p className="text-[10px] text-gray-500">{t.autoPublishHintZhihu}</p>
-                    </div>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                        type="checkbox" 
-                        className="sr-only peer"
-                        checked={settings.zhihu?.autoPublish || false}
-                        onChange={(e) => setSettings({ 
-                          ...settings, 
-                          zhihu: {
-                            ...settings.zhihu || { cookie: '' },
-                            autoPublish: e.target.checked
-                          }
-                        })}
-                    />
-                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-                </label>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Article Style Settings - 文章风格设置 */}
-      <div className="border-t pt-4">
-        <h3 className="text-md font-semibold mb-3 flex items-center gap-2">
-          <Palette className="w-4 h-4" />
-          {t.articleStyleTitle}
-        </h3>
-        <p className="text-xs text-gray-500 mb-4">
-          {t.articleStyleHint}
-        </p>
-        <div className="space-y-4">
-          {/* 客观性 */}
-          <StyleSlider
-            label={t.styleStance}
-            leftLabel={t.styleStanceLeft}
-            rightLabel={t.styleStanceRight}
-            value={settings.articleStyle?.objectivity ?? 50}
-            onChange={(v) => handleStyleChange('objectivity', v)}
-          />
-          
-          {/* 情感倾向 */}
-          <StyleSlider
-            label={t.styleEmotion}
-            leftLabel={t.styleEmotionLeft}
-            rightLabel={t.styleEmotionRight}
-            value={settings.articleStyle?.sentiment ?? 60}
-            onChange={(v) => handleStyleChange('sentiment', v)}
-          />
-          
-          {/* 语气 */}
-          <StyleSlider
-            label={t.styleTone}
-            leftLabel={t.styleToneLeft}
-            rightLabel={t.styleToneRight}
-            value={settings.articleStyle?.tone ?? 50}
-            onChange={(v) => handleStyleChange('tone', v)}
-          />
-          
-          {/* 礼貌程度 */}
-          <StyleSlider
-            label={t.stylePoliteness}
-            leftLabel={t.stylePolitenessLeft}
-            rightLabel={t.stylePolitenessRight}
-            value={settings.articleStyle?.politeness ?? 60}
-            onChange={(v) => handleStyleChange('politeness', v)}
-          />
-          
-          {/* 正式程度 */}
-          <StyleSlider
-            label={t.styleFormality}
-            leftLabel={t.styleFormalityLeft}
-            rightLabel={t.styleFormalityRight}
-            value={settings.articleStyle?.formality ?? 30}
-            onChange={(v) => handleStyleChange('formality', v)}
-          />
-          
-          {/* 幽默程度 */}
-          <StyleSlider
-            label={t.styleHumor}
-            leftLabel={t.styleHumorLeft}
-            rightLabel={t.styleHumorRight}
-            value={settings.articleStyle?.humor ?? 40}
-            onChange={(v) => handleStyleChange('humor', v)}
-          />
-          
-          {/* 重置按钮 */}
-          <button
-            type="button"
-            onClick={() => setSettings(prev => ({
-              ...prev,
-              articleStyle: DEFAULT_SETTINGS.articleStyle
-            }))}
-            className="text-xs text-blue-600 hover:text-blue-800 underline"
-          >
-            {t.resetToDefaultStyle}
-          </button>
-        </div>
-      </div>
-
-      {/* Debug Mode */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
-        <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-                <Bug className={`w-5 h-5 ${settings.debugMode ? 'text-orange-500' : 'text-gray-400'}`} />
-                <div>
-                    <span className="font-medium text-gray-800">{t.debugModeTitle}</span>
-                    <p className="text-xs text-gray-500">{t.debugModeHint}</p>
-                </div>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-                <input 
-                    type="checkbox" 
-                    className="sr-only peer"
-                    checked={settings.debugMode || false}
-                    onChange={(e) => setSettings({ ...settings, debugMode: e.target.checked })}
-                />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-orange-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
-            </label>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <label className="block text-sm font-medium">{t.languageLabel}</label>
-        <select
-          value={settings.language || 'zh-CN'}
-          onChange={handleLanguageChange}
-          className="w-full p-2 border rounded"
-        >
-          {LANGUAGES.map(lang => (
-            <option key={lang.code} value={lang.code}>
-              {lang.name}
-            </option>
-          ))}
-        </select>
-        <p className="text-xs text-gray-500">
-          {t.languageHint}
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        <label className="block text-sm font-medium">{t.providerLabel}</label>
-        <select
-          value={selectedProvider}
-          onChange={handleProviderChange}
-          className="w-full p-2 border rounded"
-        >
-          {Object.entries(PROVIDERS).map(([key, config]) => (
-            <option key={key} value={key}>
-              {config.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      
-      <div className="space-y-2">
-        <div className="flex justify-between items-center">
-          <label className="block text-sm font-medium">{t.apiKeyLabel}</label>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleVerifyApi}
-              disabled={verifyingApi}
-              className={`flex items-center gap-1 text-xs transition ${
-                apiVerifyStatus === 'success' 
-                  ? 'text-green-600' 
-                  : apiVerifyStatus === 'error'
-                  ? 'text-red-600'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {verifyingApi ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : apiVerifyStatus === 'success' ? (
-                <CheckCircle className="w-3 h-3" />
-              ) : apiVerifyStatus === 'error' ? (
-                <XCircle className="w-3 h-3" />
-              ) : (
-                <CheckCircle className="w-3 h-3" />
-              )}
-              {verifyingApi ? t.verifying : t.verifyButton}
-            </button>
-            {getProviderLink(selectedProvider) && (
-              <a 
-                href={getProviderLink(selectedProvider)!} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
-              >
-                {t.getKey} ↗
-              </a>
-            )}
-          </div>
-        </div>
-        <div className="relative">
-          <input
-            type={showApiKey ? "text" : "password"}
-            name="apiKey"
-            value={settings.apiKey}
-            onChange={handleChange}
-            className="w-full p-2 border rounded pr-10"
-            placeholder={t.apiKeyPlaceholder}
-          />
-          <button
-            type="button"
-            onClick={() => setShowApiKey(!showApiKey)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 p-1"
-          >
-            {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <label className="block text-sm font-medium">{t.baseUrlLabel}</label>
-        <input
-          type="text"
-          name="baseUrl"
-          value={settings.baseUrl}
-          onChange={handleChange}
-          className="w-full p-2 border rounded"
-          placeholder="https://api.example.com/v1"
-        />
-      </div>
-
-      <div className="space-y-2">
-        <label className="block text-sm font-medium">{t.modelLabel}</label>
-        <div className="flex flex-col gap-2">
-          {selectedProvider !== 'custom' && currentModels.length > 0 && (
-            <select 
-              name="model" 
-              value={settings.model} 
-              onChange={handleChange}
-              className="p-2 border rounded w-full"
-            >
-              {currentModels.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-              <option value="custom">{t.manualInput}</option>
-            </select>
-          )}
-          
-          {(selectedProvider === 'custom' || !currentModels.includes(settings.model)) && (
-            <input
-              type="text"
-              name="model"
-              value={settings.model}
-              onChange={handleChange}
-              className="w-full p-2 border rounded"
-              placeholder="e.g. yi-34b-chat-0205"
-            />
-          )}
-        </div>
-        {selectedProvider === 'doubao' && (
-           <p className="text-xs text-orange-600">
-             {t.doubaoHint}
-           </p>
-        )}
-      </div>
-
-      <div className="border-t pt-4">
-        <h3 className="text-md font-semibold mb-2 flex items-center gap-2">
-          <Github className="w-4 h-4" />
-          {t.githubTitle}
-        </h3>
-        <div className="space-y-3">
-          <div className="space-y-1">
-             <label className="block text-xs font-medium text-gray-600">{t.tokenLabel}</label>
-             <div className="relative">
-                <input
-                  type={showGithubToken ? "text" : "password"}
-                  name="token"
-                  value={settings.github?.token || ''}
-                  onChange={handleGithubChange}
-                  className="w-full p-2 border rounded pr-10 text-sm"
-                  placeholder="ghp_..."
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowGithubToken(!showGithubToken)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 p-1"
-                >
-                  {showGithubToken ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                </button>
-             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-               <label className="block text-xs font-medium text-gray-600">{t.ownerLabel}</label>
-               <input
-                 type="text"
-                 name="owner"
-                 value={settings.github?.owner || ''}
-                 onChange={handleGithubChange}
-                 className="w-full p-2 border rounded text-sm"
-                 placeholder="e.g. facebook"
-               />
-            </div>
-            <div className="space-y-1">
-               <label className="block text-xs font-medium text-gray-600">{t.repoLabel}</label>
-               <input
-                 type="text"
-                 name="repo"
-                 value={settings.github?.repo || ''}
-                 onChange={handleGithubChange}
-                 className="w-full p-2 border rounded text-sm"
-                 placeholder="e.g. react"
-               />
-            </div>
-          </div>
-          <div className="flex gap-2 items-end">
-            <div className="space-y-1 flex-1">
-               <label className="block text-xs font-medium text-gray-600">{t.branchLabel}</label>
-               <input
-                 type="text"
-                 name="branch"
-                 value={settings.github?.branch || 'main'}
-                 onChange={handleGithubChange}
-                 className="w-full p-2 border rounded text-sm"
-                 placeholder="main"
-               />
-            </div>
-            <button
-              onClick={handleVerifyGithub}
-              disabled={verifying}
-              className={`h-[38px] px-3 rounded flex items-center gap-2 text-sm font-medium border transition ${
-                verifyStatus === 'success' 
-                  ? 'bg-green-50 border-green-200 text-green-700' 
-                  : verifyStatus === 'error'
-                  ? 'bg-red-50 border-red-200 text-red-700'
-                  : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
-              }`}
-              title={t.verifyTitle}
-            >
-              {verifying ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : verifyStatus === 'success' ? (
-                <CheckCircle className="w-4 h-4" />
-              ) : verifyStatus === 'error' ? (
-                <XCircle className="w-4 h-4" />
-              ) : (
-                <CheckCircle className="w-4 h-4" />
-              )}
-              {verifying ? t.verifying : t.verifyButton}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <div className="flex justify-between items-center">
-            <label className="block text-sm font-medium">{t.systemPromptLabel}</label>
-            <button
-                type="button"
-                onClick={() => setSettings(prev => ({ 
-                  ...prev, 
-                  systemPrompt: SYSTEM_PROMPTS[prev.language || 'zh-CN'] || DEFAULT_SETTINGS.systemPrompt 
-                }))}
-                className="text-xs text-blue-600 hover:text-blue-800 underline"
-            >
-                {t.resetButton}
-            </button>
-        </div>
-        <textarea
-          name="systemPrompt"
-          value={settings.systemPrompt}
-          onChange={handleChange}
-          className="w-full p-2 border rounded h-32"
-          placeholder={t.promptPlaceholder}
-        />
-      </div>
-
+      {/* ========== 保存按钮 ========== */}
       <div className="pt-2">
         <button
           onClick={handleSave}
-          className="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue700 transition"
+          className="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700 transition"
         >
           {status || t.saveButton}
         </button>
