@@ -1087,6 +1087,11 @@ async function startArticleGenerationAndPublish(extraction: ExtractionResult, pl
 
     try {
         for await (const chunk of stream) {
+            // 检查是否已取消
+            if (!abortController || abortController.signal.aborted) {
+              break;
+            }
+            
             const content = chunk.choices[0]?.delta?.content || '';
             summary += content;
             
@@ -1105,6 +1110,15 @@ async function startArticleGenerationAndPublish(extraction: ExtractionResult, pl
         }
     } finally {
         clearTimeout(timeoutId);
+    }
+    
+    // 如果已取消，直接返回不继续处理
+    if (!abortController || abortController.signal.aborted) {
+      stopTimer();
+      currentTask = null;
+      chrome.storage.local.remove('currentTask');
+      broadcastUpdate();
+      return;
     }
     
     stopTimer();
@@ -1197,6 +1211,10 @@ async function startArticleGenerationAndPublish(extraction: ExtractionResult, pl
     
     if (error.name === 'AbortError') {
       console.log('Article generation cancelled');
+      // 取消时清理任务状态，不跳转到发布页面
+      currentTask = null;
+      chrome.storage.local.remove('currentTask');
+      broadcastUpdate();
       return;
     }
 

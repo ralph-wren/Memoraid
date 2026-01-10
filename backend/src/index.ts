@@ -378,7 +378,78 @@ export default {
       }
     }
 
-    // 4. POST Logs (Debug Mode)
+    // 4. GET Shared API Key - 为用户分配一个共享的 NVIDIA API 密钥
+    if (url.pathname === '/api-key/nvidia' && request.method === 'GET') {
+      try {
+        // 使用设备指纹或 IP 作为用户标识（匿名用户也可以使用）
+        const clientId = request.headers.get('X-Client-Id') || 
+                         request.headers.get('CF-Connecting-IP') || 
+                         'anonymous_' + Math.random().toString(36).substring(7);
+        
+        // 检查用户是否已经分配了密钥
+        const existingAssignment = await env.DB.prepare(
+          `SELECT ak.api_key FROM user_api_key_assignments ua 
+           JOIN api_keys ak ON ua.api_key_id = ak.id 
+           WHERE ua.user_id = ? AND ak.is_active = 1`
+        ).bind(clientId).first();
+        
+        if (existingAssignment) {
+          // 更新使用统计
+          await env.DB.prepare(
+            `UPDATE api_keys SET usage_count = usage_count + 1, last_used_at = ? 
+             WHERE api_key = ?`
+          ).bind(Math.floor(Date.now() / 1000), existingAssignment.api_key).run();
+          
+          return new Response(JSON.stringify({ 
+            apiKey: existingAssignment.api_key,
+            cached: true 
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // 随机选择一个活跃的密钥（负载均衡）
+        const randomKey = await env.DB.prepare(
+          `SELECT id, api_key FROM api_keys 
+           WHERE is_active = 1 AND provider = 'nvidia'
+           ORDER BY usage_count ASC, RANDOM() 
+           LIMIT 1`
+        ).first();
+        
+        if (!randomKey) {
+          return new Response(JSON.stringify({ error: 'No available API keys' }), {
+            status: 503,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // 分配密钥给用户
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO user_api_key_assignments (user_id, api_key_id, assigned_at) 
+           VALUES (?, ?, ?)`
+        ).bind(clientId, randomKey.id, Math.floor(Date.now() / 1000)).run();
+        
+        // 更新使用统计
+        await env.DB.prepare(
+          `UPDATE api_keys SET usage_count = usage_count + 1, last_used_at = ? WHERE id = ?`
+        ).bind(Math.floor(Date.now() / 1000), randomKey.id).run();
+        
+        return new Response(JSON.stringify({ 
+          apiKey: randomKey.api_key,
+          cached: false 
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+        
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 5. POST Logs (Debug Mode)
     if (url.pathname === '/logs' && request.method === 'POST') {
       try {
         const body = await request.json() as any;

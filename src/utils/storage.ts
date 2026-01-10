@@ -53,7 +53,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
   apiKeys: {}, // Initialize empty map
   baseUrl: 'https://integrate.api.nvidia.com/v1',
-  model: 'meta/llama-3.1-405b-instruct',
+  model: 'deepseek-ai/deepseek-r1',
   provider: 'nvidia',
   language: 'zh-CN',
   github: {

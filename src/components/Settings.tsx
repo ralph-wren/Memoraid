@@ -23,14 +23,25 @@ interface ProviderConfig {
   isShared?: boolean; // 是否是共享密钥（用户无法查看）
 }
 
-// 英伟达共享密钥（所有用户共用，有限制）
-const NVIDIA_SHARED_KEY = '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';
+// 后端 API 地址
+const BACKEND_URL = 'https://memoraid-backend.iuyuger.workers.dev';
 
 const PROVIDERS: Record<string, ProviderConfig> = {
   'nvidia': {
     name: '🆓 NVIDIA (Free - Shared, Rate Limited)',
     baseUrl: 'https://integrate.api.nvidia.com/v1',
-    models: ['meta/llama-3.1-405b-instruct', 'meta/llama-3.1-70b-instruct', 'meta/llama-3.1-8b-instruct', 'mistralai/mixtral-8x22b-instruct-v0.1', 'google/gemma-2-27b-it'],
+    models: [
+      'deepseek-ai/deepseek-r1',
+      'deepseek-ai/deepseek-r1-distill-llama-70b',
+      'meta/llama-3.3-70b-instruct',
+      'meta/llama-3.1-405b-instruct',
+      'meta/llama-3.1-70b-instruct',
+      'qwen/qwen2.5-72b-instruct',
+      'qwen/qwen2.5-32b-instruct',
+      'mistralai/mistral-large-2-instruct',
+      'mistralai/mixtral-8x22b-instruct-v0.1',
+      'google/gemma-2-27b-it'
+    ],
     isShared: true
   },
   'apiyi': {
@@ -180,8 +191,8 @@ const StyleSlider: React.FC<StyleSliderProps> = ({ label, leftLabel, rightLabel,
 
 const Settings: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [status, setStatus] = useState<string>('');
   const [selectedProvider, setSelectedProvider] = useState<string>('nvidia');
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [showApiKey, setShowApiKey] = useState(false);
   const [showGithubToken, setShowGithubToken] = useState(false);
   const [showToutiaoCookie, setShowToutiaoCookie] = useState(false);
@@ -198,38 +209,86 @@ const Settings: React.FC = () => {
   
   const t = getTranslation(settings.language || 'zh-CN');
 
+  // 自动保存：当 settings 变化时自动保存（防抖）
+  const isInitialMount = React.useRef(true);
   useEffect(() => {
-    const loadSettings = () => {
-        getSettings().then((saved) => {
-          // Ensure apiKeys object exists (migration for old settings)
-          const initializedSettings = {
-            ...saved,
-            apiKeys: saved.apiKeys || {},
-            github: saved.github || DEFAULT_SETTINGS.github,
-            sync: saved.sync || DEFAULT_SETTINGS.sync
-          };
-          
-          // Migrate old single key if needed
-          if (saved.apiKey && !initializedSettings.apiKeys[saved.provider || 'apiyi']) {
-            initializedSettings.apiKeys[saved.provider || 'apiyi'] = saved.apiKey;
-          }
+    // 跳过初始加载时的保存
+    if (isInitialMount.current) {
+      return;
+    }
+    
+    setAutoSaveStatus('saving');
+    const timer = setTimeout(async () => {
+      await saveSettings(settings);
+      setAutoSaveStatus('saved');
+      // 2秒后恢复 idle 状态
+      setTimeout(() => setAutoSaveStatus('idle'), 2000);
+    }, 500); // 500ms 防抖
 
-          setSettings(initializedSettings);
-          
-          if (saved.provider && PROVIDERS[saved.provider]) {
-            setSelectedProvider(saved.provider);
-          } else {
-            // Fallback logic
-            const foundProvider = Object.entries(PROVIDERS).find(([key, config]) => 
-              key !== 'custom' && config.baseUrl === saved.baseUrl
-            );
-            if (foundProvider) {
-              setSelectedProvider(foundProvider[0]);
-            } else {
-              setSelectedProvider('custom');
+    return () => clearTimeout(timer);
+  }, [settings]);
+
+  useEffect(() => {
+    const loadSettings = async () => {
+        const saved = await getSettings();
+        // Ensure apiKeys object exists (migration for old settings)
+        const initializedSettings = {
+          ...saved,
+          apiKeys: saved.apiKeys || {},
+          github: saved.github || DEFAULT_SETTINGS.github,
+          sync: saved.sync || DEFAULT_SETTINGS.sync
+        };
+        
+        // Migrate old single key if needed
+        if (saved.apiKey && !initializedSettings.apiKeys[saved.provider || 'apiyi']) {
+          initializedSettings.apiKeys[saved.provider || 'apiyi'] = saved.apiKey;
+        }
+
+        // 如果是 nvidia provider，从后端获取共享密钥
+        const providerKey = saved.provider || 'nvidia';
+        if (PROVIDERS[providerKey]?.isShared) {
+          try {
+            let clientIdData = await chrome.storage.local.get(['clientId']);
+            if (!clientIdData.clientId) {
+              clientIdData.clientId = 'client_' + Math.random().toString(36).substring(2, 15);
+              await chrome.storage.local.set({ clientId: clientIdData.clientId });
             }
+            
+            const response = await fetch(`${BACKEND_URL}/api-key/nvidia`, {
+              headers: {
+                'X-Client-Id': clientIdData.clientId
+              }
+            });
+            
+            if (response.ok) {
+              const data = await response.json();
+              initializedSettings.apiKey = data.apiKey;
+            }
+          } catch (error) {
+            console.error('Failed to fetch shared API key:', error);
           }
-        });
+        }
+
+        setSettings(initializedSettings);
+        
+        if (saved.provider && PROVIDERS[saved.provider]) {
+          setSelectedProvider(saved.provider);
+        } else {
+          // Fallback logic
+          const foundProvider = Object.entries(PROVIDERS).find(([key, config]) => 
+            key !== 'custom' && config.baseUrl === saved.baseUrl
+          );
+          if (foundProvider) {
+            setSelectedProvider(foundProvider[0]);
+          } else {
+            setSelectedProvider('custom');
+          }
+        }
+        
+        // 标记初始化完成，之后的 settings 变化才会触发自动保存
+        setTimeout(() => {
+          isInitialMount.current = false;
+        }, 100);
     };
 
     loadSettings();
@@ -244,30 +303,67 @@ const Settings: React.FC = () => {
     };
   }, []);
 
-  const handleProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleProviderChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const providerKey = e.target.value;
     setSelectedProvider(providerKey);
     
     const config = PROVIDERS[providerKey];
-    setSettings(prev => {
-      const newSettings = { ...prev, provider: providerKey };
-      
-      // Update Base URL and Model if not custom
-      if (providerKey !== 'custom') {
-        newSettings.baseUrl = config.baseUrl;
-        newSettings.model = config.models[0] || '';
+    
+    // 如果是共享密钥的 provider（如 nvidia），从后端获取密钥
+    if (config.isShared) {
+      try {
+        // 生成或获取客户端 ID（用于密钥分配的一致性）
+        let clientId = await chrome.storage.local.get(['clientId']);
+        if (!clientId.clientId) {
+          clientId.clientId = 'client_' + Math.random().toString(36).substring(2, 15);
+          await chrome.storage.local.set({ clientId: clientId.clientId });
+        }
+        
+        const response = await fetch(`${BACKEND_URL}/api-key/nvidia`, {
+          headers: {
+            'X-Client-Id': clientId.clientId
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          setSettings(prev => ({
+            ...prev,
+            provider: providerKey,
+            baseUrl: config.baseUrl,
+            model: config.models[0] || '',
+            apiKey: data.apiKey
+          }));
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to fetch shared API key:', error);
       }
       
-      // 如果是共享密钥的 provider（如 nvidia），使用共享密钥
-      if (config.isShared) {
-        newSettings.apiKey = NVIDIA_SHARED_KEY;
-      } else {
+      // 如果获取失败，仍然设置其他配置，但不设置 apiKey
+      setSettings(prev => ({
+        ...prev,
+        provider: providerKey,
+        baseUrl: config.baseUrl,
+        model: config.models[0] || '',
+        apiKey: ''
+      }));
+    } else {
+      setSettings(prev => {
+        const newSettings = { ...prev, provider: providerKey };
+        
+        // Update Base URL and Model if not custom
+        if (providerKey !== 'custom') {
+          newSettings.baseUrl = config.baseUrl;
+          newSettings.model = config.models[0] || '';
+        }
+        
         // Switch to the stored API Key for this provider
         newSettings.apiKey = prev.apiKeys?.[providerKey] || '';
-      }
-      
-      return newSettings;
-    });
+        
+        return newSettings;
+      });
+    }
   };
 
   const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -589,12 +685,6 @@ const Settings: React.FC = () => {
     } finally {
       setVerifying(false);
     }
-  };
-
-  const handleSave = async () => {
-    await saveSettings(settings);
-    setStatus(t.savedMessage);
-    setTimeout(() => setStatus(''), 2000);
   };
 
   const currentModels = PROVIDERS[selectedProvider]?.models || [];
@@ -1299,14 +1389,31 @@ const Settings: React.FC = () => {
         </div>
       </div>
 
-      {/* ========== 保存按钮 ========== */}
-      <div className="pt-2">
-        <button
-          onClick={handleSave}
-          className="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700 transition"
-        >
-          {status || t.saveButton}
-        </button>
+      {/* ========== 自动保存状态提示 ========== */}
+      <div className="pt-2 pb-2">
+        <div className={`text-center text-xs py-2 rounded transition-all ${
+          autoSaveStatus === 'saving' 
+            ? 'bg-blue-50 text-blue-600' 
+            : autoSaveStatus === 'saved'
+            ? 'bg-green-50 text-green-600'
+            : 'bg-gray-50 text-gray-400'
+        }`}>
+          {autoSaveStatus === 'saving' && (
+            <span className="flex items-center justify-center gap-1">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {t.autoSaving || '自动保存中...'}
+            </span>
+          )}
+          {autoSaveStatus === 'saved' && (
+            <span className="flex items-center justify-center gap-1">
+              <CheckCircle className="w-3 h-3" />
+              {t.autoSaved || '已自动保存'}
+            </span>
+          )}
+          {autoSaveStatus === 'idle' && (
+            <span>{t.autoSaveHint || '设置会自动保存'}</span>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, RefreshCw, Square, Github, Folder, UploadCloud, Check, PenTool, Newspaper, BookOpen } from 'lucide-react';
+import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, RefreshCw, Square, Github, Folder, UploadCloud, Check, Newspaper, BookOpen } from 'lucide-react';
 import { getHistory, deleteHistoryItem, HistoryItem, clearHistory, getSettings } from '../utils/storage';
 import { getDirectories, pushToGitHub } from '../utils/github';
 import { ExtractionResult } from '../utils/types';
@@ -519,75 +519,6 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     }
   };
 
-  const handleGenerateArticle = async () => {
-    setLoading(true);
-    setProgress(5);
-    setStatus(t.extractingContent);
-    setLogMessage(t.extractingContent);
-    setResult(null);
-    setErrorMessage(null);
-    setConversationHistory([]); 
-    setUserClosedResult(false);
-
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab.id) throw new Error('No active tab');
-
-      const response = await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_CONTENT' });
-      
-      if (!response) {
-        throw new Error('No response from content script. Refresh the page?');
-      }
-      
-      if (response.type === 'ERROR') {
-        throw new Error(response.payload);
-      }
-
-      setLogMessage(t.contentExtracted);
-
-      const extraction: ExtractionResult = response.payload;
-      console.log('Extracted for article:', extraction);
-      
-      if (extraction.title) {
-        setCurrentTitle(extraction.title);
-      }
-
-      chrome.runtime.sendMessage({ 
-        type: 'START_ARTICLE_GENERATION', 
-        payload: extraction 
-      });
-
-    } catch (error: any) {
-      console.error(error);
-      let errorMsg = error.message;
-      
-      if (errorMsg.includes('Could not establish connection') || errorMsg.includes('Receiving end does not exist')) {
-          setErrorMessage(
-            <div className="flex flex-col gap-2">
-               <span>{t.connectionFailed}</span>
-               <button 
-                 onClick={async () => {
-                   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-                   if (tab?.id) {
-                     chrome.tabs.reload(tab.id);
-                     window.close();
-                   }
-                 }}
-                 className="text-xs bg-red-100 hover:bg-red-200 text-red-800 py-1 px-2 rounded font-medium transition w-fit"
-               >
-                 {t.refreshPage}
-               </button>
-            </div> as any
-          );
-      } else {
-          setErrorMessage(errorMsg);
-      }
-      
-      setStatus('Error');
-      setLoading(false);
-    }
-  };
-
   const handleRefine = async () => {
     if (!refinementInput.trim() || isRefining) return;
     
@@ -780,48 +711,33 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
               
               {!loading ? (
                 <div className="flex flex-col gap-3 w-full items-center">
-                  {/* 一键发布按钮 - 最显眼的位置 */}
-                  <div className="flex gap-2 w-64">
+                  {/* 三个主要功能按钮放在一起 */}
+                  <div className="flex gap-2 w-72">
+                    <button
+                      onClick={handleSummarize}
+                      className="flex-1 bg-gray-700 text-white px-3 py-3 rounded-lg flex items-center gap-1.5 hover:bg-gray-800 transition justify-center"
+                      title={t.generateTechDoc}
+                    >
+                      <FileText className="w-4 h-4" />
+                      <span className="text-sm font-medium">{t.generateTechDoc}</span>
+                    </button>
                     <button
                       onClick={handleGenerateAndPublishToToutiao}
-                      className="flex-1 bg-red-600 text-white px-4 py-3 rounded-lg flex items-center gap-2 hover:bg-red-700 transition justify-center"
+                      className="flex-1 bg-red-600 text-white px-3 py-3 rounded-lg flex items-center gap-1.5 hover:bg-red-700 transition justify-center"
                       title={t.publishToToutiao}
                     >
-                      <Newspaper className="w-5 h-5" />
+                      <Newspaper className="w-4 h-4" />
                       <span className="text-sm font-medium">{t.publishToToutiao}</span>
                     </button>
                     <button
                       onClick={handleGenerateAndPublishToZhihu}
-                      className="flex-1 bg-blue-500 text-white px-4 py-3 rounded-lg flex items-center gap-2 hover:bg-blue-600 transition justify-center"
+                      className="flex-1 bg-blue-500 text-white px-3 py-3 rounded-lg flex items-center gap-1.5 hover:bg-blue-600 transition justify-center"
                       title={t.publishToZhihu}
                     >
-                      <BookOpen className="w-5 h-5" />
+                      <BookOpen className="w-4 h-4" />
                       <span className="text-sm font-medium">{t.publishToZhihu}</span>
                     </button>
                   </div>
-                  
-                  {/* 分隔线 */}
-                  <div className="flex items-center w-64 gap-2 my-1">
-                    <div className="flex-1 h-px bg-gray-200"></div>
-                    <span className="text-xs text-gray-400">{t.orSeparator}</span>
-                    <div className="flex-1 h-px bg-gray-200"></div>
-                  </div>
-                  
-                  {/* 其他功能按钮 */}
-                  <button
-                    onClick={handleGenerateArticle}
-                    className="bg-purple-600 text-white px-6 py-2.5 rounded-lg flex items-center gap-2 hover:bg-purple-700 transition w-64 justify-center"
-                  >
-                    <PenTool className="w-4 h-4" />
-                    <span className="text-sm">{t.generateArticleOnly}</span>
-                  </button>
-                  <button
-                    onClick={handleSummarize}
-                    className="bg-gray-700 text-white px-6 py-2.5 rounded-lg flex items-center gap-2 hover:bg-gray-800 transition w-64 justify-center"
-                  >
-                    <FileText className="w-4 h-4" />
-                    <span className="text-sm">{t.generateSummary}</span>
-                  </button>
                 </div>
               ) : (
                 <div className="w-64 mx-auto space-y-3">

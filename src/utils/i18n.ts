@@ -34,6 +34,7 @@ export interface Translation {
   orSeparator: string;
   generateArticleOnly: string;
   generateSummary: string;
+  generateTechDoc: string;
   processing: string;
   viewLiveResult: string;
   stopGenerating: string;
@@ -143,6 +144,11 @@ export interface Translation {
   customPromptHint: string;
   customPromptPlaceholder: string;
   resetToDefault: string;
+  
+  // Auto save
+  autoSaving: string;
+  autoSaved: string;
+  autoSaveHint: string;
 }
 
 export const TRANSLATIONS: Record<string, Translation> = {
@@ -168,9 +174,9 @@ export const TRANSLATIONS: Record<string, Translation> = {
     verifying: '...',
     verifyTitle: 'Verify Connection',
     fillGithubAlert: 'Please fill in Token, Owner, and Repo Name',
-    systemPromptLabel: 'System Prompt (Rules)',
+    systemPromptLabel: 'Tech Doc Prompt',
     resetButton: 'Reset to Default',
-    promptPlaceholder: 'Enter summarization rules...',
+    promptPlaceholder: 'Enter tech doc generation rules...',
     saveButton: 'Save Settings',
     savedButton: 'Saved Successfully!',
     savedMessage: 'Saved!',
@@ -182,6 +188,7 @@ export const TRANSLATIONS: Record<string, Translation> = {
     orSeparator: 'or',
     generateArticleOnly: 'Generate Article Only',
     generateSummary: 'Generate Summary',
+    generateTechDoc: 'Tech Doc',
     processing: 'Processing...',
     viewLiveResult: 'View Live Result',
     stopGenerating: 'Stop Generating',
@@ -291,6 +298,11 @@ export const TRANSLATIONS: Record<string, Translation> = {
     customPromptHint: 'Customize the AI generation prompt for this platform. Leave empty to use default.',
     customPromptPlaceholder: 'Enter custom prompt for article generation...',
     resetToDefault: 'Reset to Default',
+    
+    // Auto save
+    autoSaving: 'Auto saving...',
+    autoSaved: 'Auto saved',
+    autoSaveHint: 'Settings are saved automatically',
   },
   'zh-CN': {
     // Settings page
@@ -314,9 +326,9 @@ export const TRANSLATIONS: Record<string, Translation> = {
     verifying: '验证中...',
     verifyTitle: '验证连接',
     fillGithubAlert: '请填写 Token, Owner 和 仓库名',
-    systemPromptLabel: '系统提示词 (规则)',
+    systemPromptLabel: '技术文档提示词',
     resetButton: '重置为默认',
-    promptPlaceholder: '输入总结规则...',
+    promptPlaceholder: '输入技术文档生成规则...',
     saveButton: '保存设置',
     savedButton: '保存成功!',
     savedMessage: '已保存!',
@@ -328,6 +340,7 @@ export const TRANSLATIONS: Record<string, Translation> = {
     orSeparator: '或',
     generateArticleOnly: '仅生成文章',
     generateSummary: '生成摘要',
+    generateTechDoc: '技术文档',
     processing: '处理中...',
     viewLiveResult: '查看实时结果',
     stopGenerating: '停止生成',
@@ -437,6 +450,11 @@ export const TRANSLATIONS: Record<string, Translation> = {
     customPromptHint: '自定义该平台的 AI 生成提示词，留空则使用默认提示词。',
     customPromptPlaceholder: '输入文章生成的自定义提示词...',
     resetToDefault: '恢复默认',
+    
+    // Auto save
+    autoSaving: '自动保存中...',
+    autoSaved: '已自动保存',
+    autoSaveHint: '设置会自动保存',
   },
   'ja': {
     // Settings page
@@ -460,9 +478,9 @@ export const TRANSLATIONS: Record<string, Translation> = {
     verifying: '検証中...',
     verifyTitle: '接続を検証',
     fillGithubAlert: 'Token、Owner、リポジトリ名を入力してください',
-    systemPromptLabel: 'システムプロンプト (ルール)',
+    systemPromptLabel: '技術文書プロンプト',
     resetButton: 'デフォルトにリセット',
-    promptPlaceholder: '要約ルールを入力...',
+    promptPlaceholder: '技術文書生成ルールを入力...',
     saveButton: '設定を保存',
     savedButton: '保存しました！',
     savedMessage: '保存しました！',
@@ -474,6 +492,7 @@ export const TRANSLATIONS: Record<string, Translation> = {
     orSeparator: 'または',
     generateArticleOnly: '記事のみ生成',
     generateSummary: '要約を生成',
+    generateTechDoc: '技術文書',
     processing: '処理中...',
     viewLiveResult: 'リアルタイム結果を表示',
     stopGenerating: '生成を停止',
@@ -583,6 +602,11 @@ export const TRANSLATIONS: Record<string, Translation> = {
     customPromptHint: 'このプラットフォーム用のAI生成プロンプトをカスタマイズします。空のままにするとデフォルトが使用されます。',
     customPromptPlaceholder: '記事生成用のカスタムプロンプトを入力...',
     resetToDefault: 'デフォルトに戻す',
+    
+    // Auto save
+    autoSaving: '自動保存中...',
+    autoSaved: '自動保存しました',
+    autoSaveHint: '設定は自動的に保存されます',
   },
   'ko': {
     // Settings page
@@ -606,9 +630,9 @@ export const TRANSLATIONS: Record<string, Translation> = {
     verifying: '확인 중...',
     verifyTitle: '연결 확인',
     fillGithubAlert: 'Token, Owner 및 저장소 이름을 입력하십시오',
-    systemPromptLabel: '시스템 프롬프트 (규칙)',
+    systemPromptLabel: '기술 문서 프롬프트',
     resetButton: '기본값으로 재설정',
-    promptPlaceholder: '요약 규칙 입력...',
+    promptPlaceholder: '기술 문서 생성 규칙 입력...',
     saveButton: '설정 저장',
     savedButton: '저장되었습니다!',
     savedMessage: '저장됨!',
@@ -620,6 +644,7 @@ export const TRANSLATIONS: Record<string, Translation> = {
     orSeparator: '또는',
     generateArticleOnly: '기사만 생성',
     generateSummary: '요약 생성',
+    generateTechDoc: '기술 문서',
     processing: '처리 중...',
     viewLiveResult: '실시간 결과 보기',
     stopGenerating: '생성 중지',
@@ -729,6 +754,11 @@ export const TRANSLATIONS: Record<string, Translation> = {
     customPromptHint: '이 플랫폼의 AI 생성 프롬프트를 사용자 정의합니다. 비워두면 기본값이 사용됩니다.',
     customPromptPlaceholder: '기사 생성을 위한 사용자 정의 프롬프트 입력...',
     resetToDefault: '기본값으로 복원',
+    
+    // Auto save
+    autoSaving: '자동 저장 중...',
+    autoSaved: '자동 저장됨',
+    autoSaveHint: '설정이 자동으로 저장됩니다',
   },
   'de': {
     // Settings page
@@ -752,9 +782,9 @@ export const TRANSLATIONS: Record<string, Translation> = {
     verifying: '...',
     verifyTitle: 'Verbindung überprüfen',
     fillGithubAlert: 'Bitte füllen Sie Token, Eigentümer und Repo-Namen aus',
-    systemPromptLabel: 'System-Prompt (Regeln)',
+    systemPromptLabel: 'Tech-Dok Prompt',
     resetButton: 'Auf Standard zurücksetzen',
-    promptPlaceholder: 'Zusammenfassungsregeln eingeben...',
+    promptPlaceholder: 'Tech-Dok Generierungsregeln eingeben...',
     saveButton: 'Einstellungen speichern',
     savedButton: 'Erfolgreich gespeichert!',
     savedMessage: 'Gespeichert!',
@@ -766,6 +796,7 @@ export const TRANSLATIONS: Record<string, Translation> = {
     orSeparator: 'oder',
     generateArticleOnly: 'Nur Artikel generieren',
     generateSummary: 'Zusammenfassung generieren',
+    generateTechDoc: 'Tech-Dok',
     processing: 'Verarbeitung...',
     viewLiveResult: 'Live-Ergebnis anzeigen',
     stopGenerating: 'Generierung stoppen',
@@ -875,6 +906,11 @@ export const TRANSLATIONS: Record<string, Translation> = {
     customPromptHint: 'Passen Sie den KI-Generierungsprompt für diese Plattform an. Leer lassen für Standard.',
     customPromptPlaceholder: 'Benutzerdefinierten Prompt für Artikelgenerierung eingeben...',
     resetToDefault: 'Standard wiederherstellen',
+    
+    // Auto save
+    autoSaving: 'Automatisch speichern...',
+    autoSaved: 'Automatisch gespeichert',
+    autoSaveHint: 'Einstellungen werden automatisch gespeichert',
   },
   'fr': {
     // Settings page
@@ -898,9 +934,9 @@ export const TRANSLATIONS: Record<string, Translation> = {
     verifying: '...',
     verifyTitle: 'Vérifier la connexion',
     fillGithubAlert: 'Veuillez remplir le jeton, le propriétaire et le nom du dépôt',
-    systemPromptLabel: 'Prompt Système (Règles)',
+    systemPromptLabel: 'Prompt Doc Tech',
     resetButton: 'Rétablir par défaut',
-    promptPlaceholder: 'Entrez les règles de résumé...',
+    promptPlaceholder: 'Entrez les règles de génération de doc tech...',
     saveButton: 'Enregistrer les paramètres',
     savedButton: 'Enregistré avec succès !',
     savedMessage: 'Enregistré !',
@@ -912,6 +948,7 @@ export const TRANSLATIONS: Record<string, Translation> = {
     orSeparator: 'ou',
     generateArticleOnly: 'Générer article uniquement',
     generateSummary: 'Générer résumé',
+    generateTechDoc: 'Doc Tech',
     processing: 'Traitement...',
     viewLiveResult: 'Voir résultat en direct',
     stopGenerating: 'Arrêter la génération',
@@ -1021,6 +1058,11 @@ export const TRANSLATIONS: Record<string, Translation> = {
     customPromptHint: 'Personnalisez le prompt de génération IA pour cette plateforme. Laissez vide pour utiliser le défaut.',
     customPromptPlaceholder: 'Entrez un prompt personnalisé pour la génération d\'articles...',
     resetToDefault: 'Restaurer par défaut',
+    
+    // Auto save
+    autoSaving: 'Sauvegarde automatique...',
+    autoSaved: 'Sauvegardé automatiquement',
+    autoSaveHint: 'Les paramètres sont sauvegardés automatiquement',
   },
   'es': {
     // Settings page
@@ -1044,9 +1086,9 @@ export const TRANSLATIONS: Record<string, Translation> = {
     verifying: '...',
     verifyTitle: 'Verificar conexión',
     fillGithubAlert: 'Por favor complete Token, Propietario y Nombre del repositorio',
-    systemPromptLabel: 'Prompt del sistema (Reglas)',
+    systemPromptLabel: 'Prompt Doc Téc',
     resetButton: 'Restablecer a predeterminado',
-    promptPlaceholder: 'Ingrese las reglas de resumen...',
+    promptPlaceholder: 'Ingrese las reglas de generación de doc téc...',
     saveButton: 'Guardar configuración',
     savedButton: '¡Guardado exitosamente!',
     savedMessage: '¡Guardado!',
@@ -1058,6 +1100,7 @@ export const TRANSLATIONS: Record<string, Translation> = {
     orSeparator: 'o',
     generateArticleOnly: 'Solo generar artículo',
     generateSummary: 'Generar resumen',
+    generateTechDoc: 'Doc Téc',
     processing: 'Procesando...',
     viewLiveResult: 'Ver resultado en vivo',
     stopGenerating: 'Detener generación',
@@ -1167,6 +1210,11 @@ export const TRANSLATIONS: Record<string, Translation> = {
     customPromptHint: 'Personalice el prompt de generación de IA para esta plataforma. Deje vacío para usar el predeterminado.',
     customPromptPlaceholder: 'Ingrese un prompt personalizado para la generación de artículos...',
     resetToDefault: 'Restaurar predeterminado',
+    
+    // Auto save
+    autoSaving: 'Guardando automáticamente...',
+    autoSaved: 'Guardado automáticamente',
+    autoSaveHint: 'La configuración se guarda automáticamente',
   }
 };
 
