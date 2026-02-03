@@ -874,7 +874,26 @@ const setOriginalityDeclaration = async (): Promise<boolean> => {
     // （保留注释作为经验）
 
     // 1) 点击「去声明」入口
-    const entry = await waitForIn(document, SELECTORS.originalityEntry, 8000);
+    // 先按「原创声明」标题精准定位，再回退到选择器匹配
+    const findOriginalityEntry = (): HTMLElement | null => {
+        const title = Array.from(document.querySelectorAll('div'))
+            .find(el => (el.textContent || '').trim() === '原创声明');
+        if (title && title.parentElement) {
+            const wrapper = title.parentElement.querySelector('.wrapper.red') as HTMLElement | null;
+            const btnText = title.parentElement.querySelector('.btn-text.red') as HTMLElement | null;
+            return wrapper || btnText || title.parentElement;
+        }
+        return findIn(document, SELECTORS.originalityEntry);
+    };
+
+    let entry: HTMLElement | null = null;
+    const entryStart = Date.now();
+    while (Date.now() - entryStart < 8000) {
+        entry = findOriginalityEntry();
+        if (entry && isElementVisible(entry)) break;
+        await sleep(250);
+    }
+
     if (!entry) {
         logger.log('未找到"原创声明"入口（可能已设置/不支持/未进入设置页）', 'warn');
         return false;
@@ -900,7 +919,6 @@ const setOriginalityDeclaration = async (): Promise<boolean> => {
         await sleep(250);
     }
 
-    // 3) 勾选原创声明复选框，并验证勾选确实生效
     // 3) 勾选同意项（“我已阅读并同意《原创声明须知》…”）
     // 这是你截图里缺失的关键一步：不勾选时“声明原创”按钮为 disabled。
     const consentRow = await waitForIn(scope, SELECTORS.originalityConsentCheckbox, 8000);
@@ -912,51 +930,40 @@ const setOriginalityDeclaration = async (): Promise<boolean> => {
     if (isFlowCancelled) return false;
 
     // ✅ 关键：必须点到“可交互的包装层/模拟器”，很多 UI 点 input.checked 不会触发框架状态
-    const simulatorEl = consentRow.querySelector('.d-checkbox-simulator') as HTMLElement | null;
-    const indicatorEl = consentRow.querySelector('.d-checkbox-indicator') as HTMLElement | null;
-    const inputEl = consentRow.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-
-    // ✅ 关键：以 simulator 的 class 是否从 unchecked → checked 作为判据
-    const isSimulatorChecked = () => {
-        const cls = (simulatorEl?.className || '') + ' ' + (indicatorEl?.className || '');
-        return cls.includes('checked') && !cls.includes('unchecked');
-    };
-
     logger.log('勾选“我已阅读并同意原创声明须知”', 'action');
 
-    // 必须优先点 simulator（你抓到的 DOM：span.d-checkbox-simulator ... unchecked）
-    if (simulatorEl) {
-        await clickReliable(simulatorEl);
-    } else if (indicatorEl) {
-        await clickReliable(indicatorEl);
-    } else {
-        // 兜底：点整行
-        await clickReliable(consentRow);
-    }
+    // ✅ 关键修复：小红书这个弹窗的可交互目标是“整行容器”（事件委托/捕获），
+    // 点 input/indicator/simulator 往往不会触发状态更新。
+    // 我们优先寻找“包含 checkbox 的可点击行”，再点击它。
 
+    const getClickableConsentRow = (): HTMLElement => {
+        // 1) 优先：向上寻找 cursor=pointer 的祖先
+        let cur: HTMLElement | null = consentRow;
+        for (let i = 0; i < 8 && cur; i++) {
+            const style = window.getComputedStyle(cur);
+            if (style.cursor === 'pointer') return cur;
+            cur = cur.parentElement;
+        }
+
+        // 2) 其次：找带 onclick / tabindex 的祖先
+        cur = consentRow;
+        for (let i = 0; i < 8 && cur; i++) {
+            const h = cur as any;
+            if (typeof h.onclick === 'function' || cur.getAttribute('tabindex') !== null || cur.getAttribute('role') === 'button') {
+                return cur;
+            }
+            cur = cur.parentElement;
+        }
+
+        // 3) 兜底：直接点 consentRow
+        return consentRow;
+    };
+
+    const clickableRow = getClickableConsentRow();
+    await clickReliable(clickableRow);
     await sleep(200);
 
-    // 给 input 补发 change（有些表单依赖 change），但不再以 input.checked 作为成功判据
-    if (inputEl) {
-        try {
-            inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-            inputEl.dispatchEvent(new Event('change', { bubbles: true }));
-        } catch {}
-    }
-
-    // 等待 simulator 变为 checked（最多 3 秒）
-    const simStart = Date.now();
-    while (Date.now() - simStart < 3000) {
-        if (isFlowCancelled) return false;
-        if (isSimulatorChecked()) break;
-        await sleep(150);
-    }
-
-    if (!isSimulatorChecked()) {
-        logger.log('⚠️ 同意项 simulator 仍为 unchecked（点击未被 UI 接收），将继续尝试解锁按钮', 'warn');
-    }
-
-    // 4) 找“声明原创”按钮并等待它变为可点击（这是最可靠的成功判据）
+    // 找“声明原创”按钮并等待它变为可点击（这是最可靠的成功判据）
     const confirmBtn = await waitForIn(scope, [
         'button:has-text("声明原创")',
         'button:contains("声明原创")',
@@ -968,7 +975,7 @@ const setOriginalityDeclaration = async (): Promise<boolean> => {
         return false;
     }
 
-    // 等待 disabled 解除；若一直 disabled，则说明同意项没有真正被 UI 接收
+    // 等待 disabled 解除；若一直 disabled，则说明同意勾选未被 UI 接收
     const enableStart = Date.now();
     while (Date.now() - enableStart < 8000) {
         if (isFlowCancelled) return false;
@@ -988,7 +995,7 @@ const setOriginalityDeclaration = async (): Promise<boolean> => {
     const btnInner = (confirmBtn.querySelector('span, div, .d-button-content') as HTMLElement | null);
     await clickReliable(btnInner || confirmBtn);
 
-    // 5) 等待弹窗关闭（给足时间：可能有网络请求/动画）
+    // 等待弹窗关闭（给足时间：可能有网络请求/动画）
     const waitDialogClose = async (timeoutMs = 12000): Promise<boolean> => {
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
@@ -1001,35 +1008,16 @@ const setOriginalityDeclaration = async (): Promise<boolean> => {
         return false;
     };
 
-    // 先等一轮
     if (!(await waitDialogClose(12000))) {
-        logger.log('⚠️ 弹窗未关闭，尝试再次点击“声明原创”按钮', 'warn');
-        await clickReliable(btnInner || confirmBtn);
-
-        if (!(await waitDialogClose(6000))) {
-            // 尝试点击右上角关闭 X（如果存在）
-            const closeBtn = Array.from((scope as ParentNode).querySelectorAll('button, [role="button"], .d-modal-close, .d-drawer-close, img'))
-                .find(el => {
-                    const t = (el as HTMLElement).textContent || '';
-                    return isElementVisible(el as HTMLElement) && (t.includes('关闭') || t.includes('知道了') || t.includes('完成') || (el as HTMLElement).className?.includes('close'));
-                }) as HTMLElement | undefined;
-            if (closeBtn) {
-                logger.log('尝试点击弹窗关闭按钮', 'info');
-                await clickReliable(closeBtn);
-                await sleep(500);
-            }
-
-            const still = Array.from(document.querySelectorAll('.originalContainer, .d-modal, .d-drawer, [role="dialog"]'))
-                .some(el => isElementVisible(el as HTMLElement));
-            if (still) {
-                logger.log('❌ 点击“声明原创”后弹窗仍未关闭：可能需要额外交互/接口失败（请查看弹窗是否有错误提示）', 'error');
-                return false;
-            }
-        }
+        logger.log('❌ 点击“声明原创”后弹窗仍未关闭：可能接口失败/需要额外交互（请看弹窗是否有错误提示）', 'error');
+        return false;
     }
 
-    logger.log('✅ 原创声明已成功（按钮点击 + 弹窗关闭）', 'success');
+    logger.log('✅ 原创声明已成功（按钮启用 + 弹窗关闭）', 'success');
     return true;
+
+    // (removed duplicate block)
+
 };
 
 /**
@@ -1060,43 +1048,71 @@ const addTopics = async (topics: string[]): Promise<boolean> => {
     for (const topic of topics) {
         if (isFlowCancelled) return false;
 
-        // 1) 点击“话题”按钮
-        const addTopicBtn = await waitForVisible(SELECTORS.addTopicButton, 6000);
-        if (!addTopicBtn) {
-            logger.log('未找到"话题"按钮（可能不在发布设置页）', 'warn');
-            return false;
+        // 1) 优先点击“活动话题”里的「添加话题」（更符合发布设置）
+        let usedActivityEntry = false;
+        const activityLabel = Array.from(document.querySelectorAll('div'))
+            .find(el => (el.textContent || '').trim() === '活动话题');
+        if (activityLabel && activityLabel.parentElement) {
+            const addSpan = Array.from(activityLabel.parentElement.querySelectorAll('span'))
+                .find(el => (el.textContent || '').trim() === '添加话题') as HTMLElement | undefined;
+            if (addSpan && isElementVisible(addSpan)) {
+                logger.log('点击“活动话题”里的「添加话题」', 'action');
+                simulateClick(addSpan);
+                await sleep(500);
+                usedActivityEntry = true;
+            }
         }
-        logger.log('点击"话题"按钮', 'action');
-        simulateClick(addTopicBtn);
-        await sleep(500);
 
-        // 2) 找输入框（contenteditable）
+        // 2) 如果没有活动话题入口，则回退点击编辑器工具栏“话题”按钮
+        if (!usedActivityEntry) {
+            const addTopicBtn = await waitForVisible(SELECTORS.addTopicButton, 6000);
+            if (!addTopicBtn) {
+                logger.log('未找到"话题"按钮（可能不在发布设置页）', 'warn');
+                return false;
+            }
+            logger.log('点击"话题"按钮', 'action');
+            simulateClick(addTopicBtn);
+            await sleep(500);
+        }
+
+        // 3) 找输入框（优先弹层/下拉里的 input，再回退到 contenteditable）
         const keyword = topic.startsWith('#') ? topic : `#${topic}`;
 
         let input: HTMLElement | null = null;
         for (let j = 0; j < 20; j++) {
             if (isFlowCancelled) return false;
 
-            // 优先找可见的 contenteditable
+            // 弹层/下拉里的 input
+            const layerInput = Array.from(document.querySelectorAll('.d-popover input, .d-dropdown input, .d-modal input, .d-drawer input, input[placeholder*="话题"], input[placeholder*="搜索"]'))
+                .find(el => isElementVisible(el as HTMLElement)) as HTMLElement | undefined;
+            if (layerInput) {
+                input = layerInput as HTMLElement;
+                break;
+            }
+
+            // 兜底：可见的 contenteditable
             const editables = Array.from(document.querySelectorAll('[contenteditable="true"], [contenteditable]')) as HTMLElement[];
             input = editables
                 .filter(el => isElementVisible(el))
-                // 尽量避开正文 ProseMirror，把话题输入框排在前面：通常更小、且附近会出现“#”提示
                 .find(el => {
                     const t = (el.textContent || '').trim();
                     return t === '' || t === '#' || t.includes('#') || (el.getAttribute('placeholder') || '').includes('话题');
                 }) || null;
-
-            if (!input) {
-                input = findElement(SELECTORS.topicInput);
-            }
 
             if (input && isElementVisible(input)) break;
             await sleep(250);
         }
 
         if (!input) {
-            logger.log('未找到话题输入框', 'warn');
+            logger.log('未找到话题输入框，尝试直接在正文中插入话题', 'warn');
+            const editor = findElement(SELECTORS.editor);
+            if (editor) {
+                simulateClick(editor);
+                editor.focus();
+                await sleep(120);
+                document.execCommand('insertText', false, keyword);
+                document.execCommand('insertParagraph', false);
+            }
             continue;
         }
 

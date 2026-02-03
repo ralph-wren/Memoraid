@@ -99,6 +99,8 @@ export interface Translation {
   logout: string;
   encryptionKeyLabel: string;
   encryptionKeyHint: string;
+  encryptionKeyWarning: string;
+  encryptionKeyDescription: string;
   randomGenerate: string;
   syncUp: string;
   restore: string;
@@ -269,6 +271,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     logout: 'Logout',
     encryptionKeyLabel: 'Encryption Key (Passphrase)',
     encryptionKeyHint: 'This key is used to encrypt your data before sending to cloud. You MUST remember it to restore data on another device.',
+    encryptionKeyWarning: 'The default key is insecure. It is strongly recommended to change it!',
+    encryptionKeyDescription: 'The encryption key is used to encrypt all your sensitive data (like API keys and cookies) on your device before they are uploaded to the cloud. Only you have this key; the server never sees it.',
     randomGenerate: 'Random Generate',
     syncUp: 'Sync Up',
     restore: 'Restore',
@@ -437,6 +441,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     logout: '退出登录',
     encryptionKeyLabel: '加密密钥（密码短语）',
     encryptionKeyHint: '此密钥用于在发送到云端前加密您的数据。您必须记住它才能在其他设备上恢复数据。',
+    encryptionKeyWarning: '密钥默认值不安全，强烈建议修改！',
+    encryptionKeyDescription: '加密密钥用于在上传到云端前，在本地加密您的所有敏感数据（如 API 密钥和 Cookie）。只有您拥有此密钥，服务器永远无法看到您的原始数据。',
     randomGenerate: '随机生成',
     syncUp: '同步上传',
     restore: '恢复',
@@ -605,6 +611,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     logout: 'ログアウト',
     encryptionKeyLabel: '暗号化キー（パスフレーズ）',
     encryptionKeyHint: 'このキーはクラウドに送信する前にデータを暗号化するために使用されます。他のデバイスでデータを復元するには、このキーを覚えておく必要があります。',
+    encryptionKeyWarning: 'デフォルトのキーは安全ではありません。変更することを強くお勧めします！',
+    encryptionKeyDescription: '暗号化キーは、APIキーやCookieなどの機密データをローカルで暗号化するために使用されます。あなただけがこのキーを知っており、サーバーは元のデータを見ることができません。',
     randomGenerate: 'ランダム生成',
     syncUp: '同期アップロード',
     restore: '復元',
@@ -773,6 +781,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     logout: '로그아웃',
     encryptionKeyLabel: '암호화 키 (암호 문구)',
     encryptionKeyHint: '이 키는 클라우드로 전송하기 전에 데이터를 암호화하는 데 사용됩니다. 다른 기기에서 데이터를 복원하려면 이 키를 기억해야 합니다.',
+    encryptionKeyWarning: '기본 키는 안전하지 않습니다. 변경하는 것을 강력히 권장합니다!',
+    encryptionKeyDescription: '암호화 키는 API 키, 쿠키 등 민감한 데이터를 로컬에서 암호화하는 데 사용됩니다. 사용자만 이 키를 알며 서버는 원본 데이터를 볼 수 없습니다.',
     randomGenerate: '무작위 생성',
     syncUp: '동기화 업로드',
     restore: '복원',
@@ -941,6 +951,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     logout: 'Abmelden',
     encryptionKeyLabel: 'Verschlüsselungsschlüssel (Passphrase)',
     encryptionKeyHint: 'Dieser Schlüssel wird verwendet, um Ihre Daten vor dem Senden in die Cloud zu verschlüsseln. Sie MÜSSEN ihn sich merken, um Daten auf einem anderen Gerät wiederherzustellen.',
+    encryptionKeyWarning: 'Der Standardschlüssel ist unsicher. Es wird dringend empfohlen, ihn zu ändern!',
+    encryptionKeyDescription: 'Der Verschlüsselungsschlüssel wird verwendet, um sensible Daten wie API-Schlüssel und Cookies lokal zu verschlüsseln. Nur Sie kennen diesen Schlüssel, der Server kann Ihre Originaldaten niemals sehen.',
     randomGenerate: 'Zufällig generieren',
     syncUp: 'Hochladen',
     restore: 'Wiederherstellen',
@@ -1109,6 +1121,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     logout: 'Déconnexion',
     encryptionKeyLabel: 'Clé de chiffrement (Phrase secrète)',
     encryptionKeyHint: 'Cette clé est utilisée pour chiffrer vos données avant de les envoyer dans le cloud. Vous DEVEZ la mémoriser pour restaurer les données sur un autre appareil.',
+    encryptionKeyWarning: 'La clé par défaut n\'est pas sécurisée. Il est fortement recommandé de la changer !',
+    encryptionKeyDescription: 'La clé de chiffrement est utilisée pour chiffrer localement les données sensibles comme les clés API et les cookies. Vous seul connaissez cette clé, le serveur ne peut jamais voir vos données originales.',
     randomGenerate: 'Générer aléatoirement',
     syncUp: 'Synchroniser',
     restore: 'Restaurer',
@@ -1277,6 +1291,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     logout: 'Cerrar sesión',
     encryptionKeyLabel: 'Clave de cifrado (Frase de contraseña)',
     encryptionKeyHint: 'Esta clave se usa para cifrar sus datos antes de enviarlos a la nube. DEBE recordarla para restaurar datos en otro dispositivo.',
+    encryptionKeyWarning: 'La clave predeterminada no es segura. ¡Se recomienda encarecidamente cambiarla!',
+    encryptionKeyDescription: 'La clave de cifrado se usa para cifrar localmente datos sensibles como claves API y cookies. Solo usted conoce esta clave, el servidor nunca puede ver sus datos originales.',
     randomGenerate: 'Generar aleatoriamente',
     syncUp: 'Sincronizar',
     restore: 'Restaurar',

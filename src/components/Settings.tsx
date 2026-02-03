@@ -214,10 +214,18 @@ const Settings: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'restoring' | 'success' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [showEncKey, setShowEncKey] = useState(false);
+  const [localEncryptionKey, setLocalEncryptionKey] = useState('');
 
   const t = getTranslation(settings.language || 'zh-CN');
 
   latestSettingsRef.current = settings;
+
+  // 当 settings.sync.encryptionKey 改变时（例如从存储加载或生成），同步到本地 state
+  useEffect(() => {
+    if (settings.sync?.encryptionKey !== undefined) {
+      setLocalEncryptionKey(settings.sync.encryptionKey);
+    }
+  }, [settings.sync?.encryptionKey]);
 
   useEffect(() => {
     return () => {
@@ -259,12 +267,17 @@ const Settings: React.FC = () => {
     const loadSettings = async () => {
       const saved = await getSettings();
       // Ensure apiKeys object exists (migration for old settings)
-      const initializedSettings = {
+      const initializedSettings: AppSettings = {
         ...saved,
         apiKeys: saved.apiKeys || {},
         github: saved.github || DEFAULT_SETTINGS.github,
-        sync: saved.sync || DEFAULT_SETTINGS.sync
-      };
+        sync: {
+          ...DEFAULT_SETTINGS.sync,
+          ...saved.sync,
+          enabled: saved.sync?.enabled ?? (DEFAULT_SETTINGS.sync?.enabled || false),
+          backendUrl: saved.sync?.backendUrl || DEFAULT_SETTINGS.sync?.backendUrl || '',
+        }
+      } as AppSettings;
 
       // Migrate old single key if needed
       if (saved.apiKey && !initializedSettings.apiKeys[saved.provider || 'apiyi']) {
@@ -572,6 +585,12 @@ const Settings: React.FC = () => {
 
   const handleSyncChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
+    
+    // 如果是密钥输入，先更新本地 state 以保证输入流畅
+    if (name === 'encryptionKey') {
+      setLocalEncryptionKey(value);
+    }
+
     setSettings(prev => ({
       ...prev,
       sync: {
@@ -661,10 +680,20 @@ const Settings: React.FC = () => {
     setSyncMessage(null);
     try {
       const restored = await restoreSettings(settings);
+      
+      // 停止自动保存和存储监听，防止恢复的数据被覆盖或触发循环
+      isInitialMount.current = true;
+      
       setSettings(restored);
       await saveSettings(restored);
+      
       setSyncStatus('success');
       setSyncMessage({ type: 'success', text: 'Settings restored from cloud!' });
+      
+      // 恢复自动保存和监听
+      setTimeout(() => {
+        isInitialMount.current = false;
+      }, 500);
     } catch (e) {
       console.error(e);
       setSyncStatus('error');
@@ -1730,9 +1759,10 @@ const Settings: React.FC = () => {
                 <input
                   type={showEncKey ? "text" : "password"}
                   name="encryptionKey"
-                  value={settings.sync?.encryptionKey || ''}
+                  value={localEncryptionKey}
                   onChange={handleSyncChange}
-                  className="w-full p-2 border rounded pr-10 text-sm font-mono"
+                  className={`w-full p-2 border rounded pr-10 text-sm font-mono ${localEncryptionKey === '123456' ? 'border-orange-300 bg-orange-50' : ''
+                    }`}
                   placeholder="Enter a secret passphrase..."
                 />
                 <button
@@ -1743,9 +1773,19 @@ const Settings: React.FC = () => {
                   {showEncKey ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                 </button>
               </div>
+              {localEncryptionKey === '123456' && (
+                <p className="text-[10px] text-orange-600 font-medium">
+                  ⚠️ {t.encryptionKeyWarning}
+                </p>
+              )}
               <p className="text-[10px] text-gray-400 leading-tight">
                 {t.encryptionKeyHint}
               </p>
+              <div className="bg-blue-50 p-2 rounded mt-2">
+                <p className="text-[10px] text-blue-700 leading-snug">
+                  {t.encryptionKeyDescription}
+                </p>
+              </div>
             </div>
 
             <div className="flex gap-2 pt-1">

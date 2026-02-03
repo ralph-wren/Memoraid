@@ -106,6 +106,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sync: {
     enabled: false,
     backendUrl: 'https://memoraid.dpdns.org',
+    encryptionKey: '123456',
   },
   debugMode: false,
   // 文章风格默认值（都设为中间值50，表示中立/平衡）
