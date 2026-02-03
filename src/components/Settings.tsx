@@ -215,6 +215,11 @@ const Settings: React.FC = () => {
   const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [showEncKey, setShowEncKey] = useState(false);
   const [localEncryptionKey, setLocalEncryptionKey] = useState('');
+  const [localApiKey, setLocalApiKey] = useState('');
+  const [localGithubToken, setLocalGithubToken] = useState('');
+
+  // 用于防抖更新全局设置的定时器
+  const debounceTimersRef = React.useRef<Record<string, NodeJS.Timeout>>({});
 
   const t = getTranslation(settings.language || 'zh-CN');
 
@@ -226,6 +231,20 @@ const Settings: React.FC = () => {
       setLocalEncryptionKey(settings.sync.encryptionKey);
     }
   }, [settings.sync?.encryptionKey]);
+
+  // 同步 API Key 到本地 state
+  useEffect(() => {
+    if (settings.apiKey !== undefined) {
+      setLocalApiKey(settings.apiKey);
+    }
+  }, [settings.apiKey]);
+
+  // 同步 GitHub Token 到本地 state
+  useEffect(() => {
+    if (settings.github?.token !== undefined) {
+      setLocalGithubToken(settings.github.token);
+    }
+  }, [settings.github?.token]);
 
   useEffect(() => {
     return () => {
@@ -244,22 +263,17 @@ const Settings: React.FC = () => {
     }
 
     isDirtyRef.current = true;
-    setAutoSaveStatus('saving');
     const timer = setTimeout(async () => {
+      setAutoSaveStatus('saving');
       await saveSettings(settings);
       isDirtyRef.current = false;
       setAutoSaveStatus('saved');
       // 2秒后恢复 idle 状态
       setTimeout(() => setAutoSaveStatus('idle'), 2000);
-    }, 500); // 500ms 防抖
+    }, 1000); // 增加到 1s 防抖，让输入更流畅
 
     return () => {
       clearTimeout(timer);
-      // 如果定时器被清除时还有未保存的更改，立即保存
-      if (isDirtyRef.current) {
-        saveSettings(settings);
-        isDirtyRef.current = false;
-      }
     };
   }, [settings]);
 
@@ -502,14 +516,21 @@ const Settings: React.FC = () => {
     const { name, value } = e.target;
 
     if (name === 'apiKey') {
-      setSettings(prev => ({
-        ...prev,
-        apiKey: value,
-        apiKeys: {
-          ...prev.apiKeys,
-          [selectedProvider]: value
-        }
-      }));
+      // 立即更新本地 state 以保证输入流畅
+      setLocalApiKey(value);
+      
+      // 使用防抖更新全局 settings，避免频繁触发重渲染和保存
+      if (debounceTimersRef.current.apiKey) clearTimeout(debounceTimersRef.current.apiKey);
+      debounceTimersRef.current.apiKey = setTimeout(() => {
+        setSettings(prev => ({
+          ...prev,
+          apiKey: value,
+          apiKeys: {
+            ...prev.apiKeys,
+            [selectedProvider]: value
+          }
+        }));
+      }, 500);
     } else {
       setSettings(prev => ({ ...prev, [name]: value }));
     }
@@ -528,6 +549,22 @@ const Settings: React.FC = () => {
 
   const handleGithubChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
+    
+    if (name === 'token') {
+      setLocalGithubToken(value);
+      if (debounceTimersRef.current.githubToken) clearTimeout(debounceTimersRef.current.githubToken);
+      debounceTimersRef.current.githubToken = setTimeout(() => {
+        setSettings(prev => ({
+          ...prev,
+          github: {
+            ...prev.github || { token: '', owner: '', repo: '', branch: 'main' },
+            [name]: value
+          }
+        }));
+      }, 500);
+      return;
+    }
+
     setSettings(prev => ({
       ...prev,
       github: {
@@ -589,6 +626,17 @@ const Settings: React.FC = () => {
     // 如果是密钥输入，先更新本地 state 以保证输入流畅
     if (name === 'encryptionKey') {
       setLocalEncryptionKey(value);
+      if (debounceTimersRef.current.encryptionKey) clearTimeout(debounceTimersRef.current.encryptionKey);
+      debounceTimersRef.current.encryptionKey = setTimeout(() => {
+        setSettings(prev => ({
+          ...prev,
+          sync: {
+            ...prev.sync || DEFAULT_SETTINGS.sync!,
+            [name]: value
+          }
+        }));
+      }, 500);
+      return;
     }
 
     setSettings(prev => ({
@@ -1099,7 +1147,7 @@ const Settings: React.FC = () => {
               <input
                 type={showApiKey ? "text" : "password"}
                 name="apiKey"
-                value={settings.apiKey}
+                value={localApiKey}
                 onChange={handleChange}
                 className="w-full p-2 border rounded pr-10"
                 placeholder={t.apiKeyPlaceholder}
@@ -1614,7 +1662,7 @@ const Settings: React.FC = () => {
               <input
                 type={showGithubToken ? "text" : "password"}
                 name="token"
-                value={settings.github?.token || ''}
+                value={localGithubToken}
                 onChange={handleGithubChange}
                 className="w-full p-2 border rounded pr-10 text-sm"
                 placeholder="ghp_..."
