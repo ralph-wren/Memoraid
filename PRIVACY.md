@@ -1,45 +1,47 @@
 # Privacy Policy for Memoraid
 
-**Effective Date:** January 5, 2026
+**Effective Date:** February 6, 2026
+**Last Updated:** February 6, 2026
 
 **Memoraid** ("we", "us", or "our") respects your privacy. This Privacy Policy describes how we handle your data when you use our Chrome Extension.
 
 ## 1. Single Purpose
 
-The **single purpose** of Memoraid is to help users **summarize and export AI chat conversations** (from platforms like ChatGPT and Gemini) into Markdown format. All features and permissions are directly related to this core functionality.
+Memoraid is an AI-powered content automation tool that helps users summarize web content, generate social media articles, and publish them to platforms like WeChat, Zhihu, Toutiao, and Xiaohongshu with one click. All features and permissions are directly related to this core functionality.
 
-## 2. Data Collection and Usage
+## 2. Data Collection and Usage Disclosure
 
-**We do not collect, store, or transmit any of your personal data to our own servers.**
+In compliance with the Chrome Web Store User Data Policy, we fully disclose the types of data this extension handles and their purposes:
 
-*   **Chat Content**: The extension extracts chat content from the active tab (ChatGPT or Gemini) **only when you explicitly click the "Summarize & Export" button**. This content is processed locally in your browser and sent directly to the AI Provider you have configured (e.g., OpenAI, DeepSeek, Yi) to generate a summary.
-*   **API Keys**: Your API keys are stored **locally** in your browser's storage (`chrome.storage.local`). We do not have access to your API keys.
-*   **History**: The summaries generated are stored **locally** in your browser's storage (`chrome.storage.local`) for your convenience. You can clear this history at any time within the extension.
+### 2.1 Web Content Data
+*   **Collection**: When you actively trigger the "Summarize" or "Extract" features, the extension reads the text content of the active tab.
+*   **Purpose**: The extracted content is sent to your configured AI service provider (e.g., OpenAI, DeepSeek, etc.) to generate summaries or article drafts.
+*   **Storage**: This data is not stored on our servers. It is processed in-memory and may be saved to your local `chrome.storage.local` if you choose to save the history.
 
-## 3. Third-Party Services and Remote Code
+### 2.2 Cookie Data (Cross-platform Login)
+*   **Collection**: The extension accesses cookies from specific self-media platforms (mp.weixin.qq.com, zhihu.com, toutiao.com, xiaohongshu.com) **only when you click the "Auto Fetch Cookie" button in Settings**.
+*   **Purpose**: These cookies are used solely to verify your login status on these platforms, enabling the one-click publishing feature without requiring you to manually re-enter credentials.
+*   **Storage**: Cookies are stored **locally** in your browser's encrypted storage. **We never transmit your cookies to our servers.**
 
-This extension interacts with third-party AI providers (such as OpenAI, DeepSeek, Yi/01.AI) based on your configuration.
+### 2.3 User Authentication and Sync Data
+*   **Collection**: If you use the "Sync & Backup" feature, we collect your email address and basic profile information via Google or GitHub OAuth.
+*   **Purpose**: To provide cross-device synchronization of your settings and history.
+*   **Storage**: Your data is stored in our backend (Cloudflare Workers + D1 Database) only if you enable sync. All sensitive data (like API keys) is **encrypted client-side (AES-256)** with your personal passphrase before being uploaded. We cannot decrypt your data.
 
-*   **Remote Code**: The extension does **not** execute arbitrary remote code. It uses the standard OpenAI SDK to communicate with the AI API endpoints. The logic for this communication is bundled within the extension itself.
-*   **Data Transmission**: When you use the summarization feature, the extracted chat text is sent to the API endpoint you configured. Please refer to the privacy policy of the specific AI provider you are using for information on how they handle data sent to their API.
+## 3. Permissions Justification
 
-## 4. Permissions Justification
+*   **`storage`**: Used to save your settings, API keys, and local task history.
+*   **`activeTab`**: Used to read the content of the page you are currently viewing to provide AI summarization features.
+*   **`cookies`**: Used to check your login status on self-media platforms for one-click publishing.
+*   **`notifications`**: Used to alert you when AI tasks or publishing tasks are completed.
+*   **`identity`**: Used for the optional "Sync & Backup" feature via Google/GitHub login.
+*   **`host_permissions` (<all_urls>)**: Required to interact with various AI APIs and self-media platforms you choose to use.
 
-The extension requests the following permissions for specific purposes required by its core functionality:
+## 4. Data Sharing and Security
 
-*   **`activeTab`**:
-    *   **Reason**: To access the content of the current chat page (e.g., chatgpt.com or gemini.google.com) *only when* the user clicks the extension icon or the "Summarize" button.
-    *   **Usage**: Used to identify the active tab and inject the content extraction script.
-*   **`storage`**:
-    *   **Reason**: To save user preferences and local data.
-    *   **Usage**: Used to store your API Settings (Key, Model, Base URL) and the local history of generated summaries.
-*   **`notifications`**:
-    *   **Reason**: To provide system-level feedback for long-running background tasks.
-    *   **Usage**: Used to notify you when a background summarization task is successfully completed or if an error occurs, ensuring you don't miss the result even if the popup is closed.
-
-## 5. Changes to This Policy
-
-We may update this Privacy Policy from time to time. If we make material changes, we will notify you by updating the date at the top of this policy.
+*   **No Sale of Data**: We never sell your data to third parties.
+*   **No Use for Advertising**: Your data is never used for advertising, credit-worthiness assessment, or any purpose unrelated to the extension's core functionality.
+*   **Third-party AI Providers**: When you use AI features, your content is sent to the provider you configured. Please refer to their respective privacy policies.
 
 ## 5. Contact Us
 

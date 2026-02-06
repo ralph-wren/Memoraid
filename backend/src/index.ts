@@ -1701,63 +1701,84 @@ export default {
     if (url.pathname === '/privacy' && request.method === 'GET') {
         const html = `
         <!DOCTYPE html>
-        <html>
+        <html lang="zh-CN">
         <head>
             <meta charset="UTF-8">
-            <title>Privacy Policy - Memoraid</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>隐私政策 - Memoraid</title>
             <style>
                 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #333; }
                 h1 { border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 30px; }
-                h2 { margin-top: 30px; color: #2c3e50; }
+                h2 { margin-top: 30px; color: #2c3e50; border-left: 4px solid #10b981; padding-left: 15px; }
+                h3 { margin-top: 20px; color: #444; }
                 ul { padding-left: 20px; }
                 li { margin-bottom: 10px; }
+                table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+                th, td { border: 1px solid #eee; padding: 12px; text-align: left; }
+                th { background: #f8f9fa; }
                 .footer { margin-top: 50px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 0.9em; }
+                .highlight { background: #fff3cd; padding: 2px 5px; border-radius: 3px; }
             </style>
         </head>
         <body>
-            <h1>Privacy Policy for Memoraid</h1>
-            <p><strong>Effective Date:</strong> January 7, 2026</p>
+            <h1>Memoraid 隐私政策</h1>
+            <p><strong>最后更新日期：</strong> 2026年2月6日</p>
 
-            <p>Memoraid ("we", "us", or "our") is committed to protecting your privacy. This Privacy Policy explains how our Chrome Extension collects, uses, and safeguards your information.</p>
+            <p>Memoraid（"本扩展程序"）是一款 Chrome 浏览器扩展工具。我们非常重视您的隐私，本政策详细说明了我们如何收集、使用、存储和分享您的数据，以符合 Chrome 网上应用店的政策要求。</p>
 
-            <h2>1. Information We Collect</h2>
-            <p>We collect the minimum amount of data necessary to provide our services:</p>
+            <h2>1. 数据收集与使用披露</h2>
+            <p>我们在此全面披露本扩展程序处理的数据类型及其用途：</p>
+            
+            <h3>2.1 网页内容数据 (Web Content)</h3>
             <ul>
-                <li><strong>Authentication Data:</strong> When you log in using Google or GitHub, we receive your email address and a unique user identifier to manage your account.</li>
-                <li><strong>Sync Data:</strong> We store your application settings and preferences to synchronize them across your devices.</li>
+                <li><strong>收集内容：</strong>当您主动触发“总结”或“提取”功能时，扩展程序会读取当前活动标签页的文本内容。</li>
+                <li><strong>用途：</strong>提取的内容将发送至您配置的 AI 服务提供商（如 OpenAI, DeepSeek 等），用于生成摘要或文章。</li>
+                <li><strong>处理：</strong>内容仅在您触发操作时读取，不会在后台静默收集。</li>
             </ul>
 
-            <h2>2. How We Use Your Information</h2>
+            <h3>2.2 身份验证与账户数据</h3>
             <ul>
-                <li>To provide, maintain, and improve the Memoraid extension.</li>
-                <li>To synchronize your settings securely across multiple instances of the extension.</li>
-                <li>To authenticate your identity and prevent unauthorized access.</li>
+                <li><strong>收集内容：</strong>如果您使用云同步功能，我们会通过 Google 或 GitHub OAuth 获取您的电子邮件地址和唯一用户 ID。</li>
+                <li><strong>用途：</strong>用于管理您的账户并实现跨设备同步设置。</li>
             </ul>
 
-            <h2>3. Data Security & Encryption</h2>
-            <p>Your privacy is our priority. We employ <strong>Client-Side Encryption</strong> (AES-GCM) for your sync data:</p>
+            <h3>2.3 浏览器 Cookie (Cookies)</h3>
             <ul>
-                <li>Your settings are encrypted <strong>on your device</strong> before they are sent to our servers.</li>
-                <li>We do not have access to your encryption password or your decrypted data.</li>
-                <li>All data is transmitted over secure SSL/TLS (HTTPS) connections.</li>
+                <li><strong>收集内容：</strong>本扩展程序会访问特定自媒体平台（如头条号、知乎、微信公众号、小红书）的登录 Cookie。</li>
+                <li><strong>用途：</strong>仅用于验证您的登录状态，以便实现“一键发布”功能。</li>
+                <li><strong>处理：</strong>这些 Cookie 仅在本地使用，不会发送到我们的服务器。</li>
             </ul>
 
-            <h2>4. Third-Party Services</h2>
-            <p>We use trusted third-party services for authentication:</p>
+            <h2>2. 数据存储与安全</h2>
             <ul>
-                <li><strong>Google OAuth:</strong> For user authentication.</li>
-                <li><strong>GitHub OAuth:</strong> For user authentication.</li>
+                <li><strong>本地存储：</strong>绝大部分数据（如 API 密钥、历史记录）使用 <code>chrome.storage</code> 存储在您的本地浏览器中。</li>
+                <li><strong>云端加密：</strong>同步数据在发送前会进行 <strong class="highlight">AES-256 客户端加密</strong>。我们无法解密您的数据。</li>
+                <li><strong>传输安全：</strong>所有数据均通过加密的 HTTPS 连接传输。</li>
             </ul>
-            <p>We do not sell, trade, or otherwise transfer your personally identifiable information to outside parties.</p>
 
-            <h2>5. Data Retention & Deletion</h2>
-            <p>We retain your encrypted data as long as you use our service. You may request the deletion of your account and all associated data by contacting us.</p>
+            <h2>3. 数据分享</h2>
+            <p>我们承诺：</p>
+            <ul>
+                <li><strong>不会</strong>将您的个人数据出售或出租给第三方。</li>
+                <li><strong>不会</strong>为了广告或营销目的分享您的数据。</li>
+                <li>数据仅分享给您主动选择的第三方服务（如您配置的 AI 提供商或您要发布的自媒体平台）。</li>
+            </ul>
 
-            <h2>6. Changes to This Policy</h2>
-            <p>We may update this Privacy Policy from time to time. We will notify you of any changes by posting the new Privacy Policy on this page.</p>
+            <h2>4. 权限说明</h2>
+            <table>
+                <tr><th>权限</th><th>理由与用途</th></tr>
+                <tr><td><code>storage</code></td><td>本地存储设置、API 密钥和任务历史。</td></tr>
+                <tr><td><code>activeTab</code></td><td>仅在触发时获取当前页面内容。</td></tr>
+                <tr><td><code>cookies</code></td><td>检查自媒体平台登录状态，实现一键发布。</td></tr>
+                <tr><td><code>identity</code></td><td>提供 Google/GitHub 登录支持。</td></tr>
+                <tr><td><code>host_permissions</code></td><td>允许与 AI 接口和自媒体平台通信。</td></tr>
+            </table>
+
+            <h2>5. 联系我们</h2>
+            <p>如果您有任何疑问，请联系：nichuanfang@gmail.com</p>
 
             <div class="footer">
-                <p>Contact Us: If you have any questions about this Privacy Policy, please contact us via the Chrome Web Store support page.</p>
+                <p>Memoraid - 您的 AI 内容创作助手</p>
             </div>
         </body>
         </html>
