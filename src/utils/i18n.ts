@@ -167,6 +167,8 @@ export interface Translation {
   autoSaving: string;
   autoSaved: string;
   autoSaveHint: string;
+  settingsSynced: string;
+  backToHome: string;
 }
 
 export const TRANSLATIONS: Record<string, Translation> = {
@@ -200,6 +202,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     saveButton: 'Save Settings',
     savedButton: 'Saved Successfully!',
     savedMessage: 'Saved!',
+    settingsSynced: 'Settings synced to cloud!',
+    backToHome: 'Back to Home',
 
     // Home page
     slogan: 'Empower everyone to share ideas, publish to all platforms with one click',
@@ -370,6 +374,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     saveButton: '保存设置',
     savedButton: '保存成功!',
     savedMessage: '已保存!',
+    settingsSynced: '设置已同步到云端！',
+    backToHome: '返回首页',
 
     // Home page
     slogan: '让每个人都能轻松发声，一键发布到全平台',
@@ -540,6 +546,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     saveButton: '設定を保存',
     savedButton: '保存しました！',
     savedMessage: '保存しました！',
+    settingsSynced: '設定がクラウドに同期されました！',
+    backToHome: 'ホームに戻る',
 
     // Home page
     slogan: '誰でも簡単に発信、ワンクリックで全プラットフォームに公開',
@@ -710,6 +718,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     saveButton: '설정 저장',
     savedButton: '저장되었습니다!',
     savedMessage: '저장됨!',
+    settingsSynced: '설정이 클라우드에 동기화되었습니다!',
+    backToHome: '홈으로 돌아가기',
 
     // Home page
     slogan: '누구나 쉽게 목소리를 내고, 원클릭으로 모든 플랫폼에 게시',
@@ -880,6 +890,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     saveButton: 'Einstellungen speichern',
     savedButton: 'Erfolgreich gespeichert!',
     savedMessage: 'Gespeichert!',
+    settingsSynced: 'Einstellungen in die Cloud synchronisiert!',
+    backToHome: 'Zurück zur Startseite',
 
     // Home page
     slogan: 'Jeder kann sich leicht äußern, mit einem Klick auf allen Plattformen veröffentlichen',
@@ -1050,6 +1062,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     saveButton: 'Enregistrer les paramètres',
     savedButton: 'Enregistré avec succès !',
     savedMessage: 'Enregistré !',
+    settingsSynced: 'Paramètres synchronisés avec le cloud !',
+    backToHome: 'Retour à l\'accueil',
 
     // Home page
     slogan: 'Permettre à chacun de s\'exprimer facilement, publier sur toutes les plateformes en un clic',
@@ -1220,6 +1234,8 @@ export const TRANSLATIONS: Record<string, Translation> = {
     saveButton: 'Guardar configuración',
     savedButton: '¡Guardado exitosamente!',
     savedMessage: '¡Guardado!',
+    settingsSynced: '¡Configuración sincronizada con la nube!',
+    backToHome: 'Volver al inicio',
 
     // Home page
     slogan: 'Permitir que todos se expresen fácilmente, publicar en todas las plataformas con un clic',

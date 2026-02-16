@@ -1146,6 +1146,23 @@ ${footer}`;
   });
 }
 
+function getUserIdFromRequest(request: Request): string | null {
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader) return null;
+  
+  const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
+  if (!token.startsWith('mock_jwt_')) return null;
+  
+  try {
+    const tokenPart = token.split('mock_jwt_')[1];
+    const payload = JSON.parse(atob(tokenPart));
+    if (payload.exp && payload.exp < Date.now()) return null;
+    return payload.userId;
+  } catch (e) {
+    return null;
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -3278,6 +3295,11 @@ export default {
     // 7.3 GET /api/accounts - 获取账号列表（含统计）
     if (url.pathname === '/api/accounts' && request.method === 'GET') {
       try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
         const platform = url.searchParams.get('platform');
         let query = `
           SELECT a.*, p.name as platform_name, p.display_name as platform_display_name, p.icon as platform_icon,
@@ -3290,8 +3312,9 @@ export default {
              WHERE art.account_id = a.id) as total_likes
           FROM accounts a
           JOIN platforms p ON a.platform_id = p.id
+          WHERE a.user_id = '${userId}'
         `;
-        if (platform) query += ` WHERE p.name = '${platform}'`;
+        if (platform) query += ` AND p.name = '${platform}'`;
         query += ' ORDER BY a.updated_at DESC';
         
         const accounts = await env.DB.prepare(query).all();
@@ -3308,6 +3331,11 @@ export default {
     // 7.4 GET /api/articles - 获取文章列表（含最新统计）
     if (url.pathname === '/api/articles' && request.method === 'GET') {
       try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
         const platform = url.searchParams.get('platform');
         const accountId = url.searchParams.get('account_id');
         const limit = parseInt(url.searchParams.get('limit') || '50');
@@ -3325,7 +3353,7 @@ export default {
           JOIN accounts acc ON art.account_id = acc.id
           JOIN platforms p ON acc.platform_id = p.id
           LEFT JOIN article_stats s ON s.id = (SELECT MAX(id) FROM article_stats WHERE article_id = art.id)
-          WHERE 1=1
+          WHERE acc.user_id = '${userId}'
         `;
         if (platform) query += ` AND p.name = '${platform}'`;
         if (accountId) query += ` AND art.account_id = ${accountId}`;
@@ -3345,10 +3373,15 @@ export default {
     // 7.5 GET /api/articles/stats - 获取总体统计
     if (url.pathname === '/api/articles/stats' && request.method === 'GET') {
       try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
         const platform = url.searchParams.get('platform');
-        let whereClause = '';
+        let whereClause = `WHERE acc.user_id = '${userId}'`;
         if (platform) {
-          whereClause = `WHERE p.name = '${platform}'`;
+          whereClause += ` AND p.name = '${platform}'`;
         }
         
         const stats = await env.DB.prepare(`
@@ -3379,6 +3412,11 @@ export default {
     // 7.6 POST /api/articles/report - 上报文章数据（供插件调用）
     if (url.pathname === '/api/articles/report' && request.method === 'POST') {
       try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
         const body = await request.json() as any;
         const { platform, account, articles } = body;
         
@@ -3402,15 +3440,22 @@ export default {
         
         // 获取或创建账号
         let accountRow = await env.DB.prepare(
-          'SELECT id FROM accounts WHERE platform_id = ? AND account_id = ?'
+          'SELECT id, user_id FROM accounts WHERE platform_id = ? AND account_id = ?'
         ).bind(platformRow!.id, account.id).first();
         
         if (!accountRow) {
           await env.DB.prepare(
-            'INSERT INTO accounts (platform_id, account_id, account_name, avatar_url, extra_info) VALUES (?, ?, ?, ?, ?)'
-          ).bind(platformRow!.id, account.id, account.name || '', account.avatar || '', JSON.stringify(account.extra || {})).run();
+            'INSERT INTO accounts (platform_id, account_id, account_name, avatar_url, extra_info, user_id) VALUES (?, ?, ?, ?, ?, ?)'
+          ).bind(platformRow!.id, account.id, account.name || '', account.avatar || '', JSON.stringify(account.extra || {}), userId).run();
           accountRow = await env.DB.prepare('SELECT id FROM accounts WHERE platform_id = ? AND account_id = ?').bind(platformRow!.id, account.id).first();
         } else {
+          // 如果账号 user_id 为空，更新为当前用户
+          if (!accountRow.user_id) {
+             await env.DB.prepare(
+               'UPDATE accounts SET user_id = ?, updated_at = ? WHERE id = ?'
+             ).bind(userId, Math.floor(Date.now() / 1000), accountRow.id).run();
+          }
+
           // 更新账号信息
           await env.DB.prepare(
             'UPDATE accounts SET account_name = ?, avatar_url = ?, updated_at = ? WHERE id = ?'

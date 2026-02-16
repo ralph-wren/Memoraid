@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, Square, Github, Folder, UploadCloud, Check, Newspaper, BookOpen, MessageCircle, BookHeart, Bug } from 'lucide-react';
+import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, Square, Github, Folder, UploadCloud, Check, Newspaper, BookOpen, MessageCircle, BookHeart, Bug, BarChart3 } from 'lucide-react';
 import { getHistory, deleteHistoryItem, HistoryItem, clearHistory, getSettings } from '../utils/storage';
 import { getDirectories, pushToGitHub } from '../utils/github';
 import { ExtractionResult } from '../utils/types';
@@ -925,6 +925,13 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
           <p className="text-[10px] text-gray-400 ml-10">{t.slogan}</p>
         </div>
         <div className="flex gap-1">
+          <button
+            onClick={() => window.open('http://memoraid.dpdns.org/admin', '_blank')}
+            className="p-2 hover:bg-gray-100 rounded-full text-gray-600"
+            title="文章数据统计"
+          >
+            <BarChart3 className="w-5 h-5 text-indigo-500" />
+          </button>
           <a
             href="https://github.com/ralph-wren/Memoraid"
             target="_blank"
