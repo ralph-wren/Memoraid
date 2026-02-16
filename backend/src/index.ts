@@ -2967,8 +2967,8 @@ export default {
             </a>
             <div class="topbar-actions">
                 <div class="user-info" id="userInfo" style="display:none;">
-                    <div class="user-avatar" id="userAvatar">U</div>
-                    <span id="userEmail">user@example.com</span>
+                    <div class="user-avatar" id="userAvatar" onclick="changeAvatar()" title="点击更换头像" style="cursor: pointer; padding: 0; overflow: hidden; background: transparent;"></div>
+                    <span id="userEmail">user</span>
                 </div>
                 <button class="btn btn-ghost" onclick="loadData()">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
@@ -3086,8 +3086,16 @@ export default {
                 
                 // 登录成功，显示用户信息
                 userEmail = data.email || email || 'User';
-                document.getElementById('userEmail').textContent = userEmail;
-                document.getElementById('userAvatar').textContent = userEmail.charAt(0).toUpperCase();
+                const emailPrefix = userEmail.includes('@') ? userEmail.split('@')[0] : userEmail;
+                document.getElementById('userEmail').textContent = emailPrefix;
+                
+                // Avatar logic
+                let avatarSeed = localStorage.getItem('user_avatar_seed');
+                if (!avatarSeed) {
+                    avatarSeed = userEmail;
+                    localStorage.setItem('user_avatar_seed', avatarSeed);
+                }
+                updateAvatarDisplay(avatarSeed);
                 document.getElementById('userInfo').style.display = 'flex';
                 document.getElementById('authOverlay').style.display = 'none';
                 return true;
@@ -3116,6 +3124,19 @@ export default {
             localStorage.removeItem('memoraid_token');
             localStorage.removeItem('memoraid_email');
             window.location.href = '/login';
+        }
+
+        function changeAvatar() {
+            const newSeed = Math.random().toString(36).substring(7);
+            localStorage.setItem('user_avatar_seed', newSeed);
+            updateAvatarDisplay(newSeed);
+        }
+
+        function updateAvatarDisplay(seed) {
+            const avatarEl = document.getElementById('userAvatar');
+            if (avatarEl) {
+                avatarEl.innerHTML = '<img src="https://api.dicebear.com/7.x/notionists/svg?seed=' + encodeURIComponent(seed) + '&backgroundColor=transparent" style="width: 100%; height: 100%; object-fit: cover;">';
+            }
         }
         
         // 格式化数字 - 更友好的显示
