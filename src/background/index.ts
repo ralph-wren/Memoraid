@@ -1,3 +1,4 @@
+import { reportArticlePublish } from '../utils/debug';
 import OpenAI from 'openai';
 import { marked } from 'marked';
 import { getSettings, saveSettings, DEFAULT_SETTINGS, addHistoryItem } from '../utils/storage';
@@ -1047,6 +1048,18 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
     };
     await addHistoryItem(newItem);
 
+    // 记录生成文章（无需发布）
+    await reportArticlePublish({
+      platform: 'memoraid', // 默认平台
+      title: newTitle,
+      status: 'generated',
+      summary: refinedContent.substring(0, 200),
+      extra: {
+        sourceUrl: '',
+        sourceTitle: title || 'Untitled Chat'
+      }
+    });
+
     updateTaskState({
       status: 'Refined!',
       message: 'Refinement complete!',
@@ -1272,6 +1285,18 @@ async function startSummarization(extraction: ExtractionResult) {
     };
 
     await addHistoryItem(newItem);
+
+    // 记录生成的摘要文章
+    await reportArticlePublish({
+      platform: 'memoraid',
+      title: extraction.title || 'Untitled Chat',
+      status: 'generated',
+      summary: summary.substring(0, 200),
+      extra: {
+        sourceUrl: extraction.url,
+        type: 'summarization'
+      }
+    });
 
     updateTaskState({
       status: 'Done!',
@@ -1945,6 +1970,18 @@ async function startArticleGeneration(extraction: ExtractionResult) {
 
     await addHistoryItem(newItem);
 
+    // 记录生成的文章
+    await reportArticlePublish({
+      platform: 'memoraid',
+      title: finalTitle,
+      status: 'generated',
+      summary: summary.substring(0, 200),
+      extra: {
+        sourceUrl: extraction.url,
+        type: 'article_generation'
+      }
+    });
+
     updateTaskState({
       status: 'Done!',
       message: 'Article generated successfully!',
@@ -2219,6 +2256,18 @@ ${platformPrompt}
     };
 
     await addHistoryItem(newItem);
+
+    // 记录生成的文章（无论发布是否成功）
+    await reportArticlePublish({
+      platform: platform,
+      title: finalTitle,
+      status: 'generated',
+      summary: summary.substring(0, 200),
+      extra: {
+        sourceUrl: extraction.url,
+        type: 'publish_generation'
+      }
+    });
 
     updateTaskState({
       status: 'Publishing...',

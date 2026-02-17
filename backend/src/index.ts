@@ -3466,21 +3466,14 @@ export default {
         
         if (!accountRow) {
           await env.DB.prepare(
-            'INSERT INTO accounts (platform_id, account_id, account_name, avatar_url, extra_info, user_id) VALUES (?, ?, ?, ?, ?, ?)'
-          ).bind(platformRow!.id, account.id, account.name || '', account.avatar || '', JSON.stringify(account.extra || {}), userId).run();
+            'INSERT INTO accounts (platform_id, account_id, account_name, avatar_url, extra_info, user_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          ).bind(platformRow!.id, account.id, account.name || '', account.avatar || '', JSON.stringify(account.extra || {}), userId, Math.floor(Date.now() / 1000)).run();
           accountRow = await env.DB.prepare('SELECT id FROM accounts WHERE platform_id = ? AND account_id = ?').bind(platformRow!.id, account.id).first();
         } else {
-          // 如果账号 user_id 为空，更新为当前用户
-          if (!accountRow.user_id) {
-             await env.DB.prepare(
-               'UPDATE accounts SET user_id = ?, updated_at = ? WHERE id = ?'
-             ).bind(userId, Math.floor(Date.now() / 1000), accountRow.id).run();
-          }
-
-          // 更新账号信息
+          // 始终更新账号信息和 user_id，确保数据归属正确
           await env.DB.prepare(
-            'UPDATE accounts SET account_name = ?, avatar_url = ?, updated_at = ? WHERE id = ?'
-          ).bind(account.name || '', account.avatar || '', Math.floor(Date.now() / 1000), accountRow.id).run();
+            'UPDATE accounts SET user_id = ?, account_name = ?, avatar_url = ?, updated_at = ? WHERE id = ?'
+          ).bind(userId, account.name || '', account.avatar || '', Math.floor(Date.now() / 1000), accountRow.id).run();
         }
         
         // 批量处理文章

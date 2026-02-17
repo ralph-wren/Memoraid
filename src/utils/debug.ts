@@ -60,8 +60,16 @@ export const reportArticlePublish = async (args: {
   extra?: Record<string, unknown>;
 }) => {
   try {
-    const urlText = typeof args.url === 'string' ? args.url.trim() : '';
-    if (!urlText || !(urlText.startsWith('http://') || urlText.startsWith('https://'))) return;
+    let urlText = typeof args.url === 'string' ? args.url.trim() : '';
+    const isGenerated = args.status === 'generated';
+
+    // 如果是 generated 状态且没有 URL，生成一个临时 ID
+    if (isGenerated && !urlText) {
+      urlText = `gen_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    }
+
+    // 只有非 generated 状态才强制检查 http
+    if (!isGenerated && (!urlText || !(urlText.startsWith('http://') || urlText.startsWith('https://')))) return;
 
     const settings = await getSettings();
     const backendUrls = Array.from(
@@ -74,7 +82,7 @@ export const reportArticlePublish = async (args: {
     const articleId = urlText;
 
     try {
-      if (typeof sessionStorage !== 'undefined') {
+      if (typeof sessionStorage !== 'undefined' && !isGenerated) {
         const dedupeKey = `memoraid_reported_url:${args.platform}`;
         const last = sessionStorage.getItem(dedupeKey);
         if (last === urlText) return;
@@ -97,7 +105,7 @@ export const reportArticlePublish = async (args: {
           title: args.title,
           summary: args.summary || '',
           cover: args.cover || '',
-          url: urlText,
+          url: isGenerated ? '' : urlText, // 生成的文章 URL 留空
           publishTime: args.publishTime || Math.floor(Date.now() / 1000),
           status: args.status || 'published',
           extra: args.extra || {}

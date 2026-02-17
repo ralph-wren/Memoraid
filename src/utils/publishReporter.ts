@@ -29,6 +29,21 @@ export class PublishReporter {
    * 安装发布监控
    */
   install(): void {
+    // 检查 sessionStorage 中的 armed 状态
+    try {
+      const storedArmed = sessionStorage.getItem(`memoraid_armed_${this.options.platform}`);
+      if (storedArmed) {
+        const armData = JSON.parse(storedArmed);
+        // 如果在5分钟内，恢复 armed 状态
+        if (Date.now() - armData.at < 5 * 60 * 1000) {
+          this.armed = true;
+          this.armAt = armData.at;
+        } else {
+          sessionStorage.removeItem(`memoraid_armed_${this.options.platform}`);
+        }
+      }
+    } catch {}
+
     // 监听点击事件
     document.addEventListener('click', (e) => {
       this.handleClick(e);
@@ -81,6 +96,9 @@ export class PublishReporter {
     if (isPublishButton) {
       this.armed = true;
       this.armAt = Date.now();
+      try {
+        sessionStorage.setItem(`memoraid_armed_${this.options.platform}`, JSON.stringify({ at: this.armAt }));
+      } catch {}
       setTimeout(() => this.maybeReport('click:publish'), 1500);
     }
   }
@@ -171,6 +189,9 @@ export class PublishReporter {
   private reportOnce(trigger: string, publishedUrl: string): void {
     if (this.hasReported) return;
     this.hasReported = true;
+    try {
+      sessionStorage.removeItem(`memoraid_armed_${this.options.platform}`);
+    } catch {}
 
     const title = this.getCurrentTitle();
 
