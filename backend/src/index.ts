@@ -1320,7 +1320,7 @@ export default {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Memoraid - AI 内容创作助手 | 在浏览时随时向AI提问</title>
     <meta name="description" content="Memoraid 是一款强大的 Chrome 扩展，使用 AI 总结网页/对话内容，一键生成自媒体文章，支持自动发布到头条号、知乎专栏、微信公众号。">
-    <link rel="icon" type="image/png" href="\${ASSETS_BASE}/icon-128.png">
+    <link rel="icon" type="image/png" href="${ASSETS_BASE}/icon-128.png">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -2548,6 +2548,913 @@ export default {
     }
 
     // ==================== 文章发布统计系统 API ====================
+
+    // ==================== 系统管理后台 (仅管理员) ====================
+    const ADMIN_EMAILS = ['huangguang52@gmail.com', 'ralph.wren@gmail.com', '1552013823@qq.com', 'admin'];
+
+    // 7.0 POST /auth/login/password - 密码登录
+    if (url.pathname === '/auth/login/password' && request.method === 'POST') {
+      try {
+        const { username, password } = await request.json() as any;
+        if (!username || !password) {
+          return new Response(JSON.stringify({ error: 'Username and password required' }), { status: 400, headers: corsHeaders });
+        }
+
+        // 初始化默认管理员账户 (如果不存在)
+        // 使用简单的 SHA-256 哈希用于默认密码 "123456"
+        // 实际哈希: 8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92
+        if (username === 'admin') {
+          let adminUser = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind('admin').first();
+          if (!adminUser) {
+            // 创建默认管理员
+            const defaultHash = '8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92'; // sha256("123456")
+            const adminId = 'admin_user_' + Date.now();
+            await env.DB.prepare(
+              'INSERT INTO users (id, email, provider, provider_id, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?)'
+            ).bind(adminId, 'admin', 'local', 'admin', defaultHash, 1).run();
+            adminUser = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind('admin').first();
+          }
+        }
+
+        const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(username).first();
+        if (!user || !user.password_hash) {
+          return new Response(JSON.stringify({ error: 'Invalid credentials' }), { status: 401, headers: corsHeaders });
+        }
+
+        // 验证密码 (简单 SHA-256)
+        const encoder = new TextEncoder();
+        const data = encoder.encode(password);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+        if (hashHex !== user.password_hash) {
+          return new Response(JSON.stringify({ error: 'Invalid credentials' }), { status: 401, headers: corsHeaders });
+        }
+
+        // 生成 Token
+        const tokenPayload = {
+          userId: user.id,
+          email: user.email,
+          exp: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
+        };
+        const token = 'mock_jwt_' + btoa(JSON.stringify(tokenPayload));
+
+        return new Response(JSON.stringify({
+          success: true,
+          token,
+          user: {
+            id: user.id,
+            email: user.email,
+            mustChangePassword: !!user.must_change_password
+          }
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // 7.0.1 POST /auth/change-password - 修改密码
+    if (url.pathname === '/auth/change-password' && request.method === 'POST') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+
+        const { oldPassword, newPassword } = await request.json() as any;
+        if (!newPassword || newPassword.length < 6) {
+          return new Response(JSON.stringify({ error: 'New password must be at least 6 characters' }), { status: 400, headers: corsHeaders });
+        }
+
+        const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(userId).first();
+        if (!user) {
+          return new Response(JSON.stringify({ error: 'User not found' }), { status: 404, headers: corsHeaders });
+        }
+
+        // 验证旧密码 (如果是强制修改且是默认密码，可能不需要验证旧密码？不，安全起见还是要验证)
+        // 如果是 OAuth 用户没有密码，这里会失败，符合预期
+        if (user.password_hash) {
+          const encoder = new TextEncoder();
+          const data = encoder.encode(oldPassword);
+          const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+          const hashArray = Array.from(new Uint8Array(hashBuffer));
+          const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+          
+          if (hashHex !== user.password_hash) {
+            return new Response(JSON.stringify({ error: 'Old password incorrect' }), { status: 401, headers: corsHeaders });
+          }
+        } else {
+           return new Response(JSON.stringify({ error: 'Password not set for this user' }), { status: 400, headers: corsHeaders });
+        }
+
+        // 设置新密码
+        const encoder = new TextEncoder();
+        const data = encoder.encode(newPassword);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+        await env.DB.prepare(
+          'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?'
+        ).bind(hashHex, userId).run();
+
+        return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // 7.0.2 GET /api/admin/articles - 文章搜索与过滤
+    if (url.pathname === '/api/admin/articles' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+
+        const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(userId).first();
+        if (!user || !ADMIN_EMAILS.includes(user.email as string)) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+        }
+
+        const search = url.searchParams.get('q') || '';
+        const platform = url.searchParams.get('platform') || '';
+        const limit = parseInt(url.searchParams.get('limit') || '50');
+        const offset = parseInt(url.searchParams.get('offset') || '0');
+
+        let query = `
+          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, ac.account_name, p.display_name as platform_name, p.icon as platform_icon, u.email as user_email
+          FROM articles a 
+          JOIN accounts ac ON a.account_id = ac.id 
+          JOIN platforms p ON ac.platform_id = p.id 
+          JOIN users u ON ac.user_id = u.id
+          WHERE 1=1
+        `;
+        const params: any[] = [];
+
+        if (search) {
+          query += ` AND (u.email LIKE ? OR a.title LIKE ?)`;
+          params.push(`%${search}%`, `%${search}%`);
+        }
+
+        if (platform) {
+          query += ` AND p.name = ?`;
+          params.push(platform);
+        }
+
+        query += ` ORDER BY a.publish_time DESC LIMIT ? OFFSET ?`;
+        params.push(limit, offset);
+
+        const results = await env.DB.prepare(query).bind(...params).all();
+        
+        // Get total count for pagination
+        let countQuery = `
+          SELECT COUNT(*) as total
+          FROM articles a 
+          JOIN accounts ac ON a.account_id = ac.id 
+          JOIN platforms p ON ac.platform_id = p.id 
+          JOIN users u ON ac.user_id = u.id
+          WHERE 1=1
+        `;
+        const countParams: any[] = [];
+        
+        if (search) {
+          countQuery += ` AND (u.email LIKE ? OR a.title LIKE ?)`;
+          countParams.push(`%${search}%`, `%${search}%`);
+        }
+        if (platform) {
+          countQuery += ` AND p.name = ?`;
+          countParams.push(platform);
+        }
+        
+        const total = await env.DB.prepare(countQuery).bind(...countParams).first('total');
+
+        return new Response(JSON.stringify({
+          articles: results.results,
+          total,
+          limit,
+          offset
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // 7.0.3 GET /api/admin/users - 用户列表与分页
+    if (url.pathname === '/api/admin/users' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+
+        const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(userId).first();
+        if (!user || !ADMIN_EMAILS.includes(user.email as string)) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+        }
+
+        const limit = parseInt(url.searchParams.get('limit') || '10');
+        const offset = parseInt(url.searchParams.get('offset') || '0');
+
+        const results = await env.DB.prepare(`
+          SELECT id, email, provider, created_at 
+          FROM users 
+          ORDER BY created_at DESC 
+          LIMIT ? OFFSET ?
+        `).bind(limit, offset).all();
+
+        const total = await env.DB.prepare('SELECT COUNT(*) as total FROM users').first('total');
+
+        return new Response(JSON.stringify({
+          users: results.results,
+          total,
+          limit,
+          offset
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // 7.0 GET /api/admin/system-stats - 获取系统级统计数据
+    if (url.pathname === '/api/admin/system-stats' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+
+        const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(userId).first();
+        if (!user || !ADMIN_EMAILS.includes(user.email as string)) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Admin access required' }), { status: 403, headers: corsHeaders });
+        }
+
+        const totalUsers = await env.DB.prepare('SELECT COUNT(*) as count FROM users').first('count');
+        const totalArticles = await env.DB.prepare('SELECT COUNT(*) as count FROM articles').first('count');
+        const totalAccounts = await env.DB.prepare('SELECT COUNT(*) as count FROM accounts').first('count');
+
+        const platformStats = await env.DB.prepare(`
+          SELECT p.display_name, p.name, p.icon, COUNT(a.id) as count 
+          FROM articles a 
+          JOIN accounts ac ON a.account_id = ac.id 
+          JOIN platforms p ON ac.platform_id = p.id 
+          GROUP BY p.name
+        `).all();
+
+        const recentUsers = await env.DB.prepare(`
+          SELECT id, email, provider, created_at 
+          FROM users 
+          ORDER BY created_at DESC 
+          LIMIT 10
+        `).all();
+
+        const recentArticles = await env.DB.prepare(`
+          SELECT a.title, a.publish_time, a.article_url, a.status, ac.account_name, p.display_name as platform_name, p.icon as platform_icon 
+          FROM articles a 
+          JOIN accounts ac ON a.account_id = ac.id 
+          JOIN platforms p ON ac.platform_id = p.id 
+          ORDER BY a.publish_time DESC 
+          LIMIT 20
+        `).all();
+
+        return new Response(JSON.stringify({
+          overview: {
+            users: totalUsers,
+            articles: totalArticles,
+            accounts: totalAccounts
+          },
+          platforms: platformStats.results,
+          recentUsers: recentUsers.results,
+          recentArticles: recentArticles.results
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // 7.0.1 GET /system - 系统管理后台页面
+    if (url.pathname === '/system' && request.method === 'GET') {
+      const ASSETS_BASE = effectiveOrigin + '/assets/memoraid';
+      const html = `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memoraid · 系统管理后台</title>
+    <link rel="icon" type="image/png" href="${ASSETS_BASE}/icon-128.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #ffffff;
+            --bg-subtle: #f8fafc;
+            --bg-muted: #f3f4f6;
+            --surface: #ffffff;
+            --border: #e5e7eb;
+            --border-light: #eef2f7;
+            --text: #0f172a;
+            --text-secondary: #334155;
+            --text-muted: #64748b;
+            --accent: #111827;
+            --accent-secondary: #10b981;
+            --gradient-1: linear-gradient(135deg, rgba(16,185,129,.18) 0%, rgba(167,139,250,.14) 100%);
+            --gradient-2: linear-gradient(135deg, #111827 0%, #0f172a 100%);
+            --shadow: 0 8px 24px rgba(2, 6, 23, 0.08);
+            --radius: 12px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        .container { max-width: 1440px; margin: 0 auto; padding: 32px 24px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
+        .logo { font-size: 1.5rem; font-weight: 700; display: flex; align-items: center; gap: 12px; color: var(--text); text-decoration: none; }
+        .logo img { width: 40px; height: 40px; border-radius: 8px; }
+        .badge { background: var(--accent); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
+        
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px; margin-bottom: 40px; }
+        .stat-card {
+            background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px;
+            transition: transform 0.2s; box-shadow: var(--shadow);
+        }
+        .stat-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+        .stat-label { color: var(--text-muted); font-size: 0.875rem; font-weight: 500; margin-bottom: 8px; }
+        .stat-value { font-size: 2.5rem; font-weight: 700; color: var(--text); line-height: 1; }
+        
+        .section-title { font-size: 1.25rem; font-weight: 600; margin-bottom: 20px; color: var(--text); display: flex; align-items: center; gap: 10px; }
+        
+        /* Removed .grid-2 for full width layout */
+        
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+        .table-wrapper { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; padding: 16px 24px; background: var(--bg-subtle); color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); white-space: nowrap; }
+        td { padding: 16px 24px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 0.875rem; white-space: nowrap; }
+        .truncate-title { max-width: 300px; overflow: hidden; text-overflow: ellipsis; display: block; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover { background: var(--bg-subtle); }
+        
+        .user-cell { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+        .user-cell:hover .user-email { color: var(--accent-secondary); text-decoration: underline; }
+        .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--bg-muted); display: flex; align-items: center; justify-content: center; font-size: 0.75rem; color: var(--text-muted); font-weight: bold; }
+        .status-pill { padding: 2px 8px; border-radius: 100px; font-size: 0.75rem; background: var(--bg-muted); color: var(--text-muted); }
+        .status-pill.published { background: rgba(16, 185, 129, 0.1); color: var(--accent-secondary); }
+        .status-pill.generated { background: rgba(56, 189, 248, 0.1); color: #0ea5e9; }
+        
+        .platform-list { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); 
+            gap: 16px; padding: 24px; 
+        }
+        .platform-item { 
+            background: var(--bg); padding: 16px; border-radius: 8px; text-align: center; border: 1px solid var(--border); 
+            cursor: pointer; transition: all 0.2s;
+        }
+        .platform-item:hover { border-color: var(--accent); background: var(--bg-subtle); }
+        .platform-item.active { border-color: var(--accent); background: var(--bg-subtle); box-shadow: 0 0 0 2px var(--accent-secondary); }
+        .platform-icon { font-size: 1.5rem; margin-bottom: 8px; }
+        .platform-count { font-size: 1.25rem; font-weight: 700; color: var(--text); }
+        .platform-name { font-size: 0.75rem; color: var(--text-muted); }
+
+        .toolbar {
+            display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;
+            background: var(--surface); padding: 16px; border-radius: var(--radius); border: 1px solid var(--border);
+        }
+        .form-input {
+            padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.875rem;
+            background: var(--bg); color: var(--text); min-width: 200px;
+        }
+        .form-select {
+            padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.875rem;
+            background: var(--bg); color: var(--text);
+        }
+        .btn-sm {
+            padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: 6px;
+            cursor: pointer; font-size: 0.875rem; font-weight: 500;
+        }
+        .btn-sm:hover { opacity: 0.9; }
+        .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .btn-outline:hover { background: var(--bg-muted); }
+
+        .loading { text-align: center; padding: 40px; color: var(--text-muted); }
+        .error-msg { color: #f43f5e; padding: 20px; text-align: center; background: rgba(244, 63, 94, 0.1); border-radius: 8px; margin: 20px 0; }
+        
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+            z-index: 1000; backdrop-filter: blur(4px);
+        }
+        .modal {
+            background: var(--surface); padding: 32px; border-radius: var(--radius);
+            width: 90%; max-width: 400px; border: 1px solid var(--border);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        }
+        .modal-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 24px; text-align: center; color: var(--text); }
+        .form-group { margin-bottom: 16px; }
+        .form-label { display: block; margin-bottom: 8px; font-size: 0.875rem; color: var(--text-secondary); }
+        .modal-input {
+            width: 100%; padding: 12px; background: var(--bg); border: 1px solid var(--border);
+            border-radius: 6px; color: var(--text); font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+        .modal-input:focus { outline: none; border-color: var(--accent); }
+        .btn-primary {
+            width: 100%; padding: 12px; background: var(--accent); color: white; font-weight: 600;
+            border: none; border-radius: 6px; cursor: pointer; transition: opacity 0.2s;
+            margin-top: 8px;
+        }
+        .btn-primary:hover { opacity: 0.9; }
+        .modal-error { color: #f43f5e; font-size: 0.875rem; margin-top: 12px; text-align: center; display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <a href="/system" class="logo">
+                <img src="${ASSETS_BASE}/icon-128.png" alt="Logo">
+                Memoraid System
+            </a>
+            <div style="display:flex;align-items:center;gap:16px">
+                <button id="logoutBtn" style="display:none;" class="btn-sm btn-outline">退出</button>
+            </div>
+        </header>
+
+        <div id="loading" class="loading">正在加载系统数据...</div>
+        <div id="error" style="display:none" class="error-msg"></div>
+
+        <div id="dashboard" style="display:none">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">总用户数</div>
+                    <div class="stat-value" id="totalUsers">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">总文章生成</div>
+                    <div class="stat-value" id="totalArticles">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">绑定账号数</div>
+                    <div class="stat-value" id="totalAccounts">-</div>
+                </div>
+            </div>
+
+            <div class="section-container" style="display:flex;flex-direction:column;gap:40px">
+                <div class="section">
+                    <h2 class="section-title">📊 平台内容分布</h2>
+                    <div class="card">
+                        <div class="platform-list" id="platformStats"></div>
+                    </div>
+                </div>
+                <div class="section">
+                    <h2 class="section-title">👥 最新注册用户</h2>
+                    <div class="card">
+                        <div class="table-wrapper">
+                            <table>
+                                <thead><tr><th>用户</th><th>来源</th><th>注册时间</th></tr></thead>
+                                <tbody id="recentUsers"></tbody>
+                            </table>
+                        </div>
+                        <div style="padding:12px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border)">
+                            <button id="prevUsersBtn" class="btn-sm btn-outline" disabled onclick="changeUserPage(-1)">上一页</button>
+                            <span id="userPageInfo" style="font-size:0.875rem;color:var(--text-muted)"></span>
+                            <button id="nextUsersBtn" class="btn-sm btn-outline" disabled onclick="changeUserPage(1)">下一页</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section" style="margin-top: 40px;">
+                <h2 class="section-title">📝 文章管理</h2>
+                
+                <div class="toolbar">
+                    <input type="text" id="searchInput" class="form-input" placeholder="搜索文章标题或用户邮箱...">
+                    <select id="platformFilter" class="form-select">
+                        <option value="">所有平台</option>
+                    </select>
+                    <button onclick="resetFilters()" class="btn-sm btn-outline">重置</button>
+                    <span id="resultCount" style="margin-left:auto;align-self:center;color:var(--text-muted);font-size:0.875rem"></span>
+                </div>
+
+                <div class="card">
+                    <div class="table-wrapper">
+                        <table>
+                            <thead><tr><th>标题</th><th>平台</th><th>状态</th><th>用户</th><th>时间</th></tr></thead>
+                            <tbody id="articlesTable"></tbody>
+                        </table>
+                    </div>
+                    <div style="padding:12px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border)">
+                        <button id="prevArticlesBtn" class="btn-sm btn-outline" disabled onclick="changeArticlePage(-1)">上一页</button>
+                        <span id="articlePageInfo" style="font-size:0.875rem;color:var(--text-muted)"></span>
+                        <button id="nextArticlesBtn" class="btn-sm btn-outline" disabled onclick="changeArticlePage(1)">下一页</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal-overlay" style="display:none">
+        <div class="modal">
+            <div class="modal-title">管理员登录</div>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label class="form-label">用户名</label>
+                    <input type="text" id="username" class="modal-input" placeholder="admin" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">密码</label>
+                    <input type="password" id="password" class="modal-input" placeholder="••••••" required>
+                </div>
+                <button type="submit" class="btn-primary">登录</button>
+                <div id="loginError" class="modal-error"></div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Change Password Modal -->
+    <div id="changePwdModal" class="modal-overlay" style="display:none">
+        <div class="modal">
+            <div class="modal-title">首次登录请修改密码</div>
+            <form id="changePwdForm">
+                <div class="form-group">
+                    <label class="form-label">旧密码 (默认 123456)</label>
+                    <input type="password" id="oldPwd" class="modal-input" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">新密码</label>
+                    <input type="password" id="newPwd" class="modal-input" minlength="6" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">确认新密码</label>
+                    <input type="password" id="confirmPwd" class="modal-input" minlength="6" required>
+                </div>
+                <button type="submit" class="btn-primary">修改并继续</button>
+                <div id="changePwdError" class="modal-error"></div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+        // Pagination state for Articles
+        let articlesOffset = 0;
+        const articlesLimit = 20;
+        let articlesTotal = 0;
+        let isFetchingArticles = false;
+
+        // Pagination state for Users
+        let usersOffset = 0;
+        const usersLimit = 10;
+        let usersTotal = 0;
+        let isFetchingUsers = false;
+        
+        async function init() {
+            const token = localStorage.getItem('memoraid_token');
+            if (!token) {
+                showLogin();
+                return;
+            }
+            if (localStorage.getItem('memoraid_must_change_pwd') === 'true') {
+                showChangePassword();
+                return;
+            }
+            
+            await fetchStats();
+            await fetchUsers(true);
+            await fetchArticles(true);
+        }
+
+        async function fetchStats() {
+            try {
+                const token = localStorage.getItem('memoraid_token');
+                const headers = { 'Authorization': 'Bearer ' + token };
+                const response = await fetch('/api/admin/system-stats', { headers });
+                
+                if (response.status === 401 || response.status === 403) {
+                    localStorage.removeItem('memoraid_token');
+                    showLogin();
+                    return;
+                }
+                
+                if (!response.ok) throw new Error(await response.text());
+                
+                const data = await response.json();
+                renderDashboard(data);
+                document.getElementById('logoutBtn').style.display = 'block';
+            } catch (e) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = '加载失败: ' + e.message;
+            }
+        }
+
+        async function fetchUsers(reset = false) {
+            if (isFetchingUsers) return;
+            isFetchingUsers = true;
+
+            if (reset) usersOffset = 0;
+
+            try {
+                const token = localStorage.getItem('memoraid_token');
+                const params = new URLSearchParams({
+                    limit: usersLimit.toString(),
+                    offset: usersOffset.toString()
+                });
+
+                const response = await fetch('/api/admin/users?' + params.toString(), {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!response.ok) throw new Error('Failed to fetch users');
+
+                const data = await response.json();
+                usersTotal = data.total;
+                renderUsers(data.users);
+                updateUserPagination();
+            } catch (e) {
+                console.error(e);
+            } finally {
+                isFetchingUsers = false;
+            }
+        }
+
+        async function fetchArticles(reset = false) {
+            if (isFetchingArticles) return;
+            isFetchingArticles = true;
+            
+            if (reset) {
+                articlesOffset = 0;
+                // document.getElementById('articlesTable').innerHTML = ''; // Don't clear immediately to avoid flash
+            }
+
+            try {
+                const token = localStorage.getItem('memoraid_token');
+                const q = document.getElementById('searchInput').value;
+                const platform = document.getElementById('platformFilter').value;
+                
+                const params = new URLSearchParams({
+                    q,
+                    platform,
+                    limit: articlesLimit.toString(),
+                    offset: articlesOffset.toString()
+                });
+
+                const response = await fetch('/api/admin/articles?' + params.toString(), {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                if (!response.ok) throw new Error('Failed to fetch articles');
+                
+                const data = await response.json();
+                articlesTotal = data.total;
+                renderArticles(data.articles);
+                updateArticlePagination();
+                
+                document.getElementById('resultCount').textContent = \`共 \${data.total} 条记录\`;
+
+            } catch (e) {
+                console.error(e);
+            } finally {
+                isFetchingArticles = false;
+            }
+        }
+
+        function renderDashboard(data) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'block';
+            
+            // Overview
+            document.getElementById('totalUsers').textContent = data.overview.users;
+            document.getElementById('totalArticles').textContent = data.overview.articles;
+            document.getElementById('totalAccounts').textContent = data.overview.accounts;
+            
+            // Platforms
+            const platformFilter = document.getElementById('platformFilter');
+            const currentPlatform = platformFilter.value;
+            platformFilter.innerHTML = '<option value="">所有平台</option>';
+            
+            const platformHtml = data.platforms.map(p => {
+                platformFilter.innerHTML += \`<option value="\${p.name}">\${p.display_name}</option>\`;
+                return \`
+                <div class="platform-item" onclick="filterByPlatform('\${p.name}')">
+                    <div class="platform-icon">\${p.icon || '📄'}</div>
+                    <div class="platform-count">\${p.count}</div>
+                    <div class="platform-name">\${p.display_name}</div>
+                </div>
+                \`;
+            }).join('');
+            document.getElementById('platformStats').innerHTML = platformHtml || '<div style="grid-column:1/-1;text-align:center;color:#666">暂无数据</div>';
+            platformFilter.value = currentPlatform; // Restore value
+            
+            // document.getElementById('adminInfo').textContent = 'Admin Mode';
+        }
+
+        function renderUsers(users) {
+            const html = users.map(u => \`
+                <tr onclick="filterByUser('\${u.email}')" style="cursor:pointer" title="筛选此用户的文章">
+                    <td>
+                        <div class="user-cell">
+                            <div class="avatar">\${u.email[0].toUpperCase()}</div>
+                            <div class="user-email">\${u.email}</div>
+                        </div>
+                    </td>
+                    <td>\${u.provider}</td>
+                    <td>\${new Date(u.created_at * 1000).toLocaleDateString()}</td>
+                </tr>
+            \`).join('');
+            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="3" style="text-align:center">暂无数据</td></tr>';
+        }
+
+        function renderArticles(articles) {
+            const html = articles.map(a => \`
+                <tr>
+                    <td><div class="truncate-title" title="\${a.title}">\${a.title || '无标题'}</div></td>
+                    <td>\${(a.platform_icon || '') + ' ' + (a.platform_name || '')}</td>
+                    <td><span class="status-pill \${a.status}">\${a.status === 'generated' ? '已生成' : '已发布'}</span></td>
+                    <td><a href="#" onclick="event.preventDefault(); filterByUser('\${a.user_email}')" style="color:var(--accent-secondary);text-decoration:none">\${a.user_email}</a></td>
+                    <td>\${new Date(a.publish_time * 1000).toLocaleString()}</td>
+                </tr>
+            \`).join('');
+            
+            document.getElementById('articlesTable').innerHTML = html || '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">暂无数据</td></tr>';
+        }
+
+        // Pagination Controls
+        function changeUserPage(delta) {
+            usersOffset += delta * usersLimit;
+            if (usersOffset < 0) usersOffset = 0;
+            fetchUsers();
+        }
+
+        function updateUserPagination() {
+            const currentPage = Math.floor(usersOffset / usersLimit) + 1;
+            const totalPages = Math.ceil(usersTotal / usersLimit) || 1;
+            
+            document.getElementById('userPageInfo').textContent = \`第 \${currentPage} / \${totalPages} 页\`;
+            document.getElementById('prevUsersBtn').disabled = usersOffset <= 0;
+            document.getElementById('nextUsersBtn').disabled = (usersOffset + usersLimit) >= usersTotal;
+        }
+
+        function changeArticlePage(delta) {
+            articlesOffset += delta * articlesLimit;
+            if (articlesOffset < 0) articlesOffset = 0;
+            fetchArticles();
+        }
+
+        function updateArticlePagination() {
+            const currentPage = Math.floor(articlesOffset / articlesLimit) + 1;
+            const totalPages = Math.ceil(articlesTotal / articlesLimit) || 1;
+            
+            document.getElementById('articlePageInfo').textContent = \`第 \${currentPage} / \${totalPages} 页\`;
+            document.getElementById('prevArticlesBtn').disabled = articlesOffset <= 0;
+            document.getElementById('nextArticlesBtn').disabled = (articlesOffset + articlesLimit) >= articlesTotal;
+        }
+
+        // Actions
+        function filterByPlatform(name) {
+            document.getElementById('platformFilter').value = name;
+            fetchArticles(true);
+            document.getElementById('searchInput').scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Highlight active platform card
+            document.querySelectorAll('.platform-item').forEach(el => el.classList.remove('active'));
+        }
+
+        function filterByUser(email) {
+            document.getElementById('searchInput').value = email;
+            fetchArticles(true);
+            document.getElementById('searchInput').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        function resetFilters() {
+            document.getElementById('searchInput').value = '';
+            document.getElementById('platformFilter').value = '';
+            fetchArticles(true);
+        }
+
+        function loadMore() {
+            // Deprecated in favor of pagination
+            changeArticlePage(1);
+        }
+
+        // Event Listeners
+        let debounceTimer;
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => fetchArticles(true), 500);
+        });
+        
+        document.getElementById('platformFilter').addEventListener('change', () => fetchArticles(true));
+
+        // Auth Functions
+        function showLogin() {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'none';
+            document.getElementById('loginModal').style.display = 'flex';
+        }
+
+        function showChangePassword() {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'none';
+            document.getElementById('loginModal').style.display = 'none';
+            document.getElementById('changePwdModal').style.display = 'flex';
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = e.target.querySelector('button');
+            const errorDiv = document.getElementById('loginError');
+            btn.disabled = true; btn.textContent = '登录中...'; errorDiv.style.display = 'none';
+
+            try {
+                const res = await fetch('/auth/login/password', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        username: document.getElementById('username').value,
+                        password: document.getElementById('password').value
+                    })
+                });
+                
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '登录失败');
+                
+                localStorage.setItem('memoraid_token', data.token);
+                if (data.user.mustChangePassword) {
+                    localStorage.setItem('memoraid_must_change_pwd', 'true');
+                    showChangePassword();
+                } else {
+                    localStorage.removeItem('memoraid_must_change_pwd');
+                    document.getElementById('loginModal').style.display = 'none';
+                    document.getElementById('loading').style.display = 'block';
+                    init();
+                }
+            } catch (e) {
+                errorDiv.textContent = e.message; errorDiv.style.display = 'block';
+            } finally {
+                btn.disabled = false; btn.textContent = '登录';
+            }
+        });
+
+        document.getElementById('changePwdForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const oldPwd = document.getElementById('oldPwd').value;
+            const newPwd = document.getElementById('newPwd').value;
+            const confirmPwd = document.getElementById('confirmPwd').value;
+            const errorDiv = document.getElementById('changePwdError');
+
+            if (newPwd !== confirmPwd) {
+                errorDiv.textContent = '两次输入的新密码不一致'; errorDiv.style.display = 'block'; return;
+            }
+
+            const btn = e.target.querySelector('button');
+            btn.disabled = true; btn.textContent = '提交中...'; errorDiv.style.display = 'none';
+
+            try {
+                const token = localStorage.getItem('memoraid_token');
+                const res = await fetch('/auth/change-password', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ oldPassword: oldPwd, newPassword: newPwd })
+                });
+                
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '修改失败');
+                
+                localStorage.removeItem('memoraid_must_change_pwd');
+                alert('密码修改成功');
+                document.getElementById('changePwdModal').style.display = 'none';
+                document.getElementById('loading').style.display = 'block';
+                init();
+            } catch (e) {
+                errorDiv.textContent = e.message; errorDiv.style.display = 'block';
+            } finally {
+                btn.disabled = false; btn.textContent = '修改并继续';
+            }
+        });
+
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            localStorage.removeItem('memoraid_token');
+            localStorage.removeItem('memoraid_must_change_pwd');
+            window.location.reload();
+        });
+
+        init();
+    </script>
+</body>
+</html>`;
+      return new Response(html, { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
+    }
 
     // 7.1 GET /admin - 文章管理后台页面 (深色主题，需要登录)
     if (url.pathname === '/admin' && request.method === 'GET') {
