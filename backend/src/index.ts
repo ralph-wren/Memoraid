@@ -1445,6 +1445,11 @@ export default {
             .stats-grid { gap: 40px; }
             .footer-inner { grid-template-columns: 1fr; text-align: center; }
         }
+        .sortable { cursor: pointer; user-select: none; }
+        .sortable:hover { color: var(--text); }
+        .sortable.active { color: var(--accent); font-weight: 700; }
+        .sortable.active::after { content: ' ↓'; }
+        .sortable.asc::after { content: ' ↑'; }
     </style>
 </head>
 <body>
@@ -2759,13 +2764,31 @@ export default {
 
         const limit = parseInt(url.searchParams.get('limit') || '10');
         const offset = parseInt(url.searchParams.get('offset') || '0');
+        const sort = url.searchParams.get('sort') || 'created_at'; // created_at or last_active
+        const order = url.searchParams.get('order') || 'desc'; // desc or asc
+        
+        let query = `
+          SELECT u.id, u.email, u.provider, u.created_at, MAX(a.publish_time) as last_active
+          FROM users u
+          LEFT JOIN accounts ac ON u.id = ac.user_id
+          LEFT JOIN articles a ON ac.id = a.account_id
+          GROUP BY u.id
+        `;
+        
+        const sortField = sort === 'last_active' ? 'last_active' : 'u.created_at';
+        const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
+        const nullsOrder = sort === 'last_active' ? 'NULLS LAST' : '';
 
-        const results = await env.DB.prepare(`
-          SELECT id, email, provider, created_at 
-          FROM users 
-          ORDER BY created_at DESC 
-          LIMIT ? OFFSET ?
-        `).bind(limit, offset).all();
+        query += ` ORDER BY ${sortField} ${sortOrder} ${nullsOrder}`;
+        
+        // Secondary sort for stable pagination
+        if (sort === 'last_active') {
+             query += `, u.created_at DESC`;
+        }
+
+        query += ` LIMIT ? OFFSET ?`;
+
+        const results = await env.DB.prepare(query).bind(limit, offset).all();
 
         const total = await env.DB.prepare('SELECT COUNT(*) as total FROM users').first('total');
 
@@ -2807,9 +2830,12 @@ export default {
         `).all();
 
         const recentUsers = await env.DB.prepare(`
-          SELECT id, email, provider, created_at 
-          FROM users 
-          ORDER BY created_at DESC 
+          SELECT u.id, u.email, u.provider, u.created_at, MAX(a.publish_time) as last_active
+          FROM users u
+          LEFT JOIN accounts ac ON u.id = ac.user_id
+          LEFT JOIN articles a ON ac.id = a.account_id
+          GROUP BY u.id
+          ORDER BY u.created_at DESC 
           LIMIT 10
         `).all();
 
@@ -2977,6 +3003,12 @@ export default {
         }
         .btn-primary:hover { opacity: 0.9; }
         .modal-error { color: #f43f5e; font-size: 0.875rem; margin-top: 12px; text-align: center; display: none; }
+        
+        .sortable { cursor: pointer; user-select: none; }
+        .sortable:hover { color: var(--text); }
+        .sortable.active { color: var(--accent); font-weight: 700; }
+        .sortable.active::after { content: ' ↓'; margin-left: 2px; }
+        .sortable.asc::after { content: ' ↑'; }
     </style>
 </head>
 <body>
@@ -3018,11 +3050,18 @@ export default {
                     </div>
                 </div>
                 <div class="section">
-                    <h2 class="section-title">👥 最新注册用户</h2>
+                    <h2 class="section-title">👥 最新注册用户 <span style="font-size:0.9rem;color:var(--text-muted);font-weight:400;margin-left:auto">总数: <span id="userCountBadge">-</span></span></h2>
                     <div class="card">
                         <div class="table-wrapper">
                             <table>
-                                <thead><tr><th>用户</th><th>来源</th><th>注册时间</th></tr></thead>
+                                <thead>
+                                    <tr>
+                                        <th>用户</th>
+                                        <th>来源</th>
+                                        <th class="sortable active" id="sort-created_at" onclick="toggleSort('created_at')">注册时间</th>
+                                        <th class="sortable" id="sort-last_active" onclick="toggleSort('last_active')">最后活跃</th>
+                                    </tr>
+                                </thead>
                                 <tbody id="recentUsers"></tbody>
                             </table>
                         </div>
@@ -3119,6 +3158,8 @@ export default {
         const usersLimit = 10;
         let usersTotal = 0;
         let isFetchingUsers = false;
+        let userSort = 'created_at';
+        let userSortOrder = 'desc';
         
         async function init() {
             const token = localStorage.getItem('memoraid_token');
@@ -3131,6 +3172,12 @@ export default {
                 return;
             }
             
+            // Set up event listeners
+            // document.getElementById('userSort').addEventListener('change', (e) => {
+            //     userSort = e.target.value;
+            //     fetchUsers(true);
+            // });
+
             await fetchStats();
             await fetchUsers(true);
             await fetchArticles(true);
@@ -3170,7 +3217,9 @@ export default {
                 const token = localStorage.getItem('memoraid_token');
                 const params = new URLSearchParams({
                     limit: usersLimit.toString(),
-                    offset: usersOffset.toString()
+                    offset: usersOffset.toString(),
+                    sort: userSort,
+                    order: userSortOrder
                 });
 
                 const response = await fetch('/api/admin/users?' + params.toString(), {
@@ -3181,6 +3230,7 @@ export default {
 
                 const data = await response.json();
                 usersTotal = data.total;
+                document.getElementById('userCountBadge').textContent = usersTotal;
                 renderUsers(data.users);
                 updateUserPagination();
             } catch (e) {
@@ -3231,6 +3281,28 @@ export default {
             }
         }
 
+        function getPlatformIcon(name, defaultIcon) {
+            const style = 'width:24px;height:24px;vertical-align:middle;display:inline-block;border-radius:4px;';
+            const largeStyle = 'width:32px;height:32px;vertical-align:middle;display:inline-block;border-radius:6px;';
+            
+            // Simple Icons CDN for known platforms
+            const weixin = \`<img src="https://cdn.simpleicons.org/wechat/07C160" style="\${largeStyle}" alt="WeChat">\`;
+            const zhihu = \`<img src="https://cdn.simpleicons.org/zhihu/0084FF" style="\${largeStyle}" alt="Zhihu">\`;
+            
+            // Fallback SVG for Toutiao (Red background with '头条' text)
+            const toutiao = \`<svg viewBox="0 0 100 100" style="\${largeStyle}"><rect width="100" height="100" rx="20" fill="#ED4040"/><text x="50" y="70" font-size="50" fill="white" text-anchor="middle" font-family="sans-serif" font-weight="bold">头条</text></svg>\`;
+            
+            // Fallback SVG for Xiaohongshu (Red background with '小红书' text)
+            const xiaohongshu = \`<svg viewBox="0 0 100 100" style="\${largeStyle}"><rect width="100" height="100" rx="20" fill="#FF2442"/><text x="50" y="70" font-size="35" fill="white" text-anchor="middle" font-family="sans-serif" font-weight="bold">小红书</text></svg>\`;
+            
+            if (name.includes('weixin')) return weixin;
+            if (name.includes('zhihu')) return zhihu;
+            if (name.includes('toutiao')) return toutiao;
+            if (name.includes('xiaohongshu')) return xiaohongshu;
+            
+            return defaultIcon;
+        }
+
         function renderDashboard(data) {
             document.getElementById('loading').style.display = 'none';
             document.getElementById('dashboard').style.display = 'block';
@@ -3247,9 +3319,10 @@ export default {
             
             const platformHtml = data.platforms.map(p => {
                 platformFilter.innerHTML += \`<option value="\${p.name}">\${p.display_name}</option>\`;
+                const icon = getPlatformIcon(p.name, p.icon || '📄');
                 return \`
                 <div class="platform-item" onclick="filterByPlatform('\${p.name}')">
-                    <div class="platform-icon">\${p.icon || '📄'}</div>
+                    <div class="platform-icon">\${icon}</div>
                     <div class="platform-count">\${p.count}</div>
                     <div class="platform-name">\${p.display_name}</div>
                 </div>
@@ -3272,21 +3345,24 @@ export default {
                     </td>
                     <td>\${u.provider}</td>
                     <td>\${new Date(u.created_at * 1000).toLocaleDateString()}</td>
+                    <td>\${u.last_active ? new Date(u.last_active * 1000).toLocaleString() : '-'}</td>
                 </tr>
             \`).join('');
             document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="3" style="text-align:center">暂无数据</td></tr>';
         }
 
         function renderArticles(articles) {
-            const html = articles.map(a => \`
+            const html = articles.map(a => {
+                const icon = getPlatformIcon(a.platform_name || '', a.platform_icon || '');
+                return \`
                 <tr>
                     <td><div class="truncate-title" title="\${a.title}">\${a.title || '无标题'}</div></td>
-                    <td>\${(a.platform_icon || '') + ' ' + (a.platform_name || '')}</td>
+                    <td>\${icon} \${a.platform_name || ''}</td>
                     <td><span class="status-pill \${a.status}">\${a.status === 'generated' ? '已生成' : '已发布'}</span></td>
-                    <td><a href="#" onclick="event.preventDefault(); filterByUser('\${a.user_email}')" style="color:var(--accent-secondary);text-decoration:none">\${a.user_email}</a></td>
+                    <td onclick="filterByUser('\${a.user_email}')" style="cursor:pointer;color:var(--accent-secondary)" title="点击筛选此用户的文章">\${a.user_email}</td>
                     <td>\${new Date(a.publish_time * 1000).toLocaleString()}</td>
                 </tr>
-            \`).join('');
+            \`}).join('');
             
             document.getElementById('articlesTable').innerHTML = html || '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">暂无数据</td></tr>';
         }
@@ -3320,6 +3396,30 @@ export default {
             document.getElementById('articlePageInfo').textContent = \`第 \${currentPage} / \${totalPages} 页\`;
             document.getElementById('prevArticlesBtn').disabled = articlesOffset <= 0;
             document.getElementById('nextArticlesBtn').disabled = (articlesOffset + articlesLimit) >= articlesTotal;
+        }
+
+        function toggleSort(field) {
+            if (userSort === field) {
+                // Toggle order: desc -> asc -> desc
+                userSortOrder = userSortOrder === 'desc' ? 'asc' : 'desc';
+            } else {
+                // New field, default to desc
+                userSort = field;
+                userSortOrder = 'desc';
+            }
+            
+            // Update UI
+            document.querySelectorAll('.sortable').forEach(el => {
+                el.classList.remove('active', 'asc');
+            });
+            
+            const activeEl = document.getElementById('sort-' + field);
+            activeEl.classList.add('active');
+            if (userSortOrder === 'asc') {
+                activeEl.classList.add('asc');
+            }
+            
+            fetchUsers(true);
         }
 
         // Actions
