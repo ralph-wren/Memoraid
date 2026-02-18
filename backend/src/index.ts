@@ -2848,11 +2848,31 @@ export default {
           LIMIT 20
         `).all();
 
+        // Calculate today's stats (UTC+8 start of day)
+        const now = Math.floor(Date.now() / 1000);
+        const offset = 8 * 60 * 60; // UTC+8 offset in seconds
+        const startOfDay = now - ((now + offset) % 86400);
+        
+        const newUsersToday = await env.DB.prepare('SELECT COUNT(*) as count FROM users WHERE created_at >= ?').bind(startOfDay).first('count');
+        const newArticlesToday = await env.DB.prepare('SELECT COUNT(*) as count FROM articles WHERE publish_time >= ?').bind(startOfDay).first('count');
+        
+        // Active users: published an article today (UTC+8)
+        const activeUsersToday = await env.DB.prepare(`
+          SELECT COUNT(DISTINCT u.id) as count 
+          FROM users u
+          JOIN accounts ac ON u.id = ac.user_id
+          JOIN articles a ON ac.id = a.account_id
+          WHERE a.publish_time >= ?
+        `).bind(startOfDay).first('count');
+
         return new Response(JSON.stringify({
           overview: {
             users: totalUsers,
             articles: totalArticles,
-            accounts: totalAccounts
+            accounts: totalAccounts,
+            activeUsersToday,
+            newUsersToday,
+            newArticlesToday
           },
           platforms: platformStats.results,
           recentUsers: recentUsers.results,
@@ -3028,6 +3048,18 @@ export default {
 
         <div id="dashboard" style="display:none">
             <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">今日活跃用户</div>
+                    <div class="stat-value" id="activeUsersToday">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">今日新增用户</div>
+                    <div class="stat-value" id="newUsersToday">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">今日生成文章</div>
+                    <div class="stat-value" id="newArticlesToday">-</div>
+                </div>
                 <div class="stat-card">
                     <div class="stat-label">总用户数</div>
                     <div class="stat-value" id="totalUsers">-</div>
@@ -3308,9 +3340,12 @@ export default {
             document.getElementById('dashboard').style.display = 'block';
             
             // Overview
-            document.getElementById('totalUsers').textContent = data.overview.users;
-            document.getElementById('totalArticles').textContent = data.overview.articles;
-            document.getElementById('totalAccounts').textContent = data.overview.accounts;
+            document.getElementById('totalUsers').textContent = data.overview?.users || '-';
+            document.getElementById('totalArticles').textContent = data.overview?.articles || '-';
+            document.getElementById('totalAccounts').textContent = data.overview?.accounts || '-';
+            document.getElementById('activeUsersToday').textContent = data.overview?.activeUsersToday || '0';
+            document.getElementById('newUsersToday').textContent = data.overview?.newUsersToday || '0';
+            document.getElementById('newArticlesToday').textContent = data.overview?.newArticlesToday || '0';
             
             // Platforms
             const platformFilter = document.getElementById('platformFilter');
