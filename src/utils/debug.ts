@@ -79,7 +79,7 @@ export const reportArticlePublish = async (args: {
         'https://memoraid.dpdns.org'
       ])
     );
-    const email = settings.sync?.email || 'unknown';
+    const email = settings.sync?.email || settings.anonymousId || 'unknown';
     // 如果提供了 generatedId，则优先使用它作为 articleId，以便关联更新
     const articleId = args.generatedId || urlText;
 

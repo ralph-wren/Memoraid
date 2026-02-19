@@ -1077,11 +1077,12 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
       return;
     }
     console.error('Refinement error:', error);
+    const friendlyError = formatOpenAIError(error);
     updateTaskState({
       status: 'Error',
-      message: error.message || 'Refinement failed',
+      message: friendlyError,
       progress: 0,
-      error: error.message,
+      error: friendlyError,
       conversationHistory: messages // Keep history so user can retry
     });
   } finally {
@@ -1337,11 +1338,12 @@ async function startSummarization(extraction: ExtractionResult) {
     }
 
     console.error('Summarization error:', error);
+    const friendlyError = formatOpenAIError(error);
     updateTaskState({
       status: 'Error',
-      message: error.message || 'An error occurred',
+      message: friendlyError,
       progress: 0,
-      error: error.message
+      error: friendlyError
     });
 
     // Send Error Notification
@@ -1350,7 +1352,7 @@ async function startSummarization(extraction: ExtractionResult) {
       type: 'basic',
       iconUrl: iconUrl,
       title: 'Chat Export Failed',
-      message: error.message || 'Unknown error occurred'
+      message: friendlyError
     });
   } finally {
     stopTimer();
@@ -2026,11 +2028,12 @@ async function startArticleGeneration(extraction: ExtractionResult) {
     }
 
     console.error('Article generation error:', error);
+    const friendlyError = formatOpenAIError(error);
     updateTaskState({
       status: 'Error',
-      message: error.message || 'An error occurred',
+      message: friendlyError,
       progress: 0,
-      error: error.message
+      error: friendlyError
     });
 
     const iconUrl = chrome.runtime.getURL('public/icon-128.png');
@@ -2038,7 +2041,7 @@ async function startArticleGeneration(extraction: ExtractionResult) {
       type: 'basic',
       iconUrl: iconUrl,
       title: 'Article Generation Failed',
-      message: error.message || 'Unknown error occurred'
+      message: friendlyError
     });
     return null;
   } finally {
@@ -2338,11 +2341,12 @@ ${platformPrompt}
     }
 
     console.error('Article generation and publish error:', error);
+    const friendlyError = formatOpenAIError(error);
     updateTaskState({
       status: 'Error',
-      message: error.message || '发生错误',
+      message: friendlyError,
       progress: 0,
-      error: error.message
+      error: friendlyError
     });
 
     const iconUrl = chrome.runtime.getURL('public/icon-128.png');
@@ -2350,22 +2354,41 @@ ${platformPrompt}
       type: 'basic',
       iconUrl: iconUrl,
       title: '文章生成失败',
-      message: error.message || '未知错误'
+      message: friendlyError
     });
   } finally {
     abortController = null;
   }
 }
 
+function formatOpenAIError(error: any): string {
+  const msg = error.message || String(error);
+  if (error?.status === 410 || msg.includes('410')) {
+    return 'AI 服务请求失败 (410 Gone)：当前的 API 地址或模型已失效，请在设置中更换其他模型或服务商。';
+  }
+  if (error?.status === 401 || msg.includes('401')) {
+    return 'AI 服务认证失败 (401 Unauthorized)：API Key 无效或过期，请在设置中检查。';
+  }
+  if (error?.status === 404 || msg.includes('404')) {
+    return 'AI 服务连接失败 (404 Not Found)：请求的 API 地址错误或模型不存在。请检查设置中的 Base URL 是否正确（通常应以 /v1 结尾）以及模型名称是否准确。';
+  }
+  if (error?.status === 429 || msg.includes('429')) {
+    return 'AI 服务请求过多 (429 Too Many Requests)：已超出速率限制或余额不足。';
+  }
+  return msg;
+}
+
 async function handleLogin(provider: 'google' | 'github') {
   const settings = await getSettings();
   const backendUrl = settings.sync?.backendUrl || DEFAULT_SETTINGS.sync!.backendUrl;
   const redirectUri = chrome.identity.getRedirectURL();
+  const anonymousId = settings.anonymousId || '';
 
   console.log('=== Login Debug Info ===');
   console.log('Provider:', provider);
   console.log('Backend URL:', backendUrl);
   console.log('Redirect URI:', redirectUri);
+  console.log('Anonymous ID:', anonymousId);
 
   // 首先从后端获取 OAuth 配置
   let authConfig: { clientId: string; authUrl: string } | null = null;
@@ -2384,6 +2407,10 @@ async function handleLogin(provider: 'google' | 'github') {
   let authUrl: string;
 
   if (authConfig && authConfig.clientId) {
+    // Construct state object
+    const statePayload = JSON.stringify({ redirectUri, anonymousId });
+    const state = encodeURIComponent(statePayload);
+
     // 直接构建 OAuth URL，跳过后端重定向
     if (provider === 'google') {
       authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
@@ -2392,17 +2419,17 @@ async function handleLogin(provider: 'google' | 'github') {
         `&response_type=code` +
         `&scope=email%20profile` +
         `&prompt=select_account` +
-        `&state=${encodeURIComponent(redirectUri)}`;
+        `&state=${state}`;
     } else {
       authUrl = `https://github.com/login/oauth/authorize?` +
         `client_id=${authConfig.clientId}` +
         `&redirect_uri=${encodeURIComponent(backendUrl + '/auth/callback/github')}` +
         `&scope=user:email` +
-        `&state=${encodeURIComponent(redirectUri)}`;
+        `&state=${state}`;
     }
   } else {
     // 回退到后端重定向方式
-    authUrl = `${backendUrl}/auth/login/${provider}?redirect_uri=${encodeURIComponent(redirectUri)}`;
+    authUrl = `${backendUrl}/auth/login/${provider}?redirect_uri=${encodeURIComponent(redirectUri)}&anonymousId=${encodeURIComponent(anonymousId)}`;
   }
 
   console.log('Auth URL:', authUrl);

@@ -1887,13 +1887,18 @@ export default {
     if (url.pathname.startsWith('/auth/login/') && request.method === 'GET') {
        const provider = url.pathname.split('/').pop();
        const redirectUri = url.searchParams.get('redirect_uri');
+       const anonymousId = url.searchParams.get('anonymousId');
 
-       console.log('Auth Init:', { provider, redirectUri, origin: effectiveOrigin });
+       console.log('Auth Init:', { provider, redirectUri, anonymousId, origin: effectiveOrigin });
 
        if (!redirectUri) {
            console.error('Missing redirect_uri');
            return new Response('Missing redirect_uri', { status: 400 });
        }
+
+       // Construct state object
+       const statePayload = JSON.stringify({ redirectUri, anonymousId });
+       const state = encodeURIComponent(statePayload);
 
        let authUrl = '';
        
@@ -1903,14 +1908,14 @@ export default {
                console.error('GOOGLE_CLIENT_ID not configured');
                return new Response('Google OAuth not configured. Please set GOOGLE_CLIENT_ID environment variable.', { status: 500 });
            }
-           authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(effectiveOrigin + '/auth/callback/google')}&response_type=code&scope=email%20profile&prompt=select_account&state=${encodeURIComponent(redirectUri)}`;
+           authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(effectiveOrigin + '/auth/callback/google')}&response_type=code&scope=email%20profile&prompt=select_account&state=${state}`;
        } else if (provider === 'github') {
            const clientId = env.GITHUB_CLIENT_ID?.trim();
            if (!clientId) {
                console.error('GITHUB_CLIENT_ID not configured');
                return new Response('GitHub OAuth not configured. Please set GITHUB_CLIENT_ID environment variable.', { status: 500 });
            }
-           authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(effectiveOrigin + '/auth/callback/github')}&scope=user:email&state=${encodeURIComponent(redirectUri)}`;
+           authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(effectiveOrigin + '/auth/callback/github')}&scope=user:email&state=${state}`;
        } else {
            console.error('Invalid provider:', provider);
            return new Response('Invalid provider', { status: 400 });
@@ -1942,7 +1947,19 @@ export default {
     if (url.pathname.startsWith('/auth/callback/') && request.method === 'GET') {
         const provider = url.pathname.split('/').pop();
         const code = url.searchParams.get('code');
-        const extRedirectUri = url.searchParams.get('state'); // We stored ext URI in state
+        const stateParam = url.searchParams.get('state');
+        
+        let extRedirectUri = '';
+        let anonymousId = '';
+
+        try {
+            const stateObj = JSON.parse(decodeURIComponent(stateParam || ''));
+            extRedirectUri = stateObj.redirectUri;
+            anonymousId = stateObj.anonymousId;
+        } catch (e) {
+            // Fallback for old clients or if state is just the URI
+            extRedirectUri = decodeURIComponent(stateParam || '');
+        }
 
         if (!code || !extRedirectUri) return new Response('Missing code or state', { status: 400 });
 
@@ -2014,29 +2031,47 @@ export default {
                 }
             }
 
-            // Create/Update User - 使用 INSERT OR REPLACE 来处理所有冲突情况
-            const userId = `${provider}_${providerId}`;
+            // Create/Update User
+            const oauthUserId = `${provider}_${providerId}`;
+            let finalUserId = oauthUserId;
             
-            // 先尝试更新现有用户，如果不存在则插入
-            const existingUser = await env.DB.prepare(
+            // 1. Check if OAuth user exists (by ID or Email)
+            let targetUser = await env.DB.prepare(
                 `SELECT id FROM users WHERE id = ? OR email = ?`
-            ).bind(userId, email).first();
+            ).bind(oauthUserId, email).first();
             
-            if (existingUser) {
-                // 更新现有用户
+            // 2. If not exists, check if we should adopt anonymous user
+            if (!targetUser && anonymousId) {
+                const anonUser = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(anonymousId).first();
+                if (anonUser) {
+                    // Update anonymous user to be this OAuth user
+                    // We keep the ID as anonymousId (to preserve settings/logs references), but update email/provider info
+                    await env.DB.prepare(
+                        `UPDATE users SET email = ?, provider = ?, provider_id = ? WHERE id = ?`
+                    ).bind(email, provider, providerId, anonymousId).run();
+                    
+                    finalUserId = anonymousId;
+                    // Re-fetch to be safe (or just use anonymousId)
+                    targetUser = { id: anonymousId } as any; 
+                }
+            }
+            
+            if (targetUser) {
+                // User exists (or was just adopted). Update info.
                 await env.DB.prepare(
-                    `UPDATE users SET email = ?, provider = ?, provider_id = ? WHERE id = ? OR email = ?`
-                ).bind(email, provider, providerId, userId, email).run();
+                    `UPDATE users SET email = ?, provider = ?, provider_id = ? WHERE id = ?`
+                ).bind(email, provider, providerId, targetUser.id).run();
+                finalUserId = targetUser.id as string;
             } else {
-                // 插入新用户
+                // New User (and no anonymous adoption)
                 await env.DB.prepare(
                     `INSERT INTO users (id, email, provider, provider_id) VALUES (?, ?, ?, ?)`
-                ).bind(userId, email, provider, providerId).run();
+                ).bind(finalUserId, email, provider, providerId).run();
             }
 
             // Generate App Token (Simple Mock JWT for demo, ideally use proper JWT lib)
             // For security, use a proper JWT library with signature in production
-            const appToken = btoa(JSON.stringify({ userId, email, exp: Date.now() + 30 * 24 * 3600 * 1000 }));
+            const appToken = btoa(JSON.stringify({ userId: finalUserId, email, exp: Date.now() + 30 * 24 * 3600 * 1000 }));
             const fullToken = `mock_jwt_${appToken}`; // Using prefix for consistency with middleware
 
             // Redirect back to extension
@@ -2553,9 +2588,116 @@ export default {
     }
 
     // ==================== 文章发布统计系统 API ====================
-
-    // ==================== 系统管理后台 (仅管理员) ====================
     const ADMIN_EMAILS = ['huangguang52@gmail.com', 'ralph.wren@gmail.com', '1552013823@qq.com', 'admin'];
+
+    // 7.1 POST /api/articles/report - 上报文章发布信息
+    if (url.pathname === '/api/articles/report' && request.method === 'POST') {
+      try {
+        // Allow anonymous users to report articles
+        // If not authenticated, we use the account.id from payload as user_id (which should be anonymousId)
+        let userId = getUserIdFromRequest(request);
+        const body = await request.json() as any;
+        
+        // If no authenticated userId, try to use the one from payload if it looks like an anonymousId
+        if (!userId && body.account && body.account.id && body.account.id.startsWith('anon_')) {
+            userId = body.account.id;
+            
+            // Ensure anonymous user exists in DB
+            await env.DB.prepare(
+                `INSERT OR IGNORE INTO users (id, email, provider, provider_id) VALUES (?, ?, ?, ?)`
+            ).bind(userId, `${userId}@anonymous.com`, 'anonymous', userId).run();
+        }
+
+        if (!userId) {
+             // Fallback for very old clients or errors? Or just reject.
+             // For now, let's reject to ensure data integrity
+             return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+
+        const { platform, account, articles } = body;
+
+        // 1. Get or Create Platform
+        let platformId = await env.DB.prepare('SELECT id FROM platforms WHERE name = ?').bind(platform).first('id');
+        if (!platformId) {
+          // Auto-create platform if known or just generic? For now assume known platforms are seeded.
+          // Fallback to 'other' or error?
+          // Let's create it dynamically for flexibility
+          const result = await env.DB.prepare(
+            'INSERT INTO platforms (name, display_name, icon) VALUES (?, ?, ?)'
+          ).bind(platform, platform, '📱').run();
+          platformId = result.meta.last_row_id;
+        }
+
+        // 2. Create/Update Account
+        // Note: account.id is the ID on the platform (e.g. weixin openid), NOT our system userId
+        
+        let accountDbId = await env.DB.prepare(
+            'SELECT id FROM accounts WHERE platform_id = ? AND account_id = ? AND user_id = ?'
+        ).bind(platformId, account.id, userId).first('id');
+
+        if (!accountDbId) {
+             const result = await env.DB.prepare(
+                `INSERT INTO accounts (platform_id, account_id, user_id, account_name, avatar_url, extra_info, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`
+             ).bind(
+                 platformId, 
+                 account.id, 
+                 userId,
+                 account.name || 'Unknown', 
+                 account.avatar || '', 
+                 JSON.stringify(account.extra || {}),
+                 Math.floor(Date.now() / 1000)
+             ).run();
+             accountDbId = result.meta.last_row_id;
+        } else {
+            // Update account info
+            await env.DB.prepare(
+                `UPDATE accounts SET account_name = ?, avatar_url = ?, extra_info = ?, updated_at = ? WHERE id = ?`
+            ).bind(
+                account.name || 'Unknown', 
+                account.avatar || '', 
+                JSON.stringify(account.extra || {}),
+                Math.floor(Date.now() / 1000),
+                accountDbId
+            ).run();
+        }
+
+        // 3. Process Articles
+        for (const article of articles) {
+            const { id: articleId, title, summary, cover, url: articleUrl, publishTime, status, extra } = article;
+            
+            await env.DB.prepare(
+                `INSERT INTO articles (account_id, article_id, title, content_summary, cover_image, article_url, publish_time, status, extra_info, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(account_id, article_id) DO UPDATE SET
+                 title=excluded.title,
+                 content_summary=excluded.content_summary,
+                 cover_image=excluded.cover_image,
+                 article_url=excluded.article_url,
+                 publish_time=excluded.publish_time,
+                 status=excluded.status,
+                 extra_info=excluded.extra_info,
+                 updated_at=excluded.updated_at`
+            ).bind(
+                accountDbId,
+                articleId,
+                title,
+                summary || '',
+                cover || '',
+                articleUrl || '',
+                publishTime,
+                status || 'published',
+                JSON.stringify(extra || {}),
+                Math.floor(Date.now() / 1000)
+            ).run();
+        }
+
+        return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
 
     // 7.0 POST /auth/login/password - 密码登录
     if (url.pathname === '/auth/login/password' && request.method === 'POST') {

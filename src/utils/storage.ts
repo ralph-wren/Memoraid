@@ -65,6 +65,7 @@ export interface AppSettings {
     weixin?: string;
     xiaohongshu?: string;
   };
+  anonymousId?: string; // 匿名用户唯一 ID
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -117,13 +118,22 @@ export const DEFAULT_SETTINGS: AppSettings = {
     politeness: 60,    // 略微礼貌
     formality: 30,     // 偏口语化
     humor: 40          // 略微轻松
-  }
+  },
+  anonymousId: ''
 };
 
 export const getSettings = async (): Promise<AppSettings> => {
   return new Promise((resolve) => {
     chrome.storage.sync.get(DEFAULT_SETTINGS, (items) => {
-      resolve(items as AppSettings);
+      const settings = items as AppSettings;
+      
+      // 如果没有匿名 ID，生成一个并保存
+      if (!settings.anonymousId) {
+        settings.anonymousId = `anon_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        chrome.storage.sync.set({ anonymousId: settings.anonymousId });
+      }
+      
+      resolve(settings);
     });
   });
 };
