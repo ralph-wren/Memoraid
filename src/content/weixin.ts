@@ -4546,6 +4546,11 @@ const autoFillContent = async () => {
     } else {
       sessionStorage.removeItem('memoraid_generated_id');
     }
+    
+    // 保存标题，因为发布后页面可能无法获取标题输入框的值
+    if (payload.title) {
+      sessionStorage.setItem('memoraid_pending_title', payload.title);
+    }
 
     const settings = await chrome.storage.sync.get(['autoPublishAll', 'weixin']);
     const authorName = settings.weixin?.authorName || '';
@@ -4659,9 +4664,24 @@ const installPublishReporting = () => {
   const reportOnce = (status: string, trigger: string, publishedUrl: string, titleText?: string) => {
     if (hasReported) return;
     hasReported = true;
+    
+    // 优先顺序：
+    // 1. 传入的 titleText
+    // 2. 自动填充时保存的标题 (memoraid_pending_title)
+    // 3. 当前页面标题输入框的值 (getCurrentTitle)
+    // 4. document.title
+    // 5. 默认值
+    const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
+    const finalTitle = (titleText || pendingTitle || getCurrentTitle() || document.title || '未命名文章').trim();
+    
+    // 如果成功上报，清除保存的标题
+    if (pendingTitle) {
+      sessionStorage.removeItem('memoraid_pending_title');
+    }
+
     reportArticlePublish({
       platform: 'weixin',
-      title: (titleText || getCurrentTitle() || document.title || '未命名文章').trim(),
+      title: finalTitle,
       url: publishedUrl,
       status,
       extra: { trigger },

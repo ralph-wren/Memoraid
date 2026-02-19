@@ -1239,9 +1239,16 @@ const clickPublish = async (): Promise<boolean> => {
 
     // 上报发布成功
     try {
+        const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
+        const finalTitle = pendingTitle || '小红书文章';
+        
+        if (pendingTitle) {
+            sessionStorage.removeItem('memoraid_pending_title');
+        }
+
         await reportArticlePublish({
             platform: 'xiaohongshu',
-            title: '小红书文章',  // 标题在这里不可用，使用默认值
+            title: finalTitle,
             url: window.location.href,
             extra: {
                 sourceUrl: pendingSourceUrl
@@ -1293,6 +1300,11 @@ const autoFillContent = async (): Promise<void> => {
             sessionStorage.setItem('memoraid_generated_id', pending.generatedId);
         } else {
             sessionStorage.removeItem('memoraid_generated_id');
+        }
+
+        // 保存标题
+        if (pending.title) {
+            sessionStorage.setItem('memoraid_pending_title', pending.title);
         }
 
         // 设置停止回调

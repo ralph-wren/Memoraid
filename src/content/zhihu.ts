@@ -2090,9 +2090,19 @@ const installPublishReporting = () => {
   const reportOnce = (trigger: string, publishedUrl: string) => {
     if (hasReported) return;
     hasReported = true;
+    
+    // 优先使用缓存的标题
+    const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
+    const finalTitle = (pendingTitle || getCurrentTitle() || document.title || '未命名文章').trim();
+    
+    // 如果成功上报，清除保存的标题
+    if (pendingTitle) {
+      sessionStorage.removeItem('memoraid_pending_title');
+    }
+
     reportArticlePublish({
       platform: 'zhihu',
-      title: getCurrentTitle() || document.title || '未命名文章',
+      title: finalTitle,
       url: publishedUrl,
       status: 'published',
       extra: { trigger },
@@ -2343,6 +2353,11 @@ const fillContent = async () => {
       sessionStorage.setItem('memoraid_generated_id', payload.generatedId);
     } else {
       sessionStorage.removeItem('memoraid_generated_id');
+    }
+
+    // 保存标题，因为发布后页面可能无法获取标题输入框的值
+    if (payload.title) {
+      sessionStorage.setItem('memoraid_pending_title', payload.title);
     }
 
     const settings = await chrome.storage.sync.get(['autoPublishAll', 'zhihu']);
