@@ -14,6 +14,7 @@ export interface PublishData {
   sourceUrl?: string;
   sourceImages?: string[];
   timestamp: number;
+  generatedId?: string;
 }
 
 export interface FillContentOptions {

@@ -26,4 +26,5 @@ export interface ActiveTask {
   title?: string; // Title of the document being processed
   sourceUrl?: string; // Source URL for the article
   sourceImages?: string[]; // Source images from the original content
+  generatedId?: string; // ID of the generated article record
 }

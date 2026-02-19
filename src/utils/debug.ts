@@ -58,6 +58,7 @@ export const reportArticlePublish = async (args: {
   publishTime?: number;
   status?: string;
   extra?: Record<string, unknown>;
+  generatedId?: string;
 }) => {
   try {
     let urlText = typeof args.url === 'string' ? args.url.trim() : '';
@@ -79,13 +80,14 @@ export const reportArticlePublish = async (args: {
       ])
     );
     const email = settings.sync?.email || 'unknown';
-    const articleId = urlText;
+    // 如果提供了 generatedId，则优先使用它作为 articleId，以便关联更新
+    const articleId = args.generatedId || urlText;
 
     try {
       if (typeof sessionStorage !== 'undefined' && !isGenerated) {
         const dedupeKey = `memoraid_reported_url:${args.platform}`;
         const last = sessionStorage.getItem(dedupeKey);
-        if (last === urlText) return;
+        if (last === urlText) return articleId;
         sessionStorage.setItem(dedupeKey, urlText);
       }
     } catch {
@@ -105,7 +107,7 @@ export const reportArticlePublish = async (args: {
           title: args.title,
           summary: args.summary || '',
           cover: args.cover || '',
-          url: isGenerated ? '' : urlText, // 生成的文章 URL 留空
+          url: isGenerated ? '' : urlText, // 生成的文章 URL 留空，或者是真实的 URL
           publishTime: args.publishTime || Math.floor(Date.now() / 1000),
           status: args.status || 'published',
           extra: args.extra || {}
@@ -123,6 +125,9 @@ export const reportArticlePublish = async (args: {
         body: JSON.stringify(payload)
       }).catch(() => undefined);
     }
+    
+    return articleId;
   } catch {
+    return undefined;
   }
 };

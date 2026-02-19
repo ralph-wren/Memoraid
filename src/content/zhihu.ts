@@ -12,6 +12,7 @@ interface PublishData {
   sourceUrl?: string;
   sourceImages?: string[];
   timestamp: number;
+  generatedId?: string;
 }
 
 // ============================================
@@ -2094,7 +2095,8 @@ const installPublishReporting = () => {
       title: getCurrentTitle() || document.title || '未命名文章',
       url: publishedUrl,
       status: 'published',
-      extra: { trigger }
+      extra: { trigger },
+      generatedId: sessionStorage.getItem('memoraid_generated_id') || undefined
     });
   };
 
@@ -2335,6 +2337,13 @@ const fillContent = async () => {
     }
     pendingSourceImages = Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string') : [];
     pendingSourceUrl = payload.sourceUrl;
+
+    // 保存 generatedId 供发布上报使用
+    if (payload.generatedId) {
+      sessionStorage.setItem('memoraid_generated_id', payload.generatedId);
+    } else {
+      sessionStorage.removeItem('memoraid_generated_id');
+    }
 
     const settings = await chrome.storage.sync.get(['autoPublishAll', 'zhihu']);
     const autoPublish = settings.autoPublishAll === true

@@ -1049,7 +1049,7 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
     await addHistoryItem(newItem);
 
     // 记录生成文章（无需发布）
-    await reportArticlePublish({
+    const generatedId = await reportArticlePublish({
       platform: 'memoraid', // 默认平台
       title: newTitle,
       status: 'generated',
@@ -1066,7 +1066,8 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
       progress: 100,
       result: refinedContent,
       conversationHistory: updatedHistory,
-      title: newTitle
+      title: newTitle,
+      generatedId // 保存生成的 ID
     });
 
   } catch (error: any) {
@@ -1287,7 +1288,7 @@ async function startSummarization(extraction: ExtractionResult) {
     await addHistoryItem(newItem);
 
     // 记录生成的摘要文章
-    await reportArticlePublish({
+    const generatedId = await reportArticlePublish({
       platform: 'memoraid',
       title: extraction.title || 'Untitled Chat',
       status: 'generated',
@@ -1306,7 +1307,8 @@ async function startSummarization(extraction: ExtractionResult) {
       conversationHistory: [
         ...initialMessages as ChatMessage[],
         { role: 'assistant', content: summary }
-      ]
+      ],
+      generatedId // 保存生成的 ID
     });
 
     // Set badge to indicate completion
@@ -1362,7 +1364,7 @@ function broadcastUpdate() {
   });
 }
 
-async function handlePublishToToutiao(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[] }) {
+async function handlePublishToToutiao(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[]; generatedId?: string }) {
   try {
     const settings = await getSettings();
     const cookieStr = settings.toutiao?.cookie;
@@ -1459,7 +1461,8 @@ async function handlePublishToToutiao(payload: { title: string; content: string;
         htmlContent: htmlContent, // Add converted HTML
         sourceUrl: payload.sourceUrl,
         sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        generatedId: payload.generatedId
       }
     });
 
@@ -1478,7 +1481,7 @@ async function handlePublishToToutiao(payload: { title: string; content: string;
   }
 }
 
-async function handlePublishToZhihu(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[] }) {
+async function handlePublishToZhihu(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[]; generatedId?: string }) {
   try {
     const settings = await getSettings();
     const cookieStr = settings.zhihu?.cookie;
@@ -1558,7 +1561,8 @@ async function handlePublishToZhihu(payload: { title: string; content: string; s
         htmlContent: htmlContent,
         sourceUrl: payload.sourceUrl,
         sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        generatedId: payload.generatedId
       }
     });
 
@@ -1577,7 +1581,7 @@ async function handlePublishToZhihu(payload: { title: string; content: string; s
   }
 }
 
-async function handlePublishToWeixin(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[] }) {
+async function handlePublishToWeixin(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[]; generatedId?: string }) {
   try {
     const settings = await getSettings();
     const cookieStr = settings.weixin?.cookie;
@@ -1657,7 +1661,8 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
         htmlContent: htmlContent,
         sourceUrl: payload.sourceUrl,
         sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        generatedId: payload.generatedId
       }
     });
 
@@ -1700,7 +1705,7 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
   }
 }
 
-async function handlePublishToXiaohongshu(payload: { title: string, content: string, sourceUrl?: string, sourceImages?: string[] }) {
+async function handlePublishToXiaohongshu(payload: { title: string, content: string, sourceUrl?: string, sourceImages?: string[], generatedId?: string }) {
   try {
     console.log('Handling publish to Xiaohongshu:', payload.title);
 
@@ -1768,7 +1773,8 @@ async function handlePublishToXiaohongshu(payload: { title: string, content: str
       content: cleanedContent,
       sourceUrl: payload.sourceUrl,
       sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      generatedId: payload.generatedId
     };
 
     await chrome.storage.local.set({
@@ -1971,7 +1977,7 @@ async function startArticleGeneration(extraction: ExtractionResult) {
     await addHistoryItem(newItem);
 
     // 记录生成的文章
-    await reportArticlePublish({
+    const generatedId = await reportArticlePublish({
       platform: 'memoraid',
       title: finalTitle,
       status: 'generated',
@@ -1993,7 +1999,8 @@ async function startArticleGeneration(extraction: ExtractionResult) {
       conversationHistory: [
         ...initialMessages as ChatMessage[],
         { role: 'assistant', content: summary }
-      ]
+      ],
+      generatedId // 保存生成的 ID
     });
 
     chrome.action.setBadgeText({ text: '1' });
@@ -2258,7 +2265,7 @@ ${platformPrompt}
     await addHistoryItem(newItem);
 
     // 记录生成的文章（无论发布是否成功）
-    await reportArticlePublish({
+    const generatedId = await reportArticlePublish({
       platform: platform,
       title: finalTitle,
       status: 'generated',
@@ -2274,7 +2281,8 @@ ${platformPrompt}
       message: `文章生成完成，正在跳转到${platformName}发布页面...`,
       progress: 95,
       result: summary,
-      title: finalTitle
+      title: finalTitle,
+      generatedId // 保存生成的 ID
     });
 
     // 根据平台发布
@@ -2283,28 +2291,32 @@ ${platformPrompt}
         title: finalTitle,
         content: summary,
         sourceUrl: extraction.url,
-        sourceImages: extraction.images
+        sourceImages: extraction.images,
+        generatedId // 传递 generatedId
       });
     } else if (platform === 'zhihu') {
       await handlePublishToZhihu({
         title: finalTitle,
         content: summary,
         sourceUrl: extraction.url,
-        sourceImages: extraction.images
+        sourceImages: extraction.images,
+        generatedId // 传递 generatedId
       });
     } else if (platform === 'weixin') {
       await handlePublishToWeixin({
         title: finalTitle,
         content: summary,
         sourceUrl: extraction.url,
-        sourceImages: extraction.images
+        sourceImages: extraction.images,
+        generatedId // 传递 generatedId
       });
     } else if (platform === 'xiaohongshu') {
       await handlePublishToXiaohongshu({
         title: finalTitle,
         content: summary,
         sourceUrl: extraction.url,
-        sourceImages: extraction.images
+        sourceImages: extraction.images,
+        generatedId // 传递 generatedId
       });
     }
 

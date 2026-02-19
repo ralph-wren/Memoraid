@@ -11,6 +11,7 @@ interface PublishData {
   sourceUrl?: string;
   sourceImages?: string[];
   timestamp: number;
+  generatedId?: string;
 }
 
 // ============================================
@@ -4539,6 +4540,13 @@ const autoFillContent = async () => {
       return;
     }
 
+    // 保存 generatedId 供发布上报使用
+    if (payload.generatedId) {
+      sessionStorage.setItem('memoraid_generated_id', payload.generatedId);
+    } else {
+      sessionStorage.removeItem('memoraid_generated_id');
+    }
+
     const settings = await chrome.storage.sync.get(['autoPublishAll', 'weixin']);
     const authorName = settings.weixin?.authorName || '';
     const autoPublish = settings.autoPublishAll === true
@@ -4656,7 +4664,8 @@ const installPublishReporting = () => {
       title: (titleText || getCurrentTitle() || document.title || '未命名文章').trim(),
       url: publishedUrl,
       status,
-      extra: { trigger }
+      extra: { trigger },
+      generatedId: sessionStorage.getItem('memoraid_generated_id') || undefined
     });
   };
 

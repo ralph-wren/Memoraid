@@ -18,6 +18,7 @@ interface PublishData {
     topics?: string[];
     declaration?: string;
     timestamp: number;
+    generatedId?: string;
 }
 
 // ============================================
@@ -1244,7 +1245,8 @@ const clickPublish = async (): Promise<boolean> => {
             url: window.location.href,
             extra: {
                 sourceUrl: pendingSourceUrl
-            }
+            },
+            generatedId: sessionStorage.getItem('memoraid_generated_id') || undefined
         });
     } catch (err) {
         console.error('上报发布失败:', err);
@@ -1285,6 +1287,13 @@ const autoFillContent = async (): Promise<void> => {
 
         // 保存数据供后续使用
         pendingSourceUrl = pending.sourceUrl;
+
+        // 保存 generatedId 供发布上报使用
+        if (pending.generatedId) {
+            sessionStorage.setItem('memoraid_generated_id', pending.generatedId);
+        } else {
+            sessionStorage.removeItem('memoraid_generated_id');
+        }
 
         // 设置停止回调
         logger.setStopCallback(() => {

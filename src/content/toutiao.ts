@@ -13,6 +13,7 @@ interface PublishData {
   sourceUrl?: string;
   sourceImages?: string[];
   timestamp: number;
+  generatedId?: string;
 }
 
 // ============================================
@@ -1684,6 +1685,13 @@ const fillContent = async () => {
     console.log('[Toutiao] 素材来源图片数量:', pendingSourceImages.length);
     console.log('[Toutiao] 素材来源图片列表:', pendingSourceImages);
 
+    // 保存 generatedId 供发布上报使用
+    if (payload.generatedId) {
+      sessionStorage.setItem('memoraid_generated_id', payload.generatedId);
+    } else {
+      sessionStorage.removeItem('memoraid_generated_id');
+    }
+
     const settings = await chrome.storage.sync.get(['autoPublishAll', 'toutiao']);
     const autoPublish = settings.autoPublishAll === true
       ? true
@@ -1817,7 +1825,8 @@ const installPublishReporting = () => {
       title: getCurrentTitle() || document.title || '未命名文章',
       url: publishedUrl,
       status: 'published',
-      extra: { trigger }
+      extra: { trigger },
+      generatedId: sessionStorage.getItem('memoraid_generated_id') || undefined
     });
   };
 
