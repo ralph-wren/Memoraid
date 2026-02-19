@@ -957,6 +957,23 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
 
     const settings = await getSettings();
     let effectiveApiKey = settings.apiKeys?.[settings.provider] || settings.apiKey;
+    let extraHeaders: Record<string, string> = {};
+
+    // Special handling for 'memoraid' provider: use user sync token or anonymous ID
+    if (settings.provider === 'memoraid') {
+      if (settings.sync?.token) {
+        effectiveApiKey = settings.sync.token;
+      } else {
+         // Anonymous mode
+         // Use the consistent anonymousId from settings (managed by storage.ts)
+         const anonId = settings.anonymousId;
+         if (!anonId) {
+             throw new Error('无法获取匿名用户标识，请重试');
+         }
+         effectiveApiKey = 'anonymous'; // Dummy key for SDK
+         extraHeaders['X-Anonymous-ID'] = anonId;
+      }
+    }
 
     if (!effectiveApiKey) {
       throw new Error(`API Key for ${settings.provider} is missing. Please check settings.`);
@@ -965,6 +982,7 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
     const openai = new OpenAI({
       apiKey: effectiveApiKey,
       baseURL: settings.baseUrl,
+      defaultHeaders: extraHeaders
     });
 
     updateTaskState({
@@ -1111,6 +1129,22 @@ async function startSummarization(extraction: ExtractionResult) {
     // 1. Try to get provider-specific key from the new apiKeys map
     // 2. Fallback to the legacy single 'apiKey' if not found
     let effectiveApiKey = settings.apiKeys?.[settings.provider] || settings.apiKey;
+    let extraHeaders: Record<string, string> = {};
+
+    // Special handling for 'memoraid' provider: use user sync token or anonymous ID
+    if (settings.provider === 'memoraid') {
+      if (settings.sync?.token) {
+        effectiveApiKey = settings.sync.token;
+      } else {
+         // Anonymous mode
+         const anonId = settings.anonymousId;
+         if (!anonId) {
+             throw new Error('无法获取匿名用户标识，请重试');
+         }
+         effectiveApiKey = 'anonymous'; // Dummy key for SDK
+         extraHeaders['X-Anonymous-ID'] = anonId;
+      }
+    }
 
     // Special handling for 'custom' provider: might rely on the legacy field if not explicitly mapped,
     // but the UI now syncs custom key to apiKeys['custom'] too.
@@ -1122,6 +1156,7 @@ async function startSummarization(extraction: ExtractionResult) {
     const openai = new OpenAI({
       apiKey: effectiveApiKey,
       baseURL: settings.baseUrl,
+      defaultHeaders: extraHeaders
     });
 
     updateTaskState({ status: 'Processing...', message: 'Sending request to AI...', progress: 30 });

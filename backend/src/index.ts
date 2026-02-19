@@ -2587,6 +2587,127 @@ export default {
       }
     }
 
+    // ==================== AI 代理 API (免费额度控制) ====================
+    // DeepSeek API Key (HARDCODED as requested by user, normally should be env var)
+    // const DEEPSEEK_API_KEY = 'sk-b0c3021b637a4a71abc964d089e9d6df';
+    const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1';
+
+    // 8.0 POST /api/ai/chat/completions - 代理 Chat Completions
+    if (url.pathname === '/api/ai/chat/completions' && request.method === 'POST') {
+      try {
+        // 获取用户 ID 或匿名 ID
+        const userId = getUserIdFromRequest(request);
+        const anonymousId = request.headers.get('X-Anonymous-ID');
+        
+        // 0. Get API Key from DB
+        let deepseekKey = '';
+        try {
+             const row = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'deepseek_api_key'").first();
+             if (row) {
+                 deepseekKey = row.value as string;
+             } else {
+                 console.error('API Key not found in DB');
+                 return new Response(JSON.stringify({ error: 'System configuration missing (API Key)' }), { status: 500, headers: corsHeaders });
+             }
+        } catch (e) {
+            console.error('Failed to get API key from DB:', e);
+            return new Response(JSON.stringify({ error: 'System configuration error' }), { status: 500, headers: corsHeaders });
+        }
+
+        // 1. Check Usage Limit (Free: 5 for anonymous, 20 for logged in)
+        let usageLimit = 5;
+        let currentUsage = 0;
+        let trackingId = '';
+        let trackingType = ''; // 'user' or 'anonymous'
+
+        if (userId) {
+            // 已登录用户：限额 20
+            usageLimit = 20;
+            trackingId = userId;
+            trackingType = 'user';
+            currentUsage = await env.DB.prepare(
+                'SELECT COUNT(*) as count FROM ai_usage_logs WHERE user_id = ?'
+            ).bind(userId).first('count') as number;
+        } else if (anonymousId) {
+            // 未登录用户：限额 5
+            usageLimit = 5;
+            trackingId = anonymousId;
+            trackingType = 'anonymous';
+            currentUsage = await env.DB.prepare(
+                'SELECT COUNT(*) as count FROM ai_usage_logs WHERE anonymous_id = ?'
+            ).bind(anonymousId).first('count') as number;
+        } else {
+            // 既无登录也无匿名 ID，拒绝
+             return new Response(JSON.stringify({ error: 'Unauthorized: No user or anonymous ID provided' }), { status: 401, headers: corsHeaders });
+        }
+
+        if (currentUsage >= usageLimit) {
+           const message = userId 
+             ? `Free limit reached (${usageLimit} articles). Please upgrade or contact support.`
+             : `Trial limit reached (${usageLimit} articles). Please login to get 15 more free generations!`;
+             
+           return new Response(JSON.stringify({ 
+             error: {
+                 message: message,
+                 code: 'rate_limit_exceeded',
+                 limit: usageLimit,
+                 usage: currentUsage
+             }
+           }), { status: 403, headers: corsHeaders });
+        }
+
+        // 2. Forward to DeepSeek
+        // Note: request.json() can only be read once. We need to clone or read text.
+        // We already need body for model check.
+        const bodyText = await request.text();
+        const body = JSON.parse(bodyText);
+        
+        // Ensure model is set (or force it)
+        if (!body.model) body.model = 'deepseek-chat';
+
+        const aiResponse = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${deepseekKey}`
+          },
+          body: bodyText
+        });
+
+        if (aiResponse.ok) {
+            // 3. Log Usage (Only if successful)
+            try {
+                if (trackingType === 'user') {
+                    await env.DB.prepare(
+                        'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
+                    ).bind(userId, body.model).run();
+                } else {
+                    await env.DB.prepare(
+                        'INSERT INTO ai_usage_logs (anonymous_id, model) VALUES (?, ?)'
+                    ).bind(anonymousId, body.model).run();
+                }
+            } catch (e) {
+                console.error('Failed to log AI usage:', e);
+            }
+        }
+
+        // 4. Return Response (Stream or JSON)
+        const newHeaders = new Headers(aiResponse.headers);
+        newHeaders.set('Access-Control-Allow-Origin', '*');
+        // Add custom headers for client to track usage
+        newHeaders.set('X-Free-Limit', usageLimit.toString());
+        newHeaders.set('X-Free-Remaining', Math.max(0, usageLimit - currentUsage - 1).toString()); // -1 because we just used one
+        
+        return new Response(aiResponse.body, {
+          status: aiResponse.status,
+          headers: newHeaders
+        });
+
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
     // ==================== 文章发布统计系统 API ====================
     const ADMIN_EMAILS = ['huangguang52@gmail.com', 'ralph.wren@gmail.com', '1552013823@qq.com', 'admin'];
 
@@ -2910,7 +3031,8 @@ export default {
         const order = url.searchParams.get('order') || 'desc'; // desc or asc
         
         let query = `
-          SELECT u.id, u.email, u.provider, u.created_at, MAX(a.publish_time) as last_active
+          SELECT u.id, u.email, u.provider, u.created_at, MAX(a.publish_time) as last_active,
+          (SELECT COUNT(*) FROM ai_usage_logs WHERE user_id = u.id OR anonymous_id = u.id) as ai_usage
           FROM users u
           LEFT JOIN accounts ac ON u.id = ac.user_id
           LEFT JOIN articles a ON ac.id = a.account_id
@@ -3232,6 +3354,7 @@ export default {
                                     <tr>
                                         <th>用户</th>
                                         <th>来源</th>
+                                        <th>AI 额度</th>
                                         <th class="sortable active" id="sort-created_at" onclick="toggleSort('created_at')">注册时间</th>
                                         <th class="sortable" id="sort-last_active" onclick="toggleSort('last_active')">最后活跃</th>
                                     </tr>
@@ -3512,7 +3635,9 @@ export default {
         }
 
         function renderUsers(users) {
-            const html = users.map(u => \`
+            const html = users.map(u => {
+                const limit = (u.provider === 'anonymous') ? 5 : 20;
+                return \`
                 <tr onclick="filterByUser('\${u.email}')" style="cursor:pointer" title="筛选此用户的文章">
                     <td>
                         <div class="user-cell">
@@ -3521,11 +3646,12 @@ export default {
                         </div>
                     </td>
                     <td>\${u.provider}</td>
+                    <td><span class="status-pill \${(u.ai_usage >= limit) ? 'error' : 'success'}">\${u.ai_usage || 0}/\${limit}</span></td>
                     <td>\${new Date(u.created_at * 1000).toLocaleDateString()}</td>
                     <td>\${u.last_active ? new Date(u.last_active * 1000).toLocaleString() : '-'}</td>
                 </tr>
-            \`).join('');
-            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="3" style="text-align:center">暂无数据</td></tr>';
+            \`}).join('');
+            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="5" style="text-align:center">暂无数据</td></tr>';
         }
 
         function renderArticles(articles) {

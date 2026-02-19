@@ -71,9 +71,9 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
   apiKeys: {}, // Initialize empty map
-  baseUrl: 'https://integrate.api.nvidia.com/v1',
-  model: 'deepseek-ai/deepseek-r1',
-  provider: 'nvidia',
+  baseUrl: 'https://memoraid.dpdns.org/api/ai', // Default to our backend proxy
+  model: 'deepseek-chat',
+  provider: 'memoraid', // Custom provider that uses our backend
   language: 'zh-CN',
   autoPublishAll: false,
   github: {

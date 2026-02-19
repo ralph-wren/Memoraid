@@ -27,21 +27,10 @@ interface ProviderConfig {
 const BACKEND_URL = 'http://memoraid.dpdns.org';
 
 const PROVIDERS: Record<string, ProviderConfig> = {
-  'nvidia': {
-    name: '🆓 NVIDIA (Free - Shared, Rate Limited)',
-    baseUrl: 'https://integrate.api.nvidia.com/v1',
-    models: [
-      'deepseek-ai/deepseek-r1',
-      'deepseek-ai/deepseek-r1-distill-llama-70b',
-      'meta/llama-3.3-70b-instruct',
-      'meta/llama-3.1-405b-instruct',
-      'meta/llama-3.1-70b-instruct',
-      'qwen/qwen2.5-72b-instruct',
-      'qwen/qwen2.5-32b-instruct',
-      'mistralai/mistral-large-2-instruct',
-      'mistralai/mixtral-8x22b-instruct-v0.1',
-      'google/gemma-2-27b-it'
-    ],
+  'memoraid': {
+    name: '🆓 Memoraid (Free - DeepSeek, 10 articles/user)',
+    baseUrl: 'https://memoraid.dpdns.org/api/ai',
+    models: ['deepseek-chat'],
     isShared: true
   },
   'apiyi': {
@@ -88,8 +77,8 @@ const PROVIDERS: Record<string, ProviderConfig> = {
 
 const getProviderLink = (provider: string): string | null => {
   switch (provider) {
-    case 'nvidia':
-      return 'https://build.nvidia.com/explore/discover';
+    case 'memoraid':
+      return null;
     case 'apiyi':
       return 'https://api.apiyi.com/register/?aff_code=pBOp';
     case 'yi':
@@ -266,8 +255,8 @@ const Settings: React.FC = () => {
         initializedSettings.apiKeys[saved.provider || 'apiyi'] = saved.apiKey;
       }
 
-      // 如果是 nvidia provider，从后端获取共享密钥
-      const providerKey = saved.provider || 'nvidia';
+      // 如果是 nvidia/memoraid provider，从后端获取共享密钥
+      const providerKey = saved.provider || 'memoraid';
       if (PROVIDERS[providerKey]?.isShared) {
         try {
           let clientIdData = await chrome.storage.local.get(['clientId']);
@@ -276,15 +265,25 @@ const Settings: React.FC = () => {
             await chrome.storage.local.set({ clientId: clientIdData.clientId });
           }
 
-          const response = await fetch(`${BACKEND_URL}/api-key/nvidia`, {
-            headers: {
-              'X-Client-Id': clientIdData.clientId
-            }
-          });
+          // For Memoraid proxy, we don't really need to fetch a key from backend as it's handled server-side
+          // But to keep logic consistent or if we implement per-client token later...
+          // For now, let's just set a dummy key or fetch it if endpoint exists.
+          // Since we hardcoded the key in backend for now, we don't need to fetch it to frontend.
+          // We can just set a dummy key so UI shows "Configured".
+          
+          if (providerKey === 'memoraid') {
+             initializedSettings.apiKey = 'managed-by-backend';
+          } else {
+              const response = await fetch(`${BACKEND_URL}/api-key/nvidia`, {
+                headers: {
+                  'X-Client-Id': clientIdData.clientId
+                }
+              });
 
-          if (response.ok) {
-            const data = await response.json();
-            initializedSettings.apiKey = data.apiKey;
+              if (response.ok) {
+                const data = await response.json();
+                initializedSettings.apiKey = data.apiKey;
+              }
           }
         } catch (error) {
           console.error('Failed to fetch shared API key:', error);
@@ -412,8 +411,19 @@ const Settings: React.FC = () => {
 
     const config = PROVIDERS[providerKey];
 
-    // 如果是共享密钥的 provider（如 nvidia），从后端获取密钥
+    // 如果是共享密钥的 provider（如 memoraid），从后端获取密钥或设置默认
     if (config.isShared) {
+      if (providerKey === 'memoraid') {
+         setSettings(prev => ({
+            ...prev,
+            provider: providerKey,
+            baseUrl: config.baseUrl,
+            model: config.models[0] || '',
+            apiKey: 'managed-by-backend'
+         }));
+         return;
+      }
+
       try {
         // 生成或获取客户端 ID（用于密钥分配的一致性）
         let clientId = await chrome.storage.local.get(['clientId']);
