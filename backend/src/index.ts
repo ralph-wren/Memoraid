@@ -1450,6 +1450,31 @@ export default {
         .sortable.active { color: var(--accent); font-weight: 700; }
         .sortable.active::after { content: ' ↓'; }
         .sortable.asc::after { content: ' ↑'; }
+        .pay-step-1 { display: block; }
+        .pay-step-2 { display: none; }
+        .pay-step-2 .qr-container { text-align: center; margin-top: 16px; }
+        .pay-step-2 .order-info { 
+            background: var(--bg-muted); 
+            padding: 12px; 
+            border-radius: 8px; 
+            margin: 16px 0; 
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            text-align: left;
+        }
+        .pay-step-2 .order-id { font-family: monospace; font-weight: 700; color: var(--accent); user-select: all; }
+        .btn-confirm-pay {
+            width: 100%;
+            padding: 12px;
+            background: var(--gradient-2);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 16px;
+        }
+        .btn-confirm-pay:hover { opacity: 0.9; }
     </style>
 </head>
 <body>
@@ -3281,8 +3306,12 @@ export default {
         `).all();
 
         const recentUsers = await env.DB.prepare(`
-          SELECT u.id, u.email, u.provider, u.created_at, MAX(a.publish_time) as last_active
+          SELECT u.id, u.email, u.provider, u.created_at, 
+                 q.free_quota_remaining, 
+                 q.paid_quota_remaining,
+                 MAX(a.publish_time) as last_active
           FROM users u
+          LEFT JOIN user_quotas q ON u.id = q.user_id
           LEFT JOIN accounts ac ON u.id = ac.user_id
           LEFT JOIN articles a ON ac.id = a.account_id
           GROUP BY u.id
@@ -3371,15 +3400,37 @@ export default {
             font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif;
             background: var(--bg);
             color: var(--text);
-            min-height: 100vh;
+            height: 100vh;
+            overflow: hidden;
             line-height: 1.6;
         }
-        .container { max-width: 1440px; margin: 0 auto; padding: 32px 24px; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
-        .logo { font-size: 1.5rem; font-weight: 700; display: flex; align-items: center; gap: 12px; color: var(--text); text-decoration: none; }
-        .logo img { width: 40px; height: 40px; border-radius: 8px; }
-        .badge { background: var(--accent); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
         
+        /* Layout */
+        .layout { display: flex; height: 100%; }
+        .sidebar { 
+            width: 260px; background: var(--surface); border-right: 1px solid var(--border); 
+            display: flex; flex-direction: column; flex-shrink: 0; z-index: 10;
+        }
+        .sidebar-header { 
+            height: 72px; display: flex; align-items: center; padding: 0 24px; 
+            border-bottom: 1px solid var(--border); 
+        }
+        .logo { font-size: 1.25rem; font-weight: 700; display: flex; align-items: center; gap: 12px; color: var(--text); text-decoration: none; }
+        .logo img { width: 32px; height: 32px; border-radius: 8px; }
+        
+        .sidebar-nav { padding: 24px 16px; flex: 1; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+        .nav-item { 
+            display: flex; align-items: center; gap: 12px; padding: 12px 16px; 
+            border-radius: 8px; color: var(--text-secondary); cursor: pointer; 
+            text-decoration: none; font-weight: 500; transition: all 0.2s; 
+        }
+        .nav-item:hover { background: var(--bg-muted); color: var(--text); }
+        .nav-item.active { background: var(--bg-subtle); color: var(--accent); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        
+        .main-content { flex: 1; overflow-y: auto; background: var(--bg-subtle); position: relative; }
+        .content-body { padding: 32px; max-width: 1600px; margin: 0 auto; width: 100%; }
+        
+        /* Components */
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px; margin-bottom: 40px; }
         .stat-card {
             background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px;
@@ -3389,11 +3440,9 @@ export default {
         .stat-label { color: var(--text-muted); font-size: 0.875rem; font-weight: 500; margin-bottom: 8px; }
         .stat-value { font-size: 2.5rem; font-weight: 700; color: var(--text); line-height: 1; }
         
-        .section-title { font-size: 1.25rem; font-weight: 600; margin-bottom: 20px; color: var(--text); display: flex; align-items: center; gap: 10px; }
+        .section-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 24px; color: var(--text); display: flex; align-items: center; gap: 10px; }
         
-        /* Removed .grid-2 for full width layout */
-        
-        .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); margin-bottom: 24px; }
         .table-wrapper { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; }
         th { text-align: left; padding: 16px 24px; background: var(--bg-subtle); color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); white-space: nowrap; }
@@ -3405,9 +3454,13 @@ export default {
         .user-cell { display: flex; align-items: center; gap: 10px; cursor: pointer; }
         .user-cell:hover .user-email { color: var(--accent-secondary); text-decoration: underline; }
         .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--bg-muted); display: flex; align-items: center; justify-content: center; font-size: 0.75rem; color: var(--text-muted); font-weight: bold; }
-        .status-pill { padding: 2px 8px; border-radius: 100px; font-size: 0.75rem; background: var(--bg-muted); color: var(--text-muted); }
-        .status-pill.published { background: rgba(16, 185, 129, 0.1); color: var(--accent-secondary); }
-        .status-pill.generated { background: rgba(56, 189, 248, 0.1); color: #0ea5e9; }
+        
+        .status-pill { padding: 2px 10px; border-radius: 100px; font-size: 0.75rem; font-weight: 500; }
+        .status-pill.published { background: rgba(16, 185, 129, 0.1); color: #059669; }
+        .status-pill.generated { background: rgba(56, 189, 248, 0.1); color: #0284c7; }
+        .status-pill.pending { background: rgba(251, 191, 36, 0.1); color: #d97706; }
+        .status-pill.paid { background: rgba(16, 185, 129, 0.1); color: #059669; }
+        .status-pill.cancelled { background: rgba(244, 63, 94, 0.1); color: #e11d48; }
         
         .platform-list { 
             display: grid; 
@@ -3425,16 +3478,15 @@ export default {
         .platform-name { font-size: 0.75rem; color: var(--text-muted); }
 
         .toolbar {
-            display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;
-            background: var(--surface); padding: 16px; border-radius: var(--radius); border: 1px solid var(--border);
+            display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; align-items: center;
         }
         .form-input {
             padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.875rem;
-            background: var(--bg); color: var(--text); min-width: 200px;
+            background: var(--surface); color: var(--text); min-width: 200px;
         }
         .form-select {
             padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.875rem;
-            background: var(--bg); color: var(--text);
+            background: var(--surface); color: var(--text);
         }
         .btn-sm {
             padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: 6px;
@@ -3443,6 +3495,8 @@ export default {
         .btn-sm:hover { opacity: 0.9; }
         .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
         .btn-outline:hover { background: var(--bg-muted); }
+        .btn-danger { background: #e11d48; color: white; }
+        .btn-success { background: #059669; color: white; }
 
         .loading { text-align: center; padding: 40px; color: var(--text-muted); }
         .error-msg { color: #f43f5e; padding: 20px; text-align: center; background: rgba(244, 63, 94, 0.1); border-radius: 8px; margin: 20px 0; }
@@ -3480,24 +3534,46 @@ export default {
         .sortable.active { color: var(--accent); font-weight: 700; }
         .sortable.active::after { content: ' ↓'; margin-left: 2px; }
         .sortable.asc::after { content: ' ↑'; }
+        
+        .tab-content { display: none; animation: fadeIn 0.3s ease; }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header class="header">
-            <a href="/admin" class="logo">
-                <img src="${ASSETS_BASE}/icon-128.png" alt="Logo">
-                Memoraid System
-            </a>
-            <div style="display:flex;align-items:center;gap:16px">
-                <button id="logoutBtn" style="display:none;" class="btn-sm btn-outline">退出</button>
+    <div class="layout" id="mainLayout" style="display:none">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <a href="/admin" class="logo">
+                    <img src="${ASSETS_BASE}/icon-128.png" alt="Logo">
+                    Memoraid
+                </a>
             </div>
-        </header>
+            <nav class="sidebar-nav">
+                <a href="#dashboard" class="nav-item active" id="nav-dashboard" onclick="switchTab('dashboard')">
+                    <span>📊</span> 仪表盘
+                </a>
+                <a href="#users" class="nav-item" id="nav-users" onclick="switchTab('users')">
+                    <span>👥</span> 用户管理
+                </a>
+                <a href="#articles" class="nav-item" id="nav-articles" onclick="switchTab('articles')">
+                    <span>📝</span> 文章管理
+                </a>
+                <a href="#orders" class="nav-item" id="nav-orders" onclick="switchTab('orders')">
+                    <span>💰</span> 订单审核
+                </a>
+            </nav>
+            <div style="padding: 24px;">
+                <button id="logoutBtn" onclick="logout()" class="btn-sm btn-outline" style="width: 100%;">退出登录</button>
+            </div>
+        </aside>
+        
+        <main class="main-content">
+            <div class="content-body">
+                <div id="loading" class="loading">正在加载系统数据...</div>
+                <div id="error" style="display:none" class="error-msg"></div>
 
-        <div id="loading" class="loading">正在加载系统数据...</div>
-        <div id="error" style="display:none" class="error-msg"></div>
-
-        <div id="dashboard" style="display:none">
+                <div id="tab-dashboard" class="tab-content" style="display:none">
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-label">今日活跃用户</div>
@@ -3525,15 +3601,18 @@ export default {
                 </div>
             </div>
 
-            <div class="section-container" style="display:flex;flex-direction:column;gap:40px">
-                <div class="section">
-                    <h2 class="section-title">📊 平台内容分布</h2>
-                    <div class="card">
-                        <div class="platform-list" id="platformStats"></div>
-                    </div>
+            <div class="section">
+                <h2 class="section-title">📊 平台内容分布</h2>
+                <div class="card">
+                    <div class="platform-list" id="platformStats"></div>
                 </div>
+            </div>
+            </div> <!-- End tab-dashboard -->
+
+            <!-- Users Tab -->
+            <div id="tab-users" class="tab-content" style="display:none">
                 <div class="section">
-                    <h2 class="section-title">👥 最新注册用户 <span style="font-size:0.9rem;color:var(--text-muted);font-weight:400;margin-left:auto">总数: <span id="userCountBadge">-</span></span></h2>
+                    <h2 class="section-title">👥 用户管理 <span style="font-size:0.9rem;color:var(--text-muted);font-weight:400;margin-left:auto">总数: <span id="userCountBadge">-</span></span></h2>
                     <div class="card">
                         <div class="table-wrapper">
                             <table>
@@ -3541,7 +3620,8 @@ export default {
                                     <tr>
                                         <th>用户</th>
                                         <th>来源</th>
-                                        <th>AI 额度</th>
+                                        <th>免费额度</th>
+                                        <th>付费额度</th>
                                         <th class="sortable active" id="sort-created_at" onclick="toggleSort('created_at')">注册时间</th>
                                         <th class="sortable" id="sort-last_active" onclick="toggleSort('last_active')">最后活跃</th>
                                     </tr>
@@ -3558,34 +3638,75 @@ export default {
                 </div>
             </div>
 
-            <div class="section" style="margin-top: 40px;">
-                <h2 class="section-title">📝 文章管理</h2>
-                
-                <div class="toolbar">
-                    <input type="text" id="searchInput" class="form-input" placeholder="搜索文章标题或用户邮箱...">
-                    <select id="platformFilter" class="form-select">
-                        <option value="">所有平台</option>
-                    </select>
-                    <button onclick="resetFilters()" class="btn-sm btn-outline">重置</button>
-                    <span id="resultCount" style="margin-left:auto;align-self:center;color:var(--text-muted);font-size:0.875rem"></span>
-                </div>
-
-                <div class="card">
-                    <div class="table-wrapper">
-                        <table>
-                            <thead><tr><th>标题</th><th>平台</th><th>状态</th><th>用户</th><th>时间</th></tr></thead>
-                            <tbody id="articlesTable"></tbody>
-                        </table>
+            <!-- Articles Tab -->
+            <div id="tab-articles" class="tab-content" style="display:none">
+                <div class="section">
+                    <h2 class="section-title">📝 文章管理</h2>
+                    <div class="toolbar">
+                        <input type="text" id="searchInput" class="form-input" placeholder="搜索文章标题或用户邮箱...">
+                        <select id="platformFilter" class="form-select">
+                            <option value="">所有平台</option>
+                        </select>
+                        <button onclick="resetFilters()" class="btn-sm btn-outline">重置</button>
+                        <span id="resultCount" style="margin-left:auto;align-self:center;color:var(--text-muted);font-size:0.875rem"></span>
                     </div>
-                    <div style="padding:12px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border)">
-                        <button id="prevArticlesBtn" class="btn-sm btn-outline" disabled onclick="changeArticlePage(-1)">上一页</button>
-                        <span id="articlePageInfo" style="font-size:0.875rem;color:var(--text-muted)"></span>
-                        <button id="nextArticlesBtn" class="btn-sm btn-outline" disabled onclick="changeArticlePage(1)">下一页</button>
+                    <div class="card">
+                        <div class="table-wrapper">
+                            <table>
+                                <thead><tr><th>标题</th><th>平台</th><th>状态</th><th>用户</th><th>时间</th></tr></thead>
+                                <tbody id="articlesTable"></tbody>
+                            </table>
+                        </div>
+                        <div style="padding:12px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border)">
+                            <button id="prevArticlesBtn" class="btn-sm btn-outline" disabled onclick="changeArticlePage(-1)">上一页</button>
+                            <span id="articlePageInfo" style="font-size:0.875rem;color:var(--text-muted)"></span>
+                            <button id="nextArticlesBtn" class="btn-sm btn-outline" disabled onclick="changeArticlePage(1)">下一页</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Orders Tab -->
+            <div id="tab-orders" class="tab-content" style="display:none">
+                <div class="section">
+                    <h2 class="section-title">💰 订单审核</h2>
+                    <div class="toolbar">
+                        <select id="orderStatusFilter" class="form-select" onchange="fetchOrders(true)">
+                            <option value="">全部状态</option>
+                            <option value="pending">待审核</option>
+                            <option value="paid">已支付</option>
+                            <option value="cancelled">已取消</option>
+                        </select>
+                        <button onclick="fetchOrders(true)" class="btn-sm btn-outline">刷新</button>
+                    </div>
+                    <div class="card">
+                        <div class="table-wrapper">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>订单号</th>
+                                        <th>用户</th>
+                                        <th>金额</th>
+                                        <th>额度</th>
+                                        <th>状态</th>
+                                        <th>支付方式</th>
+                                        <th>时间</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ordersTable"></tbody>
+                            </table>
+                        </div>
+                        <div style="padding:12px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border)">
+                            <button id="prevOrdersBtn" class="btn-sm btn-outline" disabled onclick="changeOrderPage(-1)">上一页</button>
+                            <span id="orderPageInfo" style="font-size:0.875rem;color:var(--text-muted)"></span>
+                            <button id="nextOrdersBtn" class="btn-sm btn-outline" disabled onclick="changeOrderPage(1)">下一页</button>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
+    </main>
 
     <!-- Login Modal -->
     <div id="loginModal" class="modal-overlay" style="display:none">
@@ -3791,7 +3912,7 @@ export default {
 
         function renderDashboard(data) {
             document.getElementById('loading').style.display = 'none';
-            document.getElementById('dashboard').style.display = 'block';
+            document.getElementById('mainLayout').style.display = 'flex';
             
             // Overview
             document.getElementById('totalUsers').textContent = data.overview?.users || '-';
@@ -3836,11 +3957,12 @@ export default {
                     </td>
                     <td>\${u.provider}</td>
                     <td><span class="status-pill \${(u.ai_usage >= limit) ? 'error' : 'success'}">\${u.ai_usage || 0}/\${limit}</span></td>
+                    <td><span class="status-pill success">\${u.paid_quota_remaining || 0}</span></td>
                     <td>\${new Date(u.created_at * 1000).toLocaleDateString()}</td>
                     <td>\${u.last_active ? new Date(u.last_active * 1000).toLocaleString() : '-'}</td>
                 </tr>
             \`}).join('');
-            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="5" style="text-align:center">暂无数据</td></tr>';
+            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="6" style="text-align:center">暂无数据</td></tr>';
         }
 
         function renderArticles(articles) {
@@ -3952,15 +4074,21 @@ export default {
         // Auth Functions
         function showLogin() {
             document.getElementById('loading').style.display = 'none';
-            document.getElementById('dashboard').style.display = 'none';
+            document.getElementById('mainLayout').style.display = 'none';
             document.getElementById('loginModal').style.display = 'flex';
         }
 
         function showChangePassword() {
             document.getElementById('loading').style.display = 'none';
-            document.getElementById('dashboard').style.display = 'none';
+            document.getElementById('mainLayout').style.display = 'none';
             document.getElementById('loginModal').style.display = 'none';
             document.getElementById('changePwdModal').style.display = 'flex';
+        }
+        
+        function logout() {
+            localStorage.removeItem('memoraid_admin_token');
+            localStorage.removeItem('memoraid_admin_must_change_pwd');
+            window.location.reload();
         }
 
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
@@ -4035,17 +4163,265 @@ export default {
             }
         });
 
-        document.getElementById('logoutBtn').addEventListener('click', () => {
-            localStorage.removeItem('memoraid_admin_token');
-            localStorage.removeItem('memoraid_admin_must_change_pwd');
-            window.location.reload();
-        });
+        // Tab Switching
+        function switchTab(tabId) {
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            const navEl = document.getElementById('nav-' + tabId);
+            if (navEl) navEl.classList.add('active');
+            
+            document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+            const tabEl = document.getElementById('tab-' + tabId);
+            if (tabEl) tabEl.style.display = 'block';
+            
+            if (tabId === 'orders' && !window.ordersLoaded) {
+                fetchOrders(true);
+                window.ordersLoaded = true;
+            }
+            history.pushState(null, null, '#' + tabId);
+        }
 
+        // Orders Logic
+        let ordersPage = 1;
+        const ordersLimit = 20;
+        
+        async function fetchOrders(reset = false) {
+            if (reset) ordersPage = 1;
+            const status = document.getElementById('orderStatusFilter').value;
+            const offset = (ordersPage - 1) * ordersLimit;
+            
+            const tbody = document.getElementById('ordersTable');
+            if (reset) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center">加载中...</td></tr>';
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                let url = \`/api/admin/orders?limit=\${ordersLimit}&offset=\${offset}\`;
+                if (status) url += \`&status=\${status}\`;
+                
+                const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+                if (res.status === 401) { showLogin(); return; }
+                const data = await res.json();
+                
+                tbody.innerHTML = '';
+                if (!data.orders || data.orders.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center">暂无订单</td></tr>';
+                    return;
+                }
+                
+                data.orders.forEach(order => {
+                    const date = new Date(order.created_at * 1000).toLocaleString();
+                    const statusMap = {
+                        'pending': '<span class="status-pill pending">待审核</span>',
+                        'paid': '<span class="status-pill paid">已支付</span>',
+                        'cancelled': '<span class="status-pill cancelled">已取消</span>'
+                    };
+                    const methodMap = {
+                        'wechat': '微信支付',
+                        'alipay': '支付宝'
+                    };
+                    
+                    let actions = '-';
+                    if (order.status === 'pending') {
+                        actions = \`
+                            <button class="btn-sm btn-success" onclick="auditOrder('\${order.id}', 'approve')">通过</button>
+                            <button class="btn-sm btn-danger" style="margin-left:8px" onclick="auditOrder('\${order.id}', 'reject')">拒绝</button>
+                        \`;
+                    }
+                    
+                    const row = \`
+                        <tr>
+                            <td style="font-family:monospace;font-size:0.8rem">\${order.id.slice(0,8)}...</td>
+                            <td><div class="user-cell"><div class="user-email">\${order.user_email || order.user_id}</div></div></td>
+                            <td style="font-weight:600">¥\${order.amount}</td>
+                            <td>\${order.quota_amount}次</td>
+                            <td>\${statusMap[order.status] || order.status}</td>
+                            <td>\${methodMap[order.payment_url] || order.payment_url}</td>
+                            <td style="font-size:0.8rem;color:var(--text-muted)">\${date}</td>
+                            <td>\${actions}</td>
+                        </tr>
+                    \`;
+                    tbody.innerHTML += row;
+                });
+                
+                const total = data.total;
+                const totalPages = Math.ceil(total / ordersLimit) || 1;
+                document.getElementById('orderPageInfo').textContent = \`第 \${ordersPage} / \${totalPages} 页 (共 \${total} 条)\`;
+                document.getElementById('prevOrdersBtn').disabled = ordersPage <= 1;
+                document.getElementById('nextOrdersBtn').disabled = ordersPage >= totalPages;
+                
+            } catch (e) {
+                console.error(e);
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:red">加载失败</td></tr>';
+            }
+        }
+        
+        async function changeOrderPage(delta) {
+            ordersPage += delta;
+            await fetchOrders();
+        }
+        
+        async function auditOrder(id, action) {
+            if (!confirm(action === 'approve' ? '确认通过该订单？用户将获得额度。' : '确认拒绝该订单？')) return;
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch(\`/api/admin/orders/\${id}/audit\`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ action })
+                });
+                
+                if (res.ok) {
+                    alert('操作成功');
+                    fetchOrders();
+                } else {
+                    const data = await res.json();
+                    alert('操作失败: ' + data.error);
+                }
+            } catch (e) {
+                alert('网络错误');
+            }
+        }
+
+        async function init() {
+            const token = localStorage.getItem('memoraid_admin_token');
+            if (!token) {
+                showLogin();
+                return;
+            }
+            if (localStorage.getItem('memoraid_admin_must_change_pwd') === 'true') {
+                showChangePassword();
+                return;
+            }
+            
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('mainLayout').style.display = 'flex';
+            
+            // Initial data fetch
+            await fetchStats();
+            await fetchUsers(true);
+            await fetchArticles(true);
+            
+            // Setup routing
+            const hash = window.location.hash.slice(1) || 'dashboard';
+            switchTab(hash);
+        }
+        
         init();
     </script>
 </body>
 </html>`;
       return new Response(html, { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
+    }
+
+    // 7.0.5 POST /api/admin/orders/:id/audit - 审核订单
+    if (url.pathname.match(/^\/api\/admin\/orders\/[^\/]+\/audit$/) && request.method === 'POST') {
+        try {
+            const userId = getUserIdFromRequest(request);
+            if (!userId) {
+                return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
+            const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+            if (!admin) {
+                return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
+            const orderId = url.pathname.split('/')[4];
+            const body = await request.json() as any;
+            const { action } = body; // 'approve' | 'reject'
+
+            if (!['approve', 'reject'].includes(action)) {
+                return new Response(JSON.stringify({ error: '无效的操作' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
+            const order = await env.DB.prepare('SELECT * FROM payment_orders WHERE id = ?').bind(orderId).first();
+            if (!order) {
+                return new Response(JSON.stringify({ error: '订单不存在' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
+            if (order.status !== 'pending') {
+                return new Response(JSON.stringify({ error: '订单状态不正确' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
+            if (action === 'approve') {
+                // Check existing quota
+                const existingQuota = await env.DB.prepare('SELECT * FROM user_quotas WHERE user_id = ?').bind(order.user_id).first();
+                
+                const statements = [];
+                // 1. Update order status
+                statements.push(env.DB.prepare("UPDATE payment_orders SET status = 'paid', paid_at = ? WHERE id = ?").bind(Math.floor(Date.now() / 1000), orderId));
+                
+                // 2. Update or Insert quota
+                if (existingQuota) {
+                    statements.push(env.DB.prepare("UPDATE user_quotas SET paid_quota_remaining = COALESCE(paid_quota_remaining, 0) + ? WHERE user_id = ?").bind(order.quota_amount, order.user_id));
+                } else {
+                    statements.push(env.DB.prepare("INSERT INTO user_quotas (user_id, free_quota_remaining, paid_quota_remaining) VALUES (?, 10, ?)").bind(order.user_id, order.quota_amount));
+                }
+                
+                await env.DB.batch(statements);
+            } else {
+                await env.DB.prepare("UPDATE payment_orders SET status = 'cancelled' WHERE id = ?").bind(orderId).run();
+            }
+
+            return new Response(JSON.stringify({ success: true }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+    }
+
+    // 7.0.4 GET /api/admin/orders - 获取订单列表
+    if (url.pathname === '/api/admin/orders' && request.method === 'GET') {
+        try {
+            const userId = getUserIdFromRequest(request);
+            if (!userId) {
+                return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
+            const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+            if (!admin) {
+                return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
+            const status = url.searchParams.get('status');
+            const limit = parseInt(url.searchParams.get('limit') || '20');
+            const offset = parseInt(url.searchParams.get('offset') || '0');
+
+            let query = `
+                SELECT o.*, u.email as user_email
+                FROM payment_orders o
+                LEFT JOIN users u ON o.user_id = u.id
+            `;
+            const params: any[] = [];
+
+            if (status) {
+                query += ' WHERE o.status = ?';
+                params.push(status);
+            }
+
+            query += ` ORDER BY o.created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+
+            const orders = await env.DB.prepare(query).bind(...params).all();
+            
+            // 获取总数
+            let countQuery = 'SELECT COUNT(*) as total FROM payment_orders';
+            const countParams: any[] = [];
+            if (status) {
+                countQuery += ' WHERE status = ?';
+                countParams.push(status);
+            }
+            const total = await env.DB.prepare(countQuery).bind(...countParams).first('total');
+
+            return new Response(JSON.stringify({ orders: orders.results, total }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
     }
 
     // 7.1 GET /user - 内容数据中心 (深色主题，需要登录)
@@ -4442,6 +4818,161 @@ export default {
             .topbar-inner { padding: 0 16px; }
             .container { padding: 24px 16px; }
         }
+
+        /* 额度卡片 */
+        .quota-row {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .quota-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.25s ease;
+        }
+        .quota-card:hover {
+            border-color: var(--accent);
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-2px);
+        }
+        .quota-info h3 {
+            font-size: 0.875rem; color: var(--text-muted); font-weight: 500; margin-bottom: 8px;
+        }
+        .quota-value {
+            font-size: 2rem; font-weight: 700; color: var(--text);
+            line-height: 1;
+        }
+        .quota-card .icon-bg {
+            position: absolute; right: -10px; bottom: -10px;
+            font-size: 5rem; opacity: 0.05; pointer-events: none;
+        }
+        .btn-recharge {
+            background: var(--gradient-2);
+            color: white;
+            padding: 8px 20px;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            text-decoration: none;
+            border: none;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            display: inline-flex; align-items: center; gap: 6px;
+        }
+        .btn-recharge:hover { opacity: 0.9; transform: translateY(-1px); }
+
+        /* 充值弹窗 */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            display: flex; align-items: center; justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+            opacity: 0; pointer-events: none; transition: opacity 0.3s;
+        }
+        .modal-overlay.active { opacity: 1; pointer-events: auto; }
+        .modal {
+            background: var(--surface);
+            padding: 0;
+            border-radius: 24px;
+            max-width: 480px;
+            width: 90%;
+            box-shadow: var(--shadow-lg);
+            transform: translateY(20px); transition: transform 0.3s;
+            overflow: hidden;
+        }
+        .modal-overlay.active .modal { transform: translateY(0); }
+        .modal-header {
+            padding: 24px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid var(--border-light);
+            background: var(--bg-subtle);
+        }
+        .modal-title { font-size: 1.125rem; font-weight: 700; color: var(--text); }
+        .close-btn { 
+            cursor: pointer; padding: 8px; border-radius: 50%; 
+            color: var(--text-muted); transition: all 0.2s;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .close-btn:hover { background: rgba(0,0,0,0.05); color: var(--text); }
+        .modal-body { padding: 24px; }
+        .pay-rate {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            background: rgba(16,185,129,0.1);
+            border: 1px solid rgba(16,185,129,0.2);
+            color: #059669;
+            padding: 12px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+        }
+        .pay-rate strong { font-weight: 700; font-size: 1.1rem; }
+        .pay-methods {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+        }
+        .pay-method-card {
+            text-align: center;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .pay-method-card:hover {
+            border-color: var(--accent);
+            background: var(--bg-subtle);
+        }
+        .qr-img {
+            width: 100%; aspect-ratio: 1; object-fit: contain;
+            border-radius: 8px; margin-bottom: 12px;
+            background: white;
+            padding: 8px;
+            border: 1px solid var(--border-light);
+        }
+        .pay-method-name { font-weight: 600; font-size: 0.9rem; color: var(--text); }
+        .modal-footer {
+            padding: 16px 24px;
+            background: var(--bg-subtle);
+            border-top: 1px solid var(--border-light);
+            text-align: center;
+            font-size: 0.8rem; color: var(--text-muted);
+        }
+        
+        /* 支付步骤样式 */
+        .pay-step-1 { display: block; }
+        .pay-step-2 { display: none; }
+        .pay-step-2 .qr-container { text-align: center; margin-top: 16px; }
+        .pay-step-2 .order-info { 
+            background: var(--bg-muted); 
+            padding: 12px; 
+            border-radius: 8px; 
+            margin: 16px 0; 
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            text-align: left;
+        }
+        .pay-step-2 .order-id { font-family: monospace; font-weight: 700; color: var(--accent); user-select: all; }
+        .btn-confirm-pay {
+            width: 100%;
+            padding: 12px;
+            background: var(--gradient-2);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 16px;
+        }
+        .btn-confirm-pay:hover { opacity: 0.9; }
     </style>
 </head>
 <body>
@@ -4488,6 +5019,28 @@ export default {
             <p class="page-subtitle">跨平台内容发布数据一站式管理</p>
         </div>
         
+        <!-- 额度信息 -->
+        <div class="quota-row fade-in delay-1">
+            <div class="quota-card">
+                <div class="quota-info">
+                    <h3>免费额度 (次/天)</h3>
+                    <div class="quota-value" id="freeQuota">-</div>
+                </div>
+                <div class="icon-bg">🎁</div>
+            </div>
+            <div class="quota-card">
+                <div class="quota-info">
+                    <h3>付费额度 (次)</h3>
+                    <div class="quota-value" id="paidQuota">-</div>
+                </div>
+                <div class="icon-bg">💎</div>
+                <button class="btn-recharge" onclick="openRechargeModal()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg>
+                    充值
+                </button>
+            </div>
+        </div>
+
         <!-- 统计卡片 -->
         <div class="stats-row fade-in delay-1">
             <div class="stat-card">
@@ -4554,6 +5107,61 @@ export default {
             </div>
         </section>
     </main>
+
+    <!-- 充值弹窗 -->
+    <div class="modal-overlay" id="rechargeModal" onclick="if(event.target === this) closeRechargeModal()">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">充值付费额度</div>
+                <div class="close-btn" onclick="closeRechargeModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="pay-rate">
+                    当前汇率：<strong>10元 = 50次</strong>
+                </div>
+                
+                <!-- 步骤1：选择支付方式 -->
+                <div class="pay-step-1" id="payStep1">
+                    <div class="pay-methods">
+                        <div class="pay-method-card" onclick="createOrder('wechat')">
+                            <img src="https://imgcdn.dpdns.org/memoraid/pay_wechat.jpg" alt="微信支付" class="qr-img">
+                            <div class="pay-method-name">微信支付</div>
+                        </div>
+                        <div class="pay-method-card" onclick="createOrder('alipay')">
+                            <img src="https://imgcdn.dpdns.org/memoraid/pay_alipay.jpg" alt="支付宝" class="qr-img">
+                            <div class="pay-method-name">支付宝</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 步骤2：扫码支付 -->
+                <div class="pay-step-2" id="payStep2">
+                    <div style="text-align: center; margin-bottom: 12px; font-weight: 600;">
+                        请使用<span id="payMethodName"></span>扫码支付
+                    </div>
+                    <div style="max-width: 200px; margin: 0 auto;">
+                        <img id="payQrCode" src="" style="width: 100%; border-radius: 8px; border: 1px solid var(--border);">
+                    </div>
+                    
+                    <div class="order-info">
+                        <p>请在付款备注中填写以下订单号：</p>
+                        <div class="order-id" id="orderIdDisplay">ORDER-ID-HERE</div>
+                        <p style="font-size: 0.8rem; margin-top: 4px; color: var(--text-muted);">（点击订单号可复制）</p>
+                    </div>
+                    
+                    <button class="btn-confirm-pay" onclick="confirmPayment()">我已支付</button>
+                    <div style="text-align: center; margin-top: 12px;">
+                        <span onclick="resetPayment()" style="font-size: 0.8rem; color: var(--text-muted); cursor: pointer; text-decoration: underline;">重新选择</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" id="payFooter">
+                扫码支付后请截图联系管理员，备注"Memoraid充值"
+            </div>
+        </div>
+    </div>
     
     <script>
         const API_BASE = '';
@@ -4673,16 +5281,23 @@ export default {
                 const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
                 
                 // 并行加载所有数据
-                const [statsRes, platformsRes, accountsRes, articlesRes] = await Promise.all([
+                const [statsRes, platformsRes, accountsRes, articlesRes, quotaRes] = await Promise.all([
                     fetch(API_BASE + '/api/user/stats' + query, { headers }),
                     fetch(API_BASE + '/api/platforms', { headers }),
                     fetch(API_BASE + '/api/accounts' + query, { headers }),
-                    fetch(API_BASE + '/api/user/articles' + query, { headers })
+                    fetch(API_BASE + '/api/user/articles' + query, { headers }),
+                    fetch(API_BASE + '/api/user/quota', { headers })
                 ]);
                 
-                const [stats, platforms, accounts, articles] = await Promise.all([
-                    statsRes.json(), platformsRes.json(), accountsRes.json(), articlesRes.json()
+                const [stats, platforms, accounts, articles, quota] = await Promise.all([
+                    statsRes.json(), platformsRes.json(), accountsRes.json(), articlesRes.json(), quotaRes.json()
                 ]);
+                
+                // 更新额度
+                if (quota && !quota.error) {
+                    document.getElementById('freeQuota').textContent = quota.free_quota_remaining ?? 0;
+                    document.getElementById('paidQuota').textContent = quota.paid_quota_remaining ?? 0;
+                }
                 
                 // 更新统计数据
                 document.getElementById('totalArticles').textContent = formatNum(stats.totalArticles);
@@ -4781,6 +5396,98 @@ export default {
             loadData();
         }
         
+        function openRechargeModal() {
+            resetPayment();
+            document.getElementById('rechargeModal').classList.add('active');
+        }
+        
+        function closeRechargeModal() {
+            document.getElementById('rechargeModal').classList.remove('active');
+            resetPayment();
+        }
+
+        function resetPayment() {
+            document.getElementById('payStep1').style.display = 'block';
+            document.getElementById('payStep2').style.display = 'none';
+            document.getElementById('payFooter').style.display = 'block';
+        }
+
+        async function createOrder(type) {
+            const token = localStorage.getItem('memoraid_token');
+            if (!token) {
+                showLoginRequired();
+                return;
+            }
+
+            try {
+                // 显示加载状态
+                const methodCard = event.currentTarget;
+                if (methodCard) {
+                    methodCard.style.opacity = '0.7';
+                    methodCard.style.pointerEvents = 'none';
+                }
+
+                const res = await fetch(API_BASE + '/api/payment/create', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ paymentMethod: type })
+                });
+
+                const data = await res.json();
+                
+                if (data.error) {
+                    alert('创建订单失败: ' + data.error);
+                    if (methodCard) {
+                        methodCard.style.opacity = '1';
+                        methodCard.style.pointerEvents = 'auto';
+                    }
+                    return;
+                }
+
+                // 切换到支付步骤
+                const imgUrl = type === 'wechat' ? 
+                    'https://imgcdn.dpdns.org/memoraid/pay_wechat.jpg' : 
+                    'https://imgcdn.dpdns.org/memoraid/pay_alipay.jpg';
+                
+                document.getElementById('payMethodName').textContent = type === 'wechat' ? '微信' : '支付宝';
+                document.getElementById('payQrCode').src = imgUrl;
+                document.getElementById('orderIdDisplay').textContent = data.orderId;
+                
+                // 点击复制订单号
+                const orderDisplay = document.getElementById('orderIdDisplay');
+                orderDisplay.onclick = function() {
+                    const textToCopy = this.textContent === '已复制!' ? data.orderId : this.textContent;
+                    navigator.clipboard.writeText(textToCopy).then(() => {
+                        const originalText = textToCopy;
+                        this.textContent = '已复制!';
+                        setTimeout(() => this.textContent = originalText, 1500);
+                    });
+                };
+
+                document.getElementById('payStep1').style.display = 'none';
+                document.getElementById('payStep2').style.display = 'block';
+                document.getElementById('payFooter').style.display = 'none'; // 隐藏底部提示，避免干扰
+
+                // 恢复按钮状态
+                if (methodCard) {
+                    methodCard.style.opacity = '1';
+                    methodCard.style.pointerEvents = 'auto';
+                }
+
+            } catch (e) {
+                console.error('创建订单错误:', e);
+                alert('网络错误，请稍后重试');
+            }
+        }
+
+        function confirmPayment() {
+            alert('订单已提交！管理员将在审核后为您充值额度。请留意额度变化。');
+            closeRechargeModal();
+        }
+
         // 初始化：先检查登录，再加载数据
         async function init() {
             const isAuth = await checkAuth();
@@ -4929,7 +5636,64 @@ export default {
       }
     }
 
-    // 7.6 POST /api/articles/report - 上报文章数据（供插件调用）
+    // 7.6 GET /api/user/quota - 获取用户额度
+    if (url.pathname === '/api/user/quota' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
+        let quota = await env.DB.prepare('SELECT * FROM user_quotas WHERE user_id = ?').bind(userId).first();
+        
+        if (!quota) {
+            // 初始化额度
+            await env.DB.prepare('INSERT OR IGNORE INTO user_quotas (user_id) VALUES (?)').bind(userId).run();
+            quota = await env.DB.prepare('SELECT * FROM user_quotas WHERE user_id = ?').bind(userId).first();
+        }
+
+        return new Response(JSON.stringify(quota), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.7 POST /api/payment/create - 创建支付订单
+    if (url.pathname === '/api/payment/create' && request.method === 'POST') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        
+        const body = await request.json() as any;
+        const { paymentMethod } = body; // 'wechat' | 'alipay'
+        
+        if (!paymentMethod) {
+          return new Response(JSON.stringify({ error: '请选择支付方式' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
+        const orderId = crypto.randomUUID();
+        const amount = 10;
+        const quota = 50;
+        
+        await env.DB.prepare(
+          'INSERT INTO payment_orders (id, user_id, amount, quota_amount, status, payment_url) VALUES (?, ?, ?, ?, ?, ?)'
+        ).bind(orderId, userId, amount, quota, 'pending', paymentMethod).run();
+        
+        return new Response(JSON.stringify({ orderId, amount, quota, paymentMethod }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+    }
+
+    // 7.8 POST /api/articles/report - 上报文章数据（供插件调用）
     if (url.pathname === '/api/articles/report' && request.method === 'POST') {
       try {
         const userId = getUserIdFromRequest(request);
