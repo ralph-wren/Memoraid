@@ -492,7 +492,7 @@ function renderMarketingNav(origin: string): string {
       </nav>
       <div class="nav-actions">
         <a class="nav-login" href="/login" data-auth-login>登录</a>
-        <a class="nav-login" href="/admin" data-auth-admin>进入后台</a>
+        <a class="nav-login" href="/user" data-auth-admin>进入后台</a>
         <a class="btn btn-chrome" href="https://chromewebstore.google.com/detail/memoraid/leonoilddlplhmmahjmnendflfnlnlmg" target="_blank" rel="noreferrer" aria-label="免费添加到 Chrome（新标签页打开）">
           <span class="btn-icon">${chromeIcon}</span>
           <span>免费添加到 Chrome</span>
@@ -538,7 +538,7 @@ function renderMarketingFooter(origin: string): string {
       <div>
         <h5>入口</h5>
         <a href="/login">登录</a>
-        <a href="/admin">管理后台</a>
+        <a href="/user">管理后台</a>
       </div>
     </div>
   </div>
@@ -1464,7 +1464,7 @@ export default {
                 <a href="#features" class="nav-link">功能特性</a>
                 <a href="#use-cases" class="nav-link">使用案例</a>
                 <a href="/pricing" class="nav-link">定价</a>
-                <a href="/admin" class="nav-link">管理后台</a>
+                <a href="/user" class="nav-link">管理后台</a>
             </div>
             <div class="nav-actions">
                 <a href="/login" class="btn-login">登录</a>
@@ -1837,7 +1837,7 @@ export default {
         localStorage.setItem('memoraid_token', '${token}');
         localStorage.setItem('memoraid_email', '${email || ''}');
         // 跳转到后台
-        window.location.href = '/admin';
+        window.location.href = '/user';
     </script>
 </body>
 </html>`;
@@ -2820,28 +2820,12 @@ export default {
       }
     }
 
-    // 7.0 POST /auth/login/password - 密码登录
+    // 7.0 POST /auth/login/password - 密码登录 (普通用户)
     if (url.pathname === '/auth/login/password' && request.method === 'POST') {
       try {
         const { username, password } = await request.json() as any;
         if (!username || !password) {
           return new Response(JSON.stringify({ error: 'Username and password required' }), { status: 400, headers: corsHeaders });
-        }
-
-        // 初始化默认管理员账户 (如果不存在)
-        // 使用简单的 SHA-256 哈希用于默认密码 "123456"
-        // 实际哈希: 8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92
-        if (username === 'admin') {
-          let adminUser = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind('admin').first();
-          if (!adminUser) {
-            // 创建默认管理员
-            const defaultHash = '8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92'; // sha256("123456")
-            const adminId = 'admin_user_' + Date.now();
-            await env.DB.prepare(
-              'INSERT INTO users (id, email, provider, provider_id, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?)'
-            ).bind(adminId, 'admin', 'local', 'admin', defaultHash, 1).run();
-            adminUser = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind('admin').first();
-          }
         }
 
         const user = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(username).first();
@@ -2935,7 +2919,113 @@ export default {
       }
     }
 
-    // 7.0.2 GET /api/admin/articles - 文章搜索与过滤
+    // 7.0 POST /auth/admin/login - 系统管理员登录
+    if (url.pathname === '/auth/admin/login' && request.method === 'POST') {
+      try {
+        const { username, password } = await request.json() as any;
+        if (!username || !password) {
+          return new Response(JSON.stringify({ error: 'Username and password required' }), { status: 400, headers: corsHeaders });
+        }
+
+        // 初始化默认系统管理员 (如果不存在)
+        if (username === 'admin') {
+          let adminUser = await env.DB.prepare('SELECT * FROM admins WHERE username = ?').bind('admin').first();
+          if (!adminUser) {
+            // default password: "admin" -> sha256("123456") = 8d969eef...
+            const defaultHash = '8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92'; 
+            const adminId = 'admin_' + Date.now();
+            await env.DB.prepare(
+              'INSERT INTO admins (id, username, password_hash, must_change_password) VALUES (?, ?, ?, ?)'
+            ).bind(adminId, 'admin', defaultHash, 1).run();
+          }
+        }
+
+        const admin = await env.DB.prepare('SELECT * FROM admins WHERE username = ?').bind(username).first();
+        if (!admin || !admin.password_hash) {
+          return new Response(JSON.stringify({ error: 'Invalid credentials' }), { status: 401, headers: corsHeaders });
+        }
+
+        const encoder = new TextEncoder();
+        const data = encoder.encode(password);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+        if (hashHex !== admin.password_hash) {
+          return new Response(JSON.stringify({ error: 'Invalid credentials' }), { status: 401, headers: corsHeaders });
+        }
+
+        const tokenPayload = {
+          userId: admin.id,
+          username: admin.username,
+          role: 'system_admin',
+          exp: Date.now() + 24 * 60 * 60 * 1000
+        };
+        const token = 'mock_jwt_' + btoa(JSON.stringify(tokenPayload));
+
+        return new Response(JSON.stringify({
+          success: true,
+          token,
+          user: {
+            id: admin.id,
+            email: admin.username,
+            mustChangePassword: !!admin.must_change_password
+          }
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // 7.0.B POST /auth/admin/change-password - 系统管理员修改密码
+    if (url.pathname === '/auth/admin/change-password' && request.method === 'POST') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+
+        const { oldPassword, newPassword } = await request.json() as any;
+        if (!newPassword || newPassword.length < 6) {
+          return new Response(JSON.stringify({ error: 'New password must be at least 6 characters' }), { status: 400, headers: corsHeaders });
+        }
+
+        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+        if (!admin) {
+          return new Response(JSON.stringify({ error: 'User not found' }), { status: 404, headers: corsHeaders });
+        }
+
+        if (admin.password_hash) {
+          const encoder = new TextEncoder();
+          const data = encoder.encode(oldPassword);
+          const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+          const hashArray = Array.from(new Uint8Array(hashBuffer));
+          const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+          
+          if (hashHex !== admin.password_hash) {
+            return new Response(JSON.stringify({ error: 'Old password incorrect' }), { status: 401, headers: corsHeaders });
+          }
+        }
+
+        const encoder = new TextEncoder();
+        const data = encoder.encode(newPassword);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+        await env.DB.prepare(
+          'UPDATE admins SET password_hash = ?, must_change_password = 0 WHERE id = ?'
+        ).bind(hashHex, userId).run();
+
+        return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // 7.0.2 GET /api/admin/articles - 文章搜索与过滤 (系统管理员)
     if (url.pathname === '/api/admin/articles' && request.method === 'GET') {
       try {
         const userId = getUserIdFromRequest(request);
@@ -2943,9 +3033,9 @@ export default {
           return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
         }
 
-        const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(userId).first();
-        if (!user || !ADMIN_EMAILS.includes(user.email as string)) {
-          return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+        if (!admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden: System Admin access required' }), { status: 403, headers: corsHeaders });
         }
 
         const search = url.searchParams.get('q') || '';
@@ -3012,6 +3102,103 @@ export default {
       }
     }
 
+    // 7.0.2.1 GET /api/user/articles - 文章搜索与过滤 (用户级)
+    if (url.pathname === '/api/user/articles' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+
+        const search = url.searchParams.get('q') || '';
+        const platform = url.searchParams.get('platform') || '';
+        const limit = parseInt(url.searchParams.get('limit') || '50');
+        const offset = parseInt(url.searchParams.get('offset') || '0');
+
+        let query = `
+          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, ac.account_name, p.display_name as platform_name, p.icon as platform_icon
+          FROM articles a 
+          JOIN accounts ac ON a.account_id = ac.id 
+          JOIN platforms p ON ac.platform_id = p.id 
+          WHERE ac.user_id = ?
+        `;
+        const params: any[] = [userId];
+
+        if (search) {
+          query += ` AND a.title LIKE ?`;
+          params.push(`%${search}%`);
+        }
+
+        if (platform) {
+          query += ` AND p.name = ?`;
+          params.push(platform);
+        }
+
+        query += ` ORDER BY a.publish_time DESC LIMIT ? OFFSET ?`;
+        params.push(limit, offset);
+
+        const results = await env.DB.prepare(query).bind(...params).all();
+        
+        // Get total count for pagination
+        let countQuery = `
+          SELECT COUNT(*) as total
+          FROM articles a 
+          JOIN accounts ac ON a.account_id = ac.id 
+          JOIN platforms p ON ac.platform_id = p.id 
+          WHERE ac.user_id = ?
+        `;
+        const countParams: any[] = [userId];
+        
+        if (search) {
+          countQuery += ` AND a.title LIKE ?`;
+          countParams.push(`%${search}%`);
+        }
+        
+        if (platform) {
+          countQuery += ` AND p.name = ?`;
+          countParams.push(platform);
+        }
+        
+        const total = await env.DB.prepare(countQuery).bind(...countParams).first('total');
+
+        return new Response(JSON.stringify({
+          articles: results.results,
+          total
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // 7.0.3 GET /api/user/stats - 用户级统计数据
+    if (url.pathname === '/api/user/stats' && request.method === 'GET') {
+       try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+
+        const totalArticles = await env.DB.prepare('SELECT COUNT(*) as count FROM articles a JOIN accounts ac ON a.account_id = ac.id WHERE ac.user_id = ?').bind(userId).first('count');
+        const totalReads = await env.DB.prepare('SELECT SUM(s.read_count) as count FROM article_stats s JOIN articles a ON s.article_id = a.id JOIN accounts ac ON a.account_id = ac.id WHERE ac.user_id = ?').bind(userId).first('count') || 0;
+        const totalLikes = await env.DB.prepare('SELECT SUM(s.like_count) as count FROM article_stats s JOIN articles a ON s.article_id = a.id JOIN accounts ac ON a.account_id = ac.id WHERE ac.user_id = ?').bind(userId).first('count') || 0;
+        const totalComments = await env.DB.prepare('SELECT SUM(s.comment_count) as count FROM article_stats s JOIN articles a ON s.article_id = a.id JOIN accounts ac ON a.account_id = ac.id WHERE ac.user_id = ?').bind(userId).first('count') || 0;
+        const totalShares = await env.DB.prepare('SELECT SUM(s.share_count) as count FROM article_stats s JOIN articles a ON s.article_id = a.id JOIN accounts ac ON a.account_id = ac.id WHERE ac.user_id = ?').bind(userId).first('count') || 0;
+        const totalCollects = await env.DB.prepare('SELECT SUM(s.collect_count) as count FROM article_stats s JOIN articles a ON s.article_id = a.id JOIN accounts ac ON a.account_id = ac.id WHERE ac.user_id = ?').bind(userId).first('count') || 0;
+
+        return new Response(JSON.stringify({
+            totalArticles,
+            totalReads,
+            totalLikes,
+            totalComments,
+            totalShares,
+            totalCollects
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+       } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+       }
+    }
+
     // 7.0.3 GET /api/admin/users - 用户列表与分页
     if (url.pathname === '/api/admin/users' && request.method === 'GET') {
       try {
@@ -3020,9 +3207,9 @@ export default {
           return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
         }
 
-        const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(userId).first();
-        if (!user || !ADMIN_EMAILS.includes(user.email as string)) {
-          return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+        if (!admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden: System Admin access required' }), { status: 403, headers: corsHeaders });
         }
 
         const limit = parseInt(url.searchParams.get('limit') || '10');
@@ -3076,9 +3263,9 @@ export default {
           return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
         }
 
-        const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(userId).first();
-        if (!user || !ADMIN_EMAILS.includes(user.email as string)) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Admin access required' }), { status: 403, headers: corsHeaders });
+        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+        if (!admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden: System Admin access required' }), { status: 403, headers: corsHeaders });
         }
 
         const totalUsers = await env.DB.prepare('SELECT COUNT(*) as count FROM users').first('count');
@@ -3149,8 +3336,8 @@ export default {
       }
     }
 
-    // 7.0.1 GET /system - 系统管理后台页面
-    if (url.pathname === '/system' && request.method === 'GET') {
+    // 7.0.1 GET /admin - 系统管理后台页面
+    if (url.pathname === '/admin' && request.method === 'GET') {
       const ASSETS_BASE = effectiveOrigin + '/assets/memoraid';
       const html = `
 <!DOCTYPE html>
@@ -3298,7 +3485,7 @@ export default {
 <body>
     <div class="container">
         <header class="header">
-            <a href="/system" class="logo">
+            <a href="/admin" class="logo">
                 <img src="${ASSETS_BASE}/icon-128.png" alt="Logo">
                 Memoraid System
             </a>
@@ -3459,12 +3646,12 @@ export default {
         let userSortOrder = 'desc';
         
         async function init() {
-            const token = localStorage.getItem('memoraid_token');
+            const token = localStorage.getItem('memoraid_admin_token');
             if (!token) {
                 showLogin();
                 return;
             }
-            if (localStorage.getItem('memoraid_must_change_pwd') === 'true') {
+            if (localStorage.getItem('memoraid_admin_must_change_pwd') === 'true') {
                 showChangePassword();
                 return;
             }
@@ -3482,12 +3669,14 @@ export default {
 
         async function fetchStats() {
             try {
-                const token = localStorage.getItem('memoraid_token');
+                const token = localStorage.getItem('memoraid_admin_token');
                 const headers = { 'Authorization': 'Bearer ' + token };
-                const response = await fetch('/api/admin/system-stats', { headers });
+                const response = await fetch('/api/admin/system-stats', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
                 
                 if (response.status === 401 || response.status === 403) {
-                    localStorage.removeItem('memoraid_token');
+                    localStorage.removeItem('memoraid_admin_token');
                     showLogin();
                     return;
                 }
@@ -3511,7 +3700,7 @@ export default {
             if (reset) usersOffset = 0;
 
             try {
-                const token = localStorage.getItem('memoraid_token');
+                const token = localStorage.getItem('memoraid_admin_token');
                 const params = new URLSearchParams({
                     limit: usersLimit.toString(),
                     offset: usersOffset.toString(),
@@ -3547,7 +3736,7 @@ export default {
             }
 
             try {
-                const token = localStorage.getItem('memoraid_token');
+                const token = localStorage.getItem('memoraid_admin_token');
                 const q = document.getElementById('searchInput').value;
                 const platform = document.getElementById('platformFilter').value;
                 
@@ -3781,7 +3970,7 @@ export default {
             btn.disabled = true; btn.textContent = '登录中...'; errorDiv.style.display = 'none';
 
             try {
-                const res = await fetch('/auth/login/password', {
+                const res = await fetch('/auth/admin/login', {
                     method: 'POST',
                     body: JSON.stringify({
                         username: document.getElementById('username').value,
@@ -3792,12 +3981,12 @@ export default {
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || '登录失败');
                 
-                localStorage.setItem('memoraid_token', data.token);
+                localStorage.setItem('memoraid_admin_token', data.token);
                 if (data.user.mustChangePassword) {
-                    localStorage.setItem('memoraid_must_change_pwd', 'true');
+                    localStorage.setItem('memoraid_admin_must_change_pwd', 'true');
                     showChangePassword();
                 } else {
-                    localStorage.removeItem('memoraid_must_change_pwd');
+                    localStorage.removeItem('memoraid_admin_must_change_pwd');
                     document.getElementById('loginModal').style.display = 'none';
                     document.getElementById('loading').style.display = 'block';
                     init();
@@ -3824,8 +4013,8 @@ export default {
             btn.disabled = true; btn.textContent = '提交中...'; errorDiv.style.display = 'none';
 
             try {
-                const token = localStorage.getItem('memoraid_token');
-                const res = await fetch('/auth/change-password', {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch('/auth/admin/change-password', {
                     method: 'POST',
                     headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ oldPassword: oldPwd, newPassword: newPwd })
@@ -3834,7 +4023,7 @@ export default {
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || '修改失败');
                 
-                localStorage.removeItem('memoraid_must_change_pwd');
+                localStorage.removeItem('memoraid_admin_must_change_pwd');
                 alert('密码修改成功');
                 document.getElementById('changePwdModal').style.display = 'none';
                 document.getElementById('loading').style.display = 'block';
@@ -3847,8 +4036,8 @@ export default {
         });
 
         document.getElementById('logoutBtn').addEventListener('click', () => {
-            localStorage.removeItem('memoraid_token');
-            localStorage.removeItem('memoraid_must_change_pwd');
+            localStorage.removeItem('memoraid_admin_token');
+            localStorage.removeItem('memoraid_admin_must_change_pwd');
             window.location.reload();
         });
 
@@ -3859,8 +4048,8 @@ export default {
       return new Response(html, { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
     }
 
-    // 7.1 GET /admin - 文章管理后台页面 (深色主题，需要登录)
-    if (url.pathname === '/admin' && request.method === 'GET') {
+    // 7.1 GET /user - 内容数据中心 (深色主题，需要登录)
+    if (url.pathname === '/user' && request.method === 'GET') {
       const ASSETS_BASE = effectiveOrigin + '/assets/memoraid';
       const html = `
 <!DOCTYPE html>
@@ -4485,10 +4674,10 @@ export default {
                 
                 // 并行加载所有数据
                 const [statsRes, platformsRes, accountsRes, articlesRes] = await Promise.all([
-                    fetch(API_BASE + '/api/articles/stats' + query, { headers }),
+                    fetch(API_BASE + '/api/user/stats' + query, { headers }),
                     fetch(API_BASE + '/api/platforms', { headers }),
                     fetch(API_BASE + '/api/accounts' + query, { headers }),
-                    fetch(API_BASE + '/api/articles' + query, { headers })
+                    fetch(API_BASE + '/api/user/articles' + query, { headers })
                 ]);
                 
                 const [stats, platforms, accounts, articles] = await Promise.all([

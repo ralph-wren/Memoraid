@@ -926,7 +926,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
         </div>
         <div className="flex gap-1">
           <button
-            onClick={() => window.open('http://memoraid.dpdns.org/admin', '_blank')}
+            onClick={() => window.open('http://memoraid.dpdns.org/user', '_blank')}
             className="p-2 hover:bg-gray-100 rounded-full text-gray-600"
             title="文章数据统计"
           >
