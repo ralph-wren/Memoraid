@@ -3376,7 +3376,6 @@ export default {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Memoraid · 系统管理后台</title>
     <link rel="icon" type="image/png" href="${ASSETS_BASE}/icon-128.png">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg: #ffffff;
@@ -3498,8 +3497,17 @@ export default {
         .btn-danger { background: #e11d48; color: white; }
         .btn-success { background: #059669; color: white; }
 
-        .loading { text-align: center; padding: 40px; color: var(--text-muted); }
-        .error-msg { color: #f43f5e; padding: 20px; text-align: center; background: rgba(244, 63, 94, 0.1); border-radius: 8px; margin: 20px 0; }
+        /* Loading & Error - Centered */
+        .loading { 
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            text-align: center; color: var(--text-muted); z-index: 100;
+        }
+        .error-msg { 
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #f43f5e; padding: 20px; text-align: center; 
+            background: rgba(244, 63, 94, 0.1); border-radius: 8px; 
+            z-index: 100; max-width: 80%;
+        }
         
         /* Modal Styles */
         .modal-overlay {
@@ -3541,6 +3549,9 @@ export default {
     </style>
 </head>
 <body>
+    <div id="loading" class="loading">正在加载系统数据...</div>
+    <div id="globalError" class="error-msg" style="display:none"></div>
+
     <div class="layout" id="mainLayout" style="display:none">
         <aside class="sidebar">
             <div class="sidebar-header">
@@ -3570,7 +3581,6 @@ export default {
         
         <main class="main-content">
             <div class="content-body">
-                <div id="loading" class="loading">正在加载系统数据...</div>
                 <div id="error" style="display:none" class="error-msg"></div>
 
                 <div id="tab-dashboard" class="tab-content" style="display:none">
@@ -3707,6 +3717,7 @@ export default {
             </div>
         </div>
     </main>
+    </div> <!-- End mainLayout -->
 
     <!-- Login Modal -->
     <div id="loginModal" class="modal-overlay" style="display:none">
@@ -3751,6 +3762,28 @@ export default {
     </div>
 
     <script>
+        console.log('Admin script loaded');
+        
+        // Simple logger wrapper
+        function log(msg) {
+            console.log('[Admin]', msg);
+        }
+
+        window.onerror = function(message, source, lineno, colno, error) {
+            log('ERROR: ' + message);
+            const errorDiv = document.getElementById('globalError');
+            if (errorDiv) {
+                errorDiv.style.display = 'block';
+                errorDiv.innerHTML = '<strong>系统错误:</strong><br>' + message;
+                const loadingEl = document.getElementById('loading');
+                if (loadingEl) loadingEl.style.display = 'none';
+            }
+        };
+
+        window.addEventListener('unhandledrejection', function(event) {
+            log('PROMISE ERROR: ' + event.reason);
+        });
+
         const API_BASE = '';
         // Pagination state for Articles
         let articlesOffset = 0;
@@ -3766,28 +3799,6 @@ export default {
         let userSort = 'created_at';
         let userSortOrder = 'desc';
         
-        async function init() {
-            const token = localStorage.getItem('memoraid_admin_token');
-            if (!token) {
-                showLogin();
-                return;
-            }
-            if (localStorage.getItem('memoraid_admin_must_change_pwd') === 'true') {
-                showChangePassword();
-                return;
-            }
-            
-            // Set up event listeners
-            // document.getElementById('userSort').addEventListener('change', (e) => {
-            //     userSort = e.target.value;
-            //     fetchUsers(true);
-            // });
-
-            await fetchStats();
-            await fetchUsers(true);
-            await fetchArticles(true);
-        }
-
         async function fetchStats() {
             try {
                 const token = localStorage.getItem('memoraid_admin_token');
@@ -3809,8 +3820,8 @@ export default {
                 document.getElementById('logoutBtn').style.display = 'block';
             } catch (e) {
                 document.getElementById('loading').style.display = 'none';
-                document.getElementById('error').style.display = 'block';
-                document.getElementById('error').textContent = '加载失败: ' + e.message;
+                document.getElementById('globalError').style.display = 'block';
+                document.getElementById('globalError').textContent = '加载失败: ' + e.message;
             }
         }
 
@@ -3911,6 +3922,7 @@ export default {
         }
 
         function renderDashboard(data) {
+            log('renderDashboard called');
             document.getElementById('loading').style.display = 'none';
             document.getElementById('mainLayout').style.display = 'flex';
             
@@ -4073,9 +4085,19 @@ export default {
 
         // Auth Functions
         function showLogin() {
-            document.getElementById('loading').style.display = 'none';
-            document.getElementById('mainLayout').style.display = 'none';
-            document.getElementById('loginModal').style.display = 'flex';
+            log('showLogin called');
+            const loading = document.getElementById('loading');
+            const main = document.getElementById('mainLayout');
+            const login = document.getElementById('loginModal');
+            
+            if (loading) loading.style.display = 'none';
+            if (main) main.style.display = 'none';
+            if (login) {
+                login.style.display = 'flex';
+                log('loginModal display set to flex');
+            } else {
+                log('ERROR: loginModal not found!');
+            }
         }
 
         function showChangePassword() {
@@ -4260,7 +4282,8 @@ export default {
         }
         
         async function auditOrder(id, action) {
-            if (!confirm(action === 'approve' ? '确认通过该订单？用户将获得额度。' : '确认拒绝该订单？')) return;
+            // Removed confirmation dialog as requested
+            // if (!confirm(action === 'approve' ? '确认通过该订单？用户将获得额度。' : '确认拒绝该订单？')) return;
             
             try {
                 const token = localStorage.getItem('memoraid_admin_token');
@@ -4274,7 +4297,7 @@ export default {
                 });
                 
                 if (res.ok) {
-                    alert('操作成功');
+                    // alert('操作成功');
                     fetchOrders();
                 } else {
                     const data = await res.json();
@@ -4286,16 +4309,20 @@ export default {
         }
 
         async function init() {
+            log('init started');
             const token = localStorage.getItem('memoraid_admin_token');
             if (!token) {
+                log('No token found, showing login');
                 showLogin();
                 return;
             }
             if (localStorage.getItem('memoraid_admin_must_change_pwd') === 'true') {
+                log('Must change password');
                 showChangePassword();
                 return;
             }
             
+            log('Token found, fetching stats');
             document.getElementById('loading').style.display = 'block';
             document.getElementById('mainLayout').style.display = 'flex';
             
@@ -4307,9 +4334,16 @@ export default {
             // Setup routing
             const hash = window.location.hash.slice(1) || 'dashboard';
             switchTab(hash);
+            log('init completed');
         }
         
-        init();
+        init().catch(e => {
+            console.error(e);
+            log('INIT ERROR: ' + e.message);
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('globalError').style.display = 'block';
+            document.getElementById('globalError').textContent = '初始化失败: ' + e.message;
+        });
     </script>
 </body>
 </html>`;
@@ -5151,7 +5185,7 @@ export default {
                         <p style="font-size: 0.8rem; margin-top: 4px; color: var(--text-muted);">（点击订单号可复制）</p>
                     </div>
                     
-                    <button class="btn-confirm-pay" onclick="confirmPayment()">我已支付</button>
+                    <button class="btn-confirm-pay" onclick="confirmPayment(this)">我已支付</button>
                     <div style="text-align: center; margin-top: 12px;">
                         <span onclick="resetPayment()" style="font-size: 0.8rem; color: var(--text-muted); cursor: pointer; text-decoration: underline;">重新选择</span>
                     </div>
@@ -5483,9 +5517,16 @@ export default {
             }
         }
 
-        function confirmPayment() {
-            alert('订单已提交！管理员将在审核后为您充值额度。请留意额度变化。');
-            closeRechargeModal();
+        function confirmPayment(btn) {
+            btn.textContent = '已提交，请留意额度变化';
+            btn.disabled = true;
+            btn.style.opacity = '0.7';
+            setTimeout(() => {
+                closeRechargeModal();
+                btn.textContent = '我已完成支付';
+                btn.disabled = false;
+                btn.style.opacity = '1';
+            }, 2000);
         }
 
         // 初始化：先检查登录，再加载数据
