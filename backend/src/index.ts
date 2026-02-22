@@ -3244,8 +3244,10 @@ export default {
         
         let query = `
           SELECT u.id, u.email, u.provider, u.created_at, MAX(a.publish_time) as last_active,
+          q.paid_quota_remaining,
           (SELECT COUNT(*) FROM ai_usage_logs WHERE user_id = u.id OR anonymous_id = u.id) as ai_usage
           FROM users u
+          LEFT JOIN user_quotas q ON u.id = q.user_id
           LEFT JOIN accounts ac ON u.id = ac.user_id
           LEFT JOIN articles a ON ac.id = a.account_id
           GROUP BY u.id
