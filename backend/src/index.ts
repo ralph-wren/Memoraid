@@ -1473,6 +1473,10 @@ export default {
             font-weight: 600;
             cursor: pointer;
             margin-top: 16px;
+            white-space: normal;
+            line-height: 1.4;
+            height: auto;
+            min-height: 44px;
         }
         .btn-confirm-pay:hover { opacity: 0.9; }
     </style>
@@ -3347,6 +3351,12 @@ export default {
           WHERE a.publish_time >= ?
         `).bind(startOfDay).first('count');
 
+        // Recharge metrics (UTC+8)
+        const todayRechargeAmount = await env.DB.prepare('SELECT SUM(amount) as sum FROM payment_orders WHERE paid_at >= ? AND status = ?').bind(startOfDay, 'paid').first('sum') || 0;
+        const todayRechargeCount = await env.DB.prepare('SELECT COUNT(*) as count FROM payment_orders WHERE paid_at >= ? AND status = ?').bind(startOfDay, 'paid').first('count') || 0;
+        const totalRechargeAmount = await env.DB.prepare('SELECT SUM(amount) as sum FROM payment_orders WHERE status = ?').bind('paid').first('sum') || 0;
+        const pendingOrderCount = await env.DB.prepare('SELECT COUNT(*) as count FROM payment_orders WHERE status = ?').bind('pending').first('count') || 0;
+
         return new Response(JSON.stringify({
           overview: {
             users: totalUsers,
@@ -3354,7 +3364,11 @@ export default {
             accounts: totalAccounts,
             activeUsersToday,
             newUsersToday,
-            newArticlesToday
+            newArticlesToday,
+            todayRechargeAmount,
+            todayRechargeCount,
+            totalRechargeAmount,
+            pendingOrderCount
           },
           platforms: platformStats.results,
           recentUsers: recentUsers.results,
@@ -3598,6 +3612,22 @@ export default {
                 <div class="stat-card">
                     <div class="stat-label">今日生成文章</div>
                     <div class="stat-value" id="newArticlesToday">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">今日充值金额</div>
+                    <div class="stat-value" id="todayRechargeAmount">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">今日充值笔数</div>
+                    <div class="stat-value" id="todayRechargeCount">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">累计充值金额</div>
+                    <div class="stat-value" id="totalRechargeAmount">-</div>
+                </div>
+                <div class="stat-card" style="cursor:pointer" onclick="goToPendingOrders()">
+                    <div class="stat-label">待审核订单</div>
+                    <div class="stat-value" id="pendingOrderCount" style="color:#d97706">-</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-label">总用户数</div>
@@ -3935,6 +3965,10 @@ export default {
             document.getElementById('activeUsersToday').textContent = data.overview?.activeUsersToday || '0';
             document.getElementById('newUsersToday').textContent = data.overview?.newUsersToday || '0';
             document.getElementById('newArticlesToday').textContent = data.overview?.newArticlesToday || '0';
+            document.getElementById('todayRechargeAmount').textContent = '¥' + (data.overview?.todayRechargeAmount || 0).toFixed(2);
+            document.getElementById('todayRechargeCount').textContent = data.overview?.todayRechargeCount || '0';
+            document.getElementById('totalRechargeAmount').textContent = '¥' + (data.overview?.totalRechargeAmount || 0).toFixed(2);
+            document.getElementById('pendingOrderCount').textContent = data.overview?.pendingOrderCount || '0';
             
             // Platforms
             const platformFilter = document.getElementById('platformFilter');
@@ -4057,6 +4091,13 @@ export default {
             document.getElementById('searchInput').scrollIntoView({ behavior: 'smooth', block: 'center' });
             // Highlight active platform card
             document.querySelectorAll('.platform-item').forEach(el => el.classList.remove('active'));
+        }
+
+        function goToPendingOrders() {
+            const filter = document.getElementById('orderStatusFilter');
+            if (filter) filter.value = 'pending';
+            switchTab('orders');
+            fetchOrders(true);
         }
 
         function filterByUser(email) {
@@ -4967,6 +5008,39 @@ export default {
             border-color: var(--accent);
             background: var(--bg-subtle);
         }
+        .plan-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .plan-card {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .plan-card:hover {
+            border-color: var(--accent);
+            background: rgba(37,99,235,0.05);
+        }
+        .plan-card.active {
+            border-color: var(--accent);
+            background: rgba(37,99,235,0.1);
+            box-shadow: 0 0 0 1px var(--accent);
+        }
+        .plan-amount {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+        .plan-quota {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
         .qr-img {
             width: 100%; aspect-ratio: 1; object-fit: contain;
             border-radius: 8px; margin-bottom: 12px;
@@ -5007,6 +5081,10 @@ export default {
             font-weight: 600;
             cursor: pointer;
             margin-top: 16px;
+            white-space: normal;
+            line-height: 1.4;
+            height: auto;
+            min-height: 44px;
         }
         .btn-confirm-pay:hover { opacity: 0.9; }
     </style>
@@ -5154,12 +5232,32 @@ export default {
                 </div>
             </div>
             <div class="modal-body">
-                <div class="pay-rate">
-                    当前汇率：<strong>10元 = 50次</strong>
+                <!-- 步骤1：选择充值金额 -->
+                <div id="payStep0" style="display:block;">
+                    <div style="margin-bottom:16px;font-weight:600;color:var(--text)">选择充值套餐</div>
+                    <div class="plan-grid">
+                        <div class="plan-card active" onclick="selectPlan(10, this)">
+                            <div class="plan-amount">¥10</div>
+                            <div class="plan-quota">50次</div>
+                        </div>
+                        <div class="plan-card" onclick="selectPlan(30, this)">
+                            <div class="plan-amount">¥30</div>
+                            <div class="plan-quota">150次</div>
+                        </div>
+                        <div class="plan-card" onclick="selectPlan(50, this)">
+                            <div class="plan-amount">¥50</div>
+                            <div class="plan-quota">250次</div>
+                        </div>
+                    </div>
+                    <button class="btn-confirm-pay" style="margin-top:24px" onclick="goToPayMethod()">下一步</button>
                 </div>
-                
-                <!-- 步骤1：选择支付方式 -->
-                <div class="pay-step-1" id="payStep1">
+
+                <!-- 步骤2：选择支付方式 -->
+                <div class="pay-step-1" id="payStep1" style="display:none;">
+                    <div style="margin-bottom:16px;font-weight:600;color:var(--text);display:flex;align-items:center;">
+                        <span onclick="resetPayment()" style="cursor:pointer;margin-right:8px;opacity:0.6">←</span>
+                        选择支付方式
+                    </div>
                     <div class="pay-methods">
                         <div class="pay-method-card" onclick="createOrder('wechat')">
                             <img src="https://imgcdn.dpdns.org/memoraid/pay_wechat.jpg" alt="微信支付" class="qr-img">
@@ -5172,8 +5270,8 @@ export default {
                     </div>
                 </div>
 
-                <!-- 步骤2：扫码支付 -->
-                <div class="pay-step-2" id="payStep2">
+                <!-- 步骤3：扫码支付 -->
+                <div class="pay-step-2" id="payStep2" style="display:none;">
                     <div style="text-align: center; margin-bottom: 12px; font-weight: 600;">
                         请使用<span id="payMethodName"></span>扫码支付
                     </div>
@@ -5203,6 +5301,7 @@ export default {
         const API_BASE = '';
         let currentPlatform = 'all';
         let userEmail = '';
+        let selectedAmount = 10;
         
         // 检查登录状态
         async function checkAuth() {
@@ -5443,9 +5542,21 @@ export default {
         }
 
         function resetPayment() {
-            document.getElementById('payStep1').style.display = 'block';
+            document.getElementById('payStep0').style.display = 'block';
+            document.getElementById('payStep1').style.display = 'none';
             document.getElementById('payStep2').style.display = 'none';
             document.getElementById('payFooter').style.display = 'block';
+        }
+
+        function selectPlan(amount, el) {
+            selectedAmount = amount;
+            document.querySelectorAll('.plan-card').forEach(c => c.classList.remove('active'));
+            el.classList.add('active');
+        }
+
+        function goToPayMethod() {
+            document.getElementById('payStep0').style.display = 'none';
+            document.getElementById('payStep1').style.display = 'block';
         }
 
         async function createOrder(type) {
@@ -5469,7 +5580,7 @@ export default {
                         'Authorization': 'Bearer ' + token,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ paymentMethod: type })
+                    body: JSON.stringify({ paymentMethod: type, amount: selectedAmount })
                 });
 
                 const data = await res.json();
@@ -5491,6 +5602,10 @@ export default {
                 document.getElementById('payMethodName').textContent = type === 'wechat' ? '微信' : '支付宝';
                 document.getElementById('payQrCode').src = imgUrl;
                 document.getElementById('orderIdDisplay').textContent = data.orderId;
+                
+                document.getElementById('payStep1').style.display = 'none';
+                document.getElementById('payStep2').style.display = 'block';
+                document.getElementById('payFooter').style.display = 'none';
                 
                 // 点击复制订单号
                 const orderDisplay = document.getElementById('orderIdDisplay');
@@ -5520,7 +5635,7 @@ export default {
         }
 
         function confirmPayment(btn) {
-            btn.textContent = '已提交，请留意额度变化';
+            btn.textContent = '已提交！管理员将在审核后为您充值额度。请留意额度变化。';
             btn.disabled = true;
             btn.style.opacity = '0.7';
             setTimeout(() => {
@@ -5528,7 +5643,7 @@ export default {
                 btn.textContent = '我已完成支付';
                 btn.disabled = false;
                 btn.style.opacity = '1';
-            }, 2000);
+            }, 3000);
         }
 
         // 初始化：先检查登录，再加载数据
@@ -5714,15 +5829,17 @@ export default {
         }
         
         const body = await request.json() as any;
-        const { paymentMethod } = body; // 'wechat' | 'alipay'
+        const { paymentMethod, amount: reqAmount } = body; // 'wechat' | 'alipay', amount
         
         if (!paymentMethod) {
           return new Response(JSON.stringify({ error: '请选择支付方式' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
         const orderId = crypto.randomUUID();
-        const amount = 10;
-        const quota = 50;
+        const amount = reqAmount || 10;
+        let quota = 50;
+        if (amount === 30) quota = 150;
+        if (amount === 50) quota = 250;
         
         await env.DB.prepare(
           'INSERT INTO payment_orders (id, user_id, amount, quota_amount, status, payment_url) VALUES (?, ?, ?, ?, ?, ?)'
