@@ -2769,6 +2769,41 @@ export default {
 
         const { platform, account, articles } = body;
 
+        // 【新增】检查用户额度 - 每篇文章消耗1次额度
+        const user = await env.DB.prepare('SELECT provider FROM users WHERE id = ?').bind(userId).first();
+        const isAnonymous = user?.provider === 'anonymous';
+        const freeLimit = isAnonymous ? 5 : 20;
+        
+        // 查询已使用次数（从ai_usage_logs表）
+        const usageCount = await env.DB.prepare(
+          'SELECT COUNT(*) as count FROM ai_usage_logs WHERE user_id = ?'
+        ).bind(userId).first('count') as number || 0;
+        
+        // 查询付费额度
+        const quotaRow = await env.DB.prepare(
+          'SELECT paid_quota_remaining FROM user_quotas WHERE user_id = ?'
+        ).bind(userId).first();
+        const paidQuota = quotaRow?.paid_quota_remaining || 0;
+        
+        // 计算剩余额度
+        const freeRemaining = Math.max(0, freeLimit - usageCount);
+        const totalRemaining = freeRemaining + paidQuota;
+        
+        // 检查是否有足够额度（每篇文章需要1次额度）
+        const articlesCount = articles.length;
+        if (totalRemaining < articlesCount) {
+          return new Response(JSON.stringify({ 
+            error: 'Insufficient quota',
+            message: `额度不足。需要 ${articlesCount} 次，剩余 ${totalRemaining} 次`,
+            quota: {
+              free_remaining: freeRemaining,
+              paid_remaining: paidQuota,
+              total_remaining: totalRemaining,
+              required: articlesCount
+            }
+          }), { status: 403, headers: corsHeaders });
+        }
+
         // 1. Get or Create Platform
         let platformId = await env.DB.prepare('SELECT id FROM platforms WHERE name = ?').bind(platform).first('id');
         if (!platformId) {
@@ -2816,8 +2851,14 @@ export default {
         }
 
         // 3. Process Articles
+        let newArticlesCount = 0; // 记录新增文章数量
         for (const article of articles) {
             const { id: articleId, title, summary, cover, url: articleUrl, publishTime, status, extra } = article;
+            
+            // 检查文章是否已存在
+            const existingArticle = await env.DB.prepare(
+                'SELECT id FROM articles WHERE account_id = ? AND article_id = ?'
+            ).bind(accountDbId, articleId).first();
             
             await env.DB.prepare(
                 `INSERT INTO articles (account_id, article_id, title, content_summary, cover_image, article_url, publish_time, status, extra_info, updated_at)
@@ -2843,9 +2884,47 @@ export default {
                 JSON.stringify(extra || {}),
                 Math.floor(Date.now() / 1000)
             ).run();
+            
+            // 只有新文章才计数（用于扣除额度）
+            if (!existingArticle) {
+                newArticlesCount++;
+            }
         }
 
-        return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        // 【新增】扣除额度 - 只为新文章扣除
+        if (newArticlesCount > 0) {
+            // 优先扣除付费额度，再扣除免费额度
+            if (paidQuota > 0) {
+                const deductFromPaid = Math.min(paidQuota, newArticlesCount);
+                await env.DB.prepare(
+                    'UPDATE user_quotas SET paid_quota_remaining = paid_quota_remaining - ? WHERE user_id = ?'
+                ).bind(deductFromPaid, userId).run();
+                
+                const remainingToDeduct = newArticlesCount - deductFromPaid;
+                if (remainingToDeduct > 0) {
+                    // 记录免费额度使用
+                    for (let i = 0; i < remainingToDeduct; i++) {
+                        await env.DB.prepare(
+                            'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
+                        ).bind(userId, 'article-generation').run();
+                    }
+                }
+            } else {
+                // 全部从免费额度扣除
+                for (let i = 0; i < newArticlesCount; i++) {
+                    await env.DB.prepare(
+                        'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
+                    ).bind(userId, 'article-generation').run();
+                }
+            }
+        }
+
+        return new Response(JSON.stringify({ 
+            success: true,
+            articles_processed: articles.length,
+            new_articles: newArticlesCount,
+            quota_used: newArticlesCount
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
@@ -4049,11 +4128,11 @@ export default {
             const html = users.map(u => {
                 const limit = (u.provider === 'anonymous') ? 5 : 20;
                 return \`
-                <tr onclick="filterByUser('\${u.email}')" style="cursor:pointer" title="筛选此用户的文章">
-                    <td>
+                <tr style="cursor:pointer">
+                    <td onclick="goToUserArticles('\${u.email}')" title="点击查看此用户的所有文章">
                         <div class="user-cell">
                             <div class="avatar">\${u.email[0].toUpperCase()}</div>
-                            <div class="user-email">\${u.email}</div>
+                            <div class="user-email" style="color:var(--accent-secondary);text-decoration:underline">\${u.email}</div>
                         </div>
                     </td>
                     <td>\${u.provider}</td>
@@ -4157,6 +4236,18 @@ export default {
             document.getElementById('searchInput').value = email;
             fetchArticles(true);
             document.getElementById('searchInput').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        // 新增：从用户列表跳转到文章管理并筛选该用户的文章
+        function goToUserArticles(email) {
+            // 切换到文章管理标签页
+            switchTab('articles');
+            // 设置搜索框为用户邮箱
+            document.getElementById('searchInput').value = email;
+            // 重置平台筛选
+            document.getElementById('platformFilter').value = '';
+            // 获取文章列表
+            fetchArticles(true);
         }
 
         function resetFilters() {
@@ -6147,6 +6238,17 @@ export default {
           return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
+        // 获取用户信息
+        const user = await env.DB.prepare('SELECT provider FROM users WHERE id = ?').bind(userId).first();
+        const isAnonymous = user?.provider === 'anonymous';
+        const freeLimit = isAnonymous ? 5 : 20;
+        
+        // 获取已使用的免费次数
+        const usageCount = await env.DB.prepare(
+          'SELECT COUNT(*) as count FROM ai_usage_logs WHERE user_id = ?'
+        ).bind(userId).first('count') as number || 0;
+        
+        // 获取付费额度
         let quota = await env.DB.prepare('SELECT * FROM user_quotas WHERE user_id = ?').bind(userId).first();
         
         if (!quota) {
@@ -6154,8 +6256,20 @@ export default {
             await env.DB.prepare('INSERT OR IGNORE INTO user_quotas (user_id) VALUES (?)').bind(userId).run();
             quota = await env.DB.prepare('SELECT * FROM user_quotas WHERE user_id = ?').bind(userId).first();
         }
+        
+        const paidQuota = quota?.paid_quota_remaining || 0;
+        const freeRemaining = Math.max(0, freeLimit - usageCount);
+        const totalRemaining = freeRemaining + paidQuota;
 
-        return new Response(JSON.stringify(quota), {
+        return new Response(JSON.stringify({
+          ...quota,
+          free_limit: freeLimit,
+          free_used: usageCount,
+          free_remaining: freeRemaining,
+          paid_remaining: paidQuota,
+          total_remaining: totalRemaining,
+          is_anonymous: isAnonymous
+        }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       } catch (e: any) {

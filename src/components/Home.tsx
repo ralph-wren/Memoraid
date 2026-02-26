@@ -70,6 +70,12 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
   const [currentSourceImages, setCurrentSourceImages] = useState<string[]>([]); // Track source images
   const [isPreview, setIsPreview] = useState(true);
   const [t, setT] = useState<Translation>(getTranslation('zh-CN')); // 翻译
+  // 额度信息状态
+  const [quota, setQuota] = useState<{
+    total_remaining: number;
+    free_remaining: number;
+    paid_remaining: number;
+  } | null>(null);
 
   const [userClosedResult, setUserClosedResult] = useState(false);
   const userClosedResultRef = React.useRef(userClosedResult);
@@ -83,13 +89,48 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     viewRef.current = view;
   }, [view]);
 
-  // 加载语言设置
+  // 加载语言设置和额度信息
   useEffect(() => {
     const loadLanguage = async () => {
       const settings = await getSettings();
       setT(getTranslation(settings.language || 'zh-CN'));
     };
     loadLanguage();
+    
+    // 加载用户额度信息
+    const loadQuota = async () => {
+      try {
+        const settings = await getSettings();
+        const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+        const token = settings.sync?.token;
+        const anonymousId = settings.anonymousId;
+        
+        // 构建请求头
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json'
+        };
+        
+        // 优先使用 token，如果没有则使用匿名 ID
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        } else if (anonymousId) {
+          headers['X-Anonymous-ID'] = anonymousId;
+        }
+        
+        const response = await fetch(`${backendUrl}/api/user/quota`, {
+          method: 'GET',
+          headers
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          setQuota(data);
+        }
+      } catch (error) {
+        console.error('Failed to load quota:', error);
+      }
+    };
+    loadQuota();
   }, []);
 
   // History State
@@ -960,6 +1001,40 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
         {view === 'home' && (
           <div className="w-full flex-1 flex flex-col min-h-0">
             <div className="text-center space-y-4 w-full flex flex-col items-center mb-8 shrink-0">
+
+              {/* 额度显示和充值按钮 */}
+              {quota !== null && (
+                <div className="w-full px-4 mb-2">
+                  <div className={`border rounded-lg px-4 py-3 text-sm flex items-center justify-between ${
+                    quota.total_remaining <= 0 
+                      ? 'bg-red-50 border-red-200' 
+                      : quota.total_remaining <= 5 
+                      ? 'bg-yellow-50 border-yellow-200' 
+                      : 'bg-blue-50 border-blue-200'
+                  }`}>
+                    <div className="flex flex-col items-start">
+                      <span className={`font-medium ${
+                        quota.total_remaining <= 0 
+                          ? 'text-red-700' 
+                          : quota.total_remaining <= 5 
+                          ? 'text-yellow-700' 
+                          : 'text-blue-700'
+                      }`}>
+                        剩余额度: {quota.total_remaining} 次
+                      </span>
+                      <span className="text-xs text-gray-500 mt-1">
+                        免费: {quota.free_remaining} | 付费: {quota.paid_remaining}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => window.open('https://memoraid.dpdns.org/user', '_blank')}
+                      className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-4 py-2 rounded-lg text-xs font-medium hover:from-blue-600 hover:to-purple-700 transition shadow-sm"
+                    >
+                      充值
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {errorMessage && (
                 <div className="w-full px-4 mb-2">
