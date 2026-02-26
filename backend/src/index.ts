@@ -1,3 +1,6 @@
+import nodemailer from 'nodemailer';
+import { D1Database, R2Bucket } from '@cloudflare/workers-types';
+
 export interface Env {
   DB: D1Database;
   R2: R2Bucket;
@@ -3257,14 +3260,17 @@ export default {
           GROUP BY u.id
         `;
         
-        const sortField = sort === 'last_active' ? 'last_active' : 'u.created_at';
+        let sortField = 'u.created_at';
+        if (sort === 'last_active') sortField = 'last_active';
+        if (sort === 'paid_quota') sortField = 'q.paid_quota_remaining';
+
         const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
-        const nullsOrder = sort === 'last_active' ? 'NULLS LAST' : '';
+        const nullsOrder = (sort === 'last_active' || sort === 'paid_quota') ? 'NULLS LAST' : '';
 
         query += ` ORDER BY ${sortField} ${sortOrder} ${nullsOrder}`;
         
         // Secondary sort for stable pagination
-        if (sort === 'last_active') {
+        if (sort !== 'created_at') {
              query += `, u.created_at DESC`;
         }
 
@@ -3589,6 +3595,9 @@ export default {
                 <a href="#orders" class="nav-item" id="nav-orders" onclick="switchTab('orders')">
                     <span>💰</span> 订单审核
                 </a>
+                <a href="#settings" class="nav-item" id="nav-settings" onclick="switchTab('settings')">
+                    <span>⚙️</span> 系统设置
+                </a>
             </nav>
             <div style="padding: 24px;">
                 <button id="logoutBtn" onclick="logout()" class="btn-sm btn-outline" style="width: 100%;">退出登录</button>
@@ -3663,7 +3672,7 @@ export default {
                                         <th>用户</th>
                                         <th>来源</th>
                                         <th>免费额度</th>
-                                        <th>付费额度</th>
+                                        <th class="sortable" id="sort-paid_quota" onclick="toggleSort('paid_quota')">付费额度</th>
                                         <th class="sortable active" id="sort-created_at" onclick="toggleSort('created_at')">注册时间</th>
                                         <th class="sortable" id="sort-last_active" onclick="toggleSort('last_active')">最后活跃</th>
                                     </tr>
@@ -3744,6 +3753,50 @@ export default {
                             <span id="orderPageInfo" style="font-size:0.875rem;color:var(--text-muted)"></span>
                             <button id="nextOrdersBtn" class="btn-sm btn-outline" disabled onclick="changeOrderPage(1)">下一页</button>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div id="tab-settings" class="tab-content" style="display:none">
+                <div class="section">
+                    <h2 class="section-title">⚙️ 系统设置</h2>
+                    <div class="card" style="padding: 24px; max-width: 600px;">
+                        <h3 style="margin-bottom: 20px; font-size: 1.1rem;">📧 邮件通知配置</h3>
+                        <form id="emailConfigForm" onsubmit="saveEmailConfig(event)">
+                            <div class="form-group">
+                                <label class="form-label">发件人邮箱 (Sender Email)</label>
+                                <input type="email" id="email_sender" class="form-input" style="width:100%" placeholder="noreply@yourdomain.com">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">收件人邮箱 (Admin Email)</label>
+                                <input type="email" id="email_recipient" class="form-input" style="width:100%" placeholder="admin@yourdomain.com">
+                                <p style="font-size:0.8rem;color:var(--text-muted);margin-top:4px">接收充值待审核通知的邮箱</p>
+                            </div>
+                            
+                            <h4 style="margin: 20px 0 12px; font-size: 1rem; color: var(--text-secondary);">SMTP 配置 (可选)</h4>
+                            <div class="form-group">
+                                <label class="form-label">SMTP 服务器地址</label>
+                                <input type="text" id="email_smtp_host" class="form-input" style="width:100%" placeholder="smtp.example.com">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">SMTP 端口</label>
+                                <input type="text" id="email_smtp_port" class="form-input" style="width:100%" placeholder="587">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">SMTP 用户名</label>
+                                <input type="text" id="email_smtp_user" class="form-input" style="width:100%" placeholder="user@example.com">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">SMTP 密码</label>
+                                <input type="password" id="email_smtp_pass" class="form-input" style="width:100%" placeholder="••••••••">
+                            </div>
+
+                            <div style="margin-top: 24px;">
+                                <button type="submit" class="btn-sm btn-success">保存配置</button>
+                                <button type="button" class="btn-sm btn-outline" onclick="testEmailConfig()" style="margin-left: 12px;">发送测试邮件</button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             </div>
@@ -4242,6 +4295,11 @@ export default {
                 fetchOrders(true);
                 window.ordersLoaded = true;
             }
+            
+            if (tabId === 'settings') {
+                fetchEmailConfig();
+            }
+            
             history.pushState(null, null, '#' + tabId);
         }
 
@@ -4348,6 +4406,95 @@ export default {
                 }
             } catch (e) {
                 alert('网络错误');
+            }
+        }
+
+        async function fetchEmailConfig() {
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch('/api/admin/config/email', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data) {
+                        document.getElementById('email_sender').value = data.email_sender || '';
+                        document.getElementById('email_recipient').value = data.email_recipient || '';
+                        document.getElementById('email_smtp_host').value = data.email_smtp_host || '';
+                        document.getElementById('email_smtp_port').value = data.email_smtp_port || '';
+                        document.getElementById('email_smtp_user').value = data.email_smtp_user || '';
+                        document.getElementById('email_smtp_pass').value = data.email_smtp_pass || '';
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch email config', e);
+            }
+        }
+
+        async function saveEmailConfig(e) {
+            e.preventDefault();
+            const btn = e.submitter;
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '保存中...';
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const body = {
+                    email_sender: document.getElementById('email_sender').value,
+                    email_recipient: document.getElementById('email_recipient').value,
+                    email_smtp_host: document.getElementById('email_smtp_host').value,
+                    email_smtp_port: document.getElementById('email_smtp_port').value,
+                    email_smtp_user: document.getElementById('email_smtp_user').value,
+                    email_smtp_pass: document.getElementById('email_smtp_pass').value
+                };
+                
+                const res = await fetch('/api/admin/config/email', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(body)
+                });
+                
+                if (res.ok) {
+                    alert('配置保存成功');
+                } else {
+                    alert('保存失败');
+                }
+            } catch (e) {
+                alert('网络错误');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        async function testEmailConfig() {
+            const btn = document.querySelector('button[onclick="testEmailConfig()"]');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '发送中...';
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch('/api/admin/config/email/test', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                const data = await res.json();
+                if (res.ok) {
+                    alert('测试邮件已发送，请检查收件箱 (包括垃圾邮件文件夹)');
+                } else {
+                    alert('测试失败: ' + (data.error || '未知错误'));
+                }
+            } catch (e) {
+                alert('网络错误: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
             }
         }
 
@@ -4498,6 +4645,163 @@ export default {
             });
         } catch (e: any) {
             return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+    }
+
+    // 7.0.6 GET /api/admin/config/email - 获取邮箱配置
+    if (url.pathname === '/api/admin/config/email' && request.method === 'GET') {
+        try {
+            const userId = getUserIdFromRequest(request);
+            if (!userId) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+
+            const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+            if (!admin) return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+
+            // Create table if not exists (lazy migration)
+            await env.DB.prepare(`
+                CREATE TABLE IF NOT EXISTS system_configs (
+                  key TEXT PRIMARY KEY,
+                  value TEXT NOT NULL,
+                  updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+                )
+            `).run();
+
+            const configs = await env.DB.prepare('SELECT * FROM system_configs WHERE key LIKE "email_%"').all();
+            const result: any = {};
+            configs.results.forEach((row: any) => {
+                result[row.key] = row.value;
+            });
+
+            return new Response(JSON.stringify(result), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    // 7.0.7 POST /api/admin/config/email - 保存邮箱配置
+    if (url.pathname === '/api/admin/config/email' && request.method === 'POST') {
+        try {
+            const userId = getUserIdFromRequest(request);
+            if (!userId) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+
+            const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+            if (!admin) return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+
+            const body = await request.json() as any;
+            const keys = ['email_smtp_host', 'email_smtp_port', 'email_smtp_user', 'email_smtp_pass', 'email_sender', 'email_recipient', 'email_sender_name'];
+            
+            const stmt = env.DB.prepare(`
+                INSERT INTO system_configs (key, value, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+            `);
+            
+            const batch = [];
+            for (const key of keys) {
+                if (body[key] !== undefined) {
+                    batch.push(stmt.bind(key, body[key], Math.floor(Date.now() / 1000)));
+                }
+            }
+            
+            if (batch.length > 0) await env.DB.batch(batch);
+
+            return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    // 7.0.7.1 POST /api/admin/config/email/test - 测试邮箱配置
+    if (url.pathname === '/api/admin/config/email/test' && request.method === 'POST') {
+        try {
+            const userId = getUserIdFromRequest(request);
+            if (!userId) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+
+            const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+            if (!admin) return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+
+            // Load config from DB
+            const configs = await env.DB.prepare('SELECT * FROM system_configs WHERE key LIKE "email_%"').all();
+            const configMap: any = {};
+            configs.results.forEach((row: any) => configMap[row.key] = row.value);
+
+            if (!configMap.email_recipient || !configMap.email_smtp_host) {
+                return new Response(JSON.stringify({ error: '请先保存完整的邮箱配置' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
+            const transporter = nodemailer.createTransport({
+                host: configMap.email_smtp_host,
+                port: parseInt(configMap.email_smtp_port || '465'),
+                secure: parseInt(configMap.email_smtp_port) === 465,
+                auth: {
+                    user: configMap.email_smtp_user,
+                    pass: configMap.email_smtp_pass,
+                },
+            });
+
+            await transporter.sendMail({
+                from: `"${configMap.email_sender_name || 'Memoraid'}" <${configMap.email_sender}>`,
+                to: configMap.email_recipient,
+                subject: '[Memoraid] 测试邮件',
+                text: '这是一封测试邮件，证明 SMTP 配置正确。',
+            });
+
+            return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        } catch (e: any) {
+            console.error('Test email failed:', e);
+            return new Response(JSON.stringify({ error: '发送失败: ' + e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    // 7.0.8 POST /api/payment/notify - 支付通知
+    if (url.pathname === '/api/payment/notify' && request.method === 'POST') {
+        try {
+            const userId = getUserIdFromRequest(request);
+            if (!userId) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+
+            const { orderId } = await request.json() as any;
+            
+            // Get order details
+            const order = await env.DB.prepare('SELECT * FROM payment_orders WHERE id = ?').bind(orderId).first();
+            if (!order) return new Response(JSON.stringify({ error: 'Order not found' }), { status: 404, headers: corsHeaders });
+            
+            // Get user email
+            const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(order.user_id).first();
+            const userEmail = user ? user.email : 'Unknown';
+
+            // Send Email
+            const configs = await env.DB.prepare('SELECT * FROM system_configs WHERE key LIKE "email_%"').all();
+            const configMap: any = {};
+            configs.results.forEach((row: any) => configMap[row.key] = row.value);
+
+            if (configMap.email_recipient && configMap.email_smtp_host) {
+                const subject = `[Memoraid] 待审核充值: ${order.amount}元`;
+                const content = `用户: ${userEmail}\n订单号: ${orderId}\n金额: ${order.amount}元\n额度: ${order.quota_amount}次\n时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}\n\n请前往管理后台审核。`;
+                
+                try {
+                    const transporter = nodemailer.createTransport({
+                        host: configMap.email_smtp_host,
+                        port: parseInt(configMap.email_smtp_port || '465'),
+                        secure: parseInt(configMap.email_smtp_port) === 465,
+                        auth: {
+                            user: configMap.email_smtp_user,
+                            pass: configMap.email_smtp_pass,
+                        },
+                    });
+
+                    await transporter.sendMail({
+                        from: `"${configMap.email_sender_name || 'Memoraid'}" <${configMap.email_sender}>`,
+                        to: configMap.email_recipient,
+                        subject: subject,
+                        text: content,
+                    });
+                } catch (err) {
+                    console.error('Email send failed:', err);
+                }
+            }
+
+            return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
         }
     }
 
@@ -5275,6 +5579,12 @@ export default {
                     <div style="text-align: center; margin-bottom: 12px; font-weight: 600;">
                         请使用<span id="payMethodName"></span>扫码支付
                     </div>
+                    
+                    <div style="margin-bottom: 16px; padding: 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; color: #92400e; font-size: 0.9rem; line-height: 1.5;">
+                        ⚠️ <strong>重要提示：</strong><br>
+                        付款时请务必在备注中填写下方的<span style="font-weight:700">订单号</span>或您的<span style="font-weight:700">用户名</span>，以便管理员快速审核入账。
+                    </div>
+
                     <div style="max-width: 200px; margin: 0 auto;">
                         <img id="payQrCode" src="" style="width: 100%; border-radius: 8px; border: 1px solid var(--border);">
                     </div>
@@ -5548,6 +5858,8 @@ export default {
             document.getElementById('payFooter').style.display = 'block';
         }
 
+        let currentOrderId = null;
+
         function selectPlan(amount, el) {
             selectedAmount = amount;
             document.querySelectorAll('.plan-card').forEach(c => c.classList.remove('active'));
@@ -5602,6 +5914,7 @@ export default {
                 document.getElementById('payMethodName').textContent = type === 'wechat' ? '微信' : '支付宝';
                 document.getElementById('payQrCode').src = imgUrl;
                 document.getElementById('orderIdDisplay').textContent = data.orderId;
+                currentOrderId = data.orderId;
                 
                 document.getElementById('payStep1').style.display = 'none';
                 document.getElementById('payStep2').style.display = 'block';
@@ -5634,16 +5947,48 @@ export default {
             }
         }
 
-        function confirmPayment(btn) {
-            btn.textContent = '已提交！管理员将在审核后为您充值额度。请留意额度变化。';
+        async function confirmPayment(btn) {
+            if (!currentOrderId) {
+                alert('订单号未找到，请刷新重试');
+                return;
+            }
+            
+            const originalText = btn.textContent;
+            btn.textContent = '提交中...';
             btn.disabled = true;
             btn.style.opacity = '0.7';
-            setTimeout(() => {
-                closeRechargeModal();
-                btn.textContent = '我已完成支付';
+            
+            try {
+                const token = localStorage.getItem('memoraid_token');
+                const res = await fetch(API_BASE + '/api/payment/notify', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ orderId: currentOrderId })
+                });
+                
+                if (res.ok) {
+                    btn.textContent = '已提交！管理员将在审核后为您充值额度。请留意额度变化。';
+                    setTimeout(() => {
+                        closeRechargeModal();
+                        btn.textContent = '我已完成支付';
+                        btn.disabled = false;
+                        btn.style.opacity = '1';
+                        alert('已通知管理员，请耐心等待审核');
+                    }, 3000);
+                } else {
+                    const data = await res.json();
+                    throw new Error(data.error || '提交失败');
+                }
+            } catch (e) {
+                console.error('支付确认失败:', e);
+                alert('提交失败: ' + e.message);
+                btn.textContent = originalText;
                 btn.disabled = false;
                 btn.style.opacity = '1';
-            }, 3000);
+            }
         }
 
         // 初始化：先检查登录，再加载数据
