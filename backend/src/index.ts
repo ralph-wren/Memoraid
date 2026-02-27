@@ -3227,7 +3227,9 @@ export default {
         const offset = parseInt(url.searchParams.get('offset') || '0');
 
         let query = `
-          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, ac.account_name, p.display_name as platform_name, p.icon as platform_icon, u.email as user_email
+          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, ac.account_name, p.display_name as platform_name, p.icon as platform_icon, u.email as user_email,
+            -- 计算该文章是该用户生成的第几篇（按发布时间升序排列）
+            ROW_NUMBER() OVER (PARTITION BY u.id ORDER BY a.publish_time ASC) as user_article_index
           FROM articles a 
           JOIN accounts ac ON a.account_id = ac.id 
           JOIN platforms p ON ac.platform_id = p.id 
@@ -3855,7 +3857,7 @@ export default {
                     <div class="card">
                         <div class="table-wrapper">
                             <table>
-                                <thead><tr><th>标题</th><th>平台</th><th>状态</th><th>用户</th><th>时间</th></tr></thead>
+                                <thead><tr><th>标题</th><th>平台</th><th>状态</th><th>用户</th><th>第几篇</th><th>时间</th></tr></thead>
                                 <tbody id="articlesTable"></tbody>
                             </table>
                         </div>
@@ -4226,11 +4228,14 @@ export default {
                     <td>\${icon} \${a.platform_name || ''}</td>
                     <td><span class="status-pill \${a.status}">\${a.status === 'generated' ? '已生成' : '已发布'}</span></td>
                     <td onclick="filterByUser('\${a.user_email}')" style="cursor:pointer;color:var(--accent-secondary)" title="点击筛选此用户的文章">\${a.user_email}</td>
+                    <!-- 显示该用户的第几篇文章，用徽章样式展示 -->
+                    <td><span style="background:var(--bg-muted);color:var(--text-muted);padding:2px 8px;border-radius:12px;font-size:0.8rem;font-weight:500">第 \${a.user_article_index} 篇</span></td>
                     <td>\${new Date(a.publish_time * 1000).toLocaleString()}</td>
                 </tr>
             \`}).join('');
             
-            document.getElementById('articlesTable').innerHTML = html || '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">暂无数据</td></tr>';
+            // colspan 改为 6，因为新增了"第几篇"列
+            document.getElementById('articlesTable').innerHTML = html || '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">暂无数据</td></tr>';
         }
 
         // Pagination Controls

@@ -19,3 +19,4 @@
 18. 通过 bash -lc "CI=1 npx wrangler r2 object put pothos-images/memoraid/feature-extract.png --file ../store-assets/feature-extract.png --content-type image/png --remote" 的方式可以上传图片到
 19. 生成的说明文档统一放到docs目录,文件名称格式{日期如202601241230}-{功能，几个字}-{具体解决的问题}.md
 20. 测试文件、临时文件统一放到test目录
+21. 从~/.claude/skills或~/.agent/skills搜索有哪些skills可用
