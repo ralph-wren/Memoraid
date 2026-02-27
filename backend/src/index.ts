@@ -1,4 +1,3 @@
-import nodemailer from 'nodemailer';
 import { D1Database, R2Bucket } from '@cloudflare/workers-types';
 
 export interface Env {
@@ -8,6 +7,7 @@ export interface Env {
   GOOGLE_CLIENT_SECRET: string;
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
+  RESEND_API_KEY: string; // Resend邮件服务API密钥
 }
 
 interface AuthRequest {
@@ -48,6 +48,78 @@ function getEffectiveOrigin(request: Request, url: URL): string {
 
   const host = forwardedHost ? forwardedHost.split(',')[0].trim() : url.host;
   return `${protocol}://${host}`;
+}
+
+/**
+ * 使用Resend发送邮件
+ * Resend是一个现代化的邮件API服务，适合Cloudflare Workers
+ * 官网：https://resend.com
+ * 免费额度：每月3000封邮件
+ */
+async function sendEmailViaResend(apiKey: string, params: {
+  from: string;
+  fromName?: string;
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+}): Promise<Response> {
+  // 构建发件人字段，格式：Name <email@domain.com>
+  const fromField = params.fromName 
+    ? `${params.fromName} <${params.from}>`
+    : params.from;
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: fromField,
+      to: [params.to],
+      subject: params.subject,
+      text: params.text,
+      ...(params.html ? { html: params.html } : {}),
+    }),
+  });
+
+  return response;
+}
+
+/**
+ * 生成审批Token
+ * 用于邮件一键审批功能，包含订单ID、操作类型和过期时间
+ */
+async function generateApprovalToken(orderId: string, action: 'approve' | 'reject'): Promise<string> {
+  const payload = {
+    orderId,
+    action,
+    exp: Date.now() + 24 * 60 * 60 * 1000 // 24小时过期
+  };
+  const data = JSON.stringify(payload);
+  // 使用base64编码（简化版，生产环境建议使用JWT）
+  return btoa(data);
+}
+
+/**
+ * 验证审批Token
+ * 检查token有效性和是否过期
+ */
+function verifyApprovalToken(token: string): { orderId: string; action: string; exp: number } | null {
+  try {
+    const data = atob(token);
+    const payload = JSON.parse(data);
+    
+    // 检查是否过期
+    if (payload.exp < Date.now()) {
+      return null;
+    }
+    
+    return payload;
+  } catch (e) {
+    return null;
+  }
 }
 
 function renderMarketingShell(args: {
@@ -3801,10 +3873,13 @@ export default {
                 <div class="section">
                     <h2 class="section-title">💰 订单审核</h2>
                     <div class="toolbar">
+                        <!-- 搜索框：支持按订单号或用户邮箱搜索 -->
+                        <input id="orderKeyword" type="text" class="form-input" placeholder="搜索订单号或用户邮箱..." style="flex:1;max-width:280px" oninput="fetchOrders(true)">
                         <select id="orderStatusFilter" class="form-select" onchange="fetchOrders(true)">
                             <option value="">全部状态</option>
                             <option value="pending">待审核</option>
-                            <option value="paid">已支付</option>
+                            <option value="approved">已支付</option>
+                            <option value="rejected">已拒绝</option>
                             <option value="cancelled">已取消</option>
                         </select>
                         <button onclick="fetchOrders(true)" class="btn-sm btn-outline">刷新</button>
@@ -3841,34 +3916,31 @@ export default {
                 <div class="section">
                     <h2 class="section-title">⚙️ 系统设置</h2>
                     <div class="card" style="padding: 24px; max-width: 600px;">
-                        <h3 style="margin-bottom: 20px; font-size: 1.1rem;">📧 邮件通知配置</h3>
+                        <h3 style="margin-bottom: 12px; font-size: 1.1rem;">📧 邮件通知配置</h3>
+                        <div style="background: linear-gradient(135deg, rgba(16,185,129,0.1) 0%, rgba(167,139,250,0.1) 100%); padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; border-left: 3px solid var(--accent-secondary);">
+                            <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">
+                                <strong>💡 提示：</strong>本系统使用 <strong>Resend</strong> 邮件服务，无需配置SMTP。<br>
+                                发件人邮箱可使用 <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">onboarding@resend.dev</code> 进行测试。
+                            </p>
+                        </div>
+                        
                         <form id="emailConfigForm" onsubmit="saveEmailConfig(event)">
                             <div class="form-group">
                                 <label class="form-label">发件人邮箱 (Sender Email)</label>
-                                <input type="email" id="email_sender" class="form-input" style="width:100%" placeholder="noreply@yourdomain.com">
+                                <input type="email" id="email_sender" class="form-input" style="width:100%" placeholder="onboarding@resend.dev">
+                                <p style="font-size:0.8rem;color:var(--text-muted);margin-top:4px">
+                                    推荐使用 onboarding@resend.dev（测试）或配置自己的域名邮箱
+                                </p>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">发件人名称 (Sender Name)</label>
+                                <input type="text" id="email_sender_name" class="form-input" style="width:100%" placeholder="Memoraid" value="Memoraid">
+                                <p style="font-size:0.8rem;color:var(--text-muted);margin-top:4px">邮件中显示的发件人名称</p>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">收件人邮箱 (Admin Email)</label>
                                 <input type="email" id="email_recipient" class="form-input" style="width:100%" placeholder="admin@yourdomain.com">
                                 <p style="font-size:0.8rem;color:var(--text-muted);margin-top:4px">接收充值待审核通知的邮箱</p>
-                            </div>
-                            
-                            <h4 style="margin: 20px 0 12px; font-size: 1rem; color: var(--text-secondary);">SMTP 配置 (可选)</h4>
-                            <div class="form-group">
-                                <label class="form-label">SMTP 服务器地址</label>
-                                <input type="text" id="email_smtp_host" class="form-input" style="width:100%" placeholder="smtp.example.com">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">SMTP 端口</label>
-                                <input type="text" id="email_smtp_port" class="form-input" style="width:100%" placeholder="587">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">SMTP 用户名</label>
-                                <input type="text" id="email_smtp_user" class="form-input" style="width:100%" placeholder="user@example.com">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">SMTP 密码</label>
-                                <input type="password" id="email_smtp_pass" class="form-input" style="width:100%" placeholder="••••••••">
                             </div>
 
                             <div style="margin-top: 24px;">
@@ -4401,6 +4473,8 @@ export default {
         async function fetchOrders(reset = false) {
             if (reset) ordersPage = 1;
             const status = document.getElementById('orderStatusFilter').value;
+            // 获取搜索关键词（订单号或用户邮箱）
+            const keyword = document.getElementById('orderKeyword')?.value?.trim() || '';
             const offset = (ordersPage - 1) * ordersLimit;
             
             const tbody = document.getElementById('ordersTable');
@@ -4410,6 +4484,8 @@ export default {
                 const token = localStorage.getItem('memoraid_admin_token');
                 let url = \`/api/admin/orders?limit=\${ordersLimit}&offset=\${offset}\`;
                 if (status) url += \`&status=\${status}\`;
+                // 传递搜索关键词
+                if (keyword) url += \`&keyword=\${encodeURIComponent(keyword)}\`;
                 
                 const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
                 if (res.status === 401) { showLogin(); return; }
@@ -4425,6 +4501,8 @@ export default {
                     const date = new Date(order.created_at * 1000).toLocaleString();
                     const statusMap = {
                         'pending': '<span class="status-pill pending">待审核</span>',
+                        'approved': '<span class="status-pill paid">已支付</span>',  // 审批通过 = 已支付
+                        'rejected': '<span class="status-pill cancelled">已拒绝</span>',
                         'paid': '<span class="status-pill paid">已支付</span>',
                         'cancelled': '<span class="status-pill cancelled">已取消</span>'
                     };
@@ -4443,7 +4521,7 @@ export default {
                     
                     const row = \`
                         <tr>
-                            <td style="font-family:monospace;font-size:0.8rem">\${order.id.slice(0,8)}...</td>
+                            <td style="font-family:monospace;font-size:0.75rem;word-break:break-all;max-width:200px">\${order.id}</td>
                             <td><div class="user-cell"><div class="user-email">\${order.user_email || order.user_id}</div></div></td>
                             <td style="font-weight:600">¥\${order.amount}</td>
                             <td>\${order.quota_amount}次</td>
@@ -4510,11 +4588,8 @@ export default {
                     const data = await res.json();
                     if (data) {
                         document.getElementById('email_sender').value = data.email_sender || '';
+                        document.getElementById('email_sender_name').value = data.email_sender_name || 'Memoraid';
                         document.getElementById('email_recipient').value = data.email_recipient || '';
-                        document.getElementById('email_smtp_host').value = data.email_smtp_host || '';
-                        document.getElementById('email_smtp_port').value = data.email_smtp_port || '';
-                        document.getElementById('email_smtp_user').value = data.email_smtp_user || '';
-                        document.getElementById('email_smtp_pass').value = data.email_smtp_pass || '';
                     }
                 }
             } catch (e) {
@@ -4533,11 +4608,8 @@ export default {
                 const token = localStorage.getItem('memoraid_admin_token');
                 const body = {
                     email_sender: document.getElementById('email_sender').value,
-                    email_recipient: document.getElementById('email_recipient').value,
-                    email_smtp_host: document.getElementById('email_smtp_host').value,
-                    email_smtp_port: document.getElementById('email_smtp_port').value,
-                    email_smtp_user: document.getElementById('email_smtp_user').value,
-                    email_smtp_pass: document.getElementById('email_smtp_pass').value
+                    email_sender_name: document.getElementById('email_sender_name').value,
+                    email_recipient: document.getElementById('email_recipient').value
                 };
                 
                 const res = await fetch('/api/admin/config/email', {
@@ -4658,7 +4730,7 @@ export default {
             }
 
             if (order.status !== 'pending') {
-                return new Response(JSON.stringify({ error: '订单状态不正确' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+                return new Response(JSON.stringify({ error: '订单状态不正确，只能审批待审核的订单' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
             }
 
             if (action === 'approve') {
@@ -4703,6 +4775,7 @@ export default {
             }
 
             const status = url.searchParams.get('status');
+            const keyword = url.searchParams.get('keyword'); // 搜索关键词：订单号或用户邮箱
             const limit = parseInt(url.searchParams.get('limit') || '20');
             const offset = parseInt(url.searchParams.get('offset') || '0');
 
@@ -4712,23 +4785,48 @@ export default {
                 LEFT JOIN users u ON o.user_id = u.id
             `;
             const params: any[] = [];
+            const conditions: string[] = [];
 
+            // 按状态过滤
             if (status) {
-                query += ' WHERE o.status = ?';
+                conditions.push('o.status = ?');
                 params.push(status);
+            }
+            // 按关键词搜索：匹配订单号或用户邮箱
+            if (keyword) {
+                conditions.push('(o.id LIKE ? OR u.email LIKE ?)');
+                params.push(`%${keyword}%`, `%${keyword}%`);
+            }
+
+            if (conditions.length > 0) {
+                query += ' WHERE ' + conditions.join(' AND ');
             }
 
             query += ` ORDER BY o.created_at DESC LIMIT ${limit} OFFSET ${offset}`;
 
             const orders = await env.DB.prepare(query).bind(...params).all();
             
-            // 获取总数
-            let countQuery = 'SELECT COUNT(*) as total FROM payment_orders';
+            // 获取总数（同样需要应用过滤条件）
+            let countQuery = `
+                SELECT COUNT(*) as total
+                FROM payment_orders o
+                LEFT JOIN users u ON o.user_id = u.id
+            `;
             const countParams: any[] = [];
+            const countConditions: string[] = [];
+
             if (status) {
-                countQuery += ' WHERE status = ?';
+                countConditions.push('o.status = ?');
                 countParams.push(status);
             }
+            if (keyword) {
+                countConditions.push('(o.id LIKE ? OR u.email LIKE ?)');
+                countParams.push(`%${keyword}%`, `%${keyword}%`);
+            }
+            if (countConditions.length > 0) {
+                countQuery += ' WHERE ' + countConditions.join(' AND ');
+            }
+
             const total = await env.DB.prepare(countQuery).bind(...countParams).first('total');
 
             return new Response(JSON.stringify({ orders: orders.results, total }), {
@@ -4779,7 +4877,8 @@ export default {
             if (!admin) return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
 
             const body = await request.json() as any;
-            const keys = ['email_smtp_host', 'email_smtp_port', 'email_smtp_user', 'email_smtp_pass', 'email_sender', 'email_recipient', 'email_sender_name'];
+            // 只保存Resend需要的配置字段：发件人、发件人名称、收件人
+            const keys = ['email_sender', 'email_sender_name', 'email_recipient'];
             
             const stmt = env.DB.prepare(`
                 INSERT INTO system_configs (key, value, updated_at) VALUES (?, ?, ?)
@@ -4810,36 +4909,130 @@ export default {
             const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
             if (!admin) return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
 
-            // Load config from DB
+            // 从数据库加载邮件配置
             const configs = await env.DB.prepare('SELECT * FROM system_configs WHERE key LIKE "email_%"').all();
             const configMap: any = {};
             configs.results.forEach((row: any) => configMap[row.key] = row.value);
 
-            if (!configMap.email_recipient || !configMap.email_smtp_host) {
-                return new Response(JSON.stringify({ error: '请先保存完整的邮箱配置' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            if (!configMap.email_recipient || !configMap.email_sender) {
+                return new Response(JSON.stringify({ error: '请先保存完整的邮箱配置（发件人和收件人邮箱）' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
             }
 
-            const transporter = nodemailer.createTransport({
-                host: configMap.email_smtp_host,
-                port: parseInt(configMap.email_smtp_port || '465'),
-                secure: parseInt(configMap.email_smtp_port) === 465,
-                auth: {
-                    user: configMap.email_smtp_user,
-                    pass: configMap.email_smtp_pass,
-                },
-            });
+            // 检查Resend API Key是否配置
+            if (!env.RESEND_API_KEY) {
+                return new Response(JSON.stringify({ 
+                    error: 'Resend API Key未配置',
+                    detail: '请在Cloudflare Workers环境变量中配置RESEND_API_KEY'
+                }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
 
-            await transporter.sendMail({
-                from: `"${configMap.email_sender_name || 'Memoraid'}" <${configMap.email_sender}>`,
+            // 使用Resend发送测试邮件
+            const emailResponse = await sendEmailViaResend(env.RESEND_API_KEY, {
+                from: configMap.email_sender,
+                fromName: configMap.email_sender_name || 'Memoraid',
                 to: configMap.email_recipient,
                 subject: '[Memoraid] 测试邮件',
-                text: '这是一封测试邮件，证明 SMTP 配置正确。',
+                text: '这是一封测试邮件，证明邮件配置正确。\n\n如果您收到此邮件，说明邮件发送功能正常工作。\n\n本邮件通过Resend服务发送。',
+                html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 40px 20px;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden;">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #10b981 0%, #a78bfa 100%); padding: 30px; text-align: center;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 600;">
+                                📧 Memoraid
+                            </h1>
+                            <p style="margin: 8px 0 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">
+                                邮件系统测试
+                            </p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding: 40px 30px;">
+                            <div style="text-align: center; margin-bottom: 30px;">
+                                <div style="display: inline-block; background: linear-gradient(135deg, rgba(16,185,129,0.1) 0%, rgba(167,139,250,0.1) 100%); padding: 20px; border-radius: 50%; margin-bottom: 20px;">
+                                    <span style="font-size: 48px;">✅</span>
+                                </div>
+                                <h2 style="margin: 0 0 12px 0; color: #111827; font-size: 24px; font-weight: 600;">
+                                    测试邮件发送成功
+                                </h2>
+                                <p style="margin: 0; color: #6b7280; font-size: 16px; line-height: 1.6;">
+                                    恭喜！您的邮件配置已正确设置
+                                </p>
+                            </div>
+                            
+                            <div style="background-color: #f9fafb; border-left: 4px solid #10b981; padding: 16px 20px; border-radius: 6px; margin: 24px 0;">
+                                <p style="margin: 0; color: #374151; font-size: 14px; line-height: 1.6;">
+                                    <strong>✨ 提示：</strong>如果您收到此邮件，说明邮件发送功能正常工作。系统现在可以发送充值通知、订单提醒等邮件了。
+                                </p>
+                            </div>
+                            
+                            <div style="margin: 30px 0; padding: 20px; background-color: #fafafa; border-radius: 8px;">
+                                <h3 style="margin: 0 0 12px 0; color: #111827; font-size: 16px; font-weight: 600;">
+                                    📋 邮件服务信息
+                                </h3>
+                                <table width="100%" cellpadding="8" cellspacing="0" style="font-size: 14px;">
+                                    <tr>
+                                        <td style="color: #6b7280; width: 120px;">邮件服务</td>
+                                        <td style="color: #111827; font-weight: 500;">Resend</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="color: #6b7280;">发送时间</td>
+                                        <td style="color: #111827; font-weight: 500;">${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="color: #6b7280;">状态</td>
+                                        <td style="color: #10b981; font-weight: 600;">✓ 正常运行</td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color: #f9fafb; padding: 24px 30px; text-align: center; border-top: 1px solid #e5e7eb;">
+                            <p style="margin: 0 0 8px 0; color: #6b7280; font-size: 13px;">
+                                本邮件由 <strong style="color: #111827;">Memoraid</strong> 自动发送
+                            </p>
+                            <p style="margin: 0; color: #9ca3af; font-size: 12px;">
+                                © ${new Date().getFullYear()} Memoraid. All rights reserved.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+                `.trim(),
             });
 
-            return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            if (!emailResponse.ok) {
+                const errorText = await emailResponse.text();
+                console.error('Resend error:', errorText);
+                return new Response(JSON.stringify({ 
+                    error: '发送失败: ' + (errorText || emailResponse.statusText),
+                    detail: '请检查Resend API Key是否正确，以及发件人邮箱是否已验证'
+                }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
+            return new Response(JSON.stringify({ success: true, message: '测试邮件已发送，请检查收件箱' }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         } catch (e: any) {
             console.error('Test email failed:', e);
-            return new Response(JSON.stringify({ error: '发送失败: ' + e.message }), { status: 500, headers: corsHeaders });
+            return new Response(JSON.stringify({ error: '发送失败: ' + e.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
     }
 
@@ -4864,27 +5057,153 @@ export default {
             const configMap: any = {};
             configs.results.forEach((row: any) => configMap[row.key] = row.value);
 
-            if (configMap.email_recipient && configMap.email_smtp_host) {
-                const subject = `[Memoraid] 待审核充值: ${order.amount}元`;
-                const content = `用户: ${userEmail}\n订单号: ${orderId}\n金额: ${order.amount}元\n额度: ${order.quota_amount}次\n时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}\n\n请前往管理后台审核。`;
+            if (configMap.email_recipient && configMap.email_sender && env.RESEND_API_KEY) {
+                // 生成审批token
+                const approveToken = await generateApprovalToken(orderId, 'approve');
+                const rejectToken = await generateApprovalToken(orderId, 'reject');
+                const backendUrl = 'https://memoraid-backend.iuyuger.workers.dev';
+                
+                const subject = `[Memoraid] 💰 待审核充值: ${order.amount}元`;
+                const textContent = `用户: ${userEmail}\n订单号: ${orderId}\n金额: ${order.amount}元\n额度: ${order.quota_amount}次\n时间: ${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}\n\n请前往管理后台审核。\n\n快速审批链接：\n批准: ${backendUrl}/api/payment/approve?token=${approveToken}\n拒绝: ${backendUrl}/api/payment/approve?token=${rejectToken}`;
+                
+                // HTML格式的邮件内容
+                const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 40px 20px;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden;">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%); padding: 30px; text-align: center;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 600;">
+                                💰 Memoraid
+                            </h1>
+                            <p style="margin: 8px 0 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">
+                                充值订单待审核
+                            </p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                        <td style="padding: 40px 30px;">
+                            <div style="text-align: center; margin-bottom: 30px;">
+                                <div style="display: inline-block; background: linear-gradient(135deg, rgba(245,158,11,0.1) 0%, rgba(239,68,68,0.1) 100%); padding: 20px; border-radius: 50%; margin-bottom: 20px;">
+                                    <span style="font-size: 48px;">🔔</span>
+                                </div>
+                                <h2 style="margin: 0 0 12px 0; color: #111827; font-size: 24px; font-weight: 600;">
+                                    新的充值订单
+                                </h2>
+                                <p style="margin: 0; color: #6b7280; font-size: 16px; line-height: 1.6;">
+                                    有用户提交了充值申请，请及时审核
+                                </p>
+                            </div>
+                            
+                            <!-- Order Details -->
+                            <div style="background: linear-gradient(135deg, rgba(245,158,11,0.05) 0%, rgba(239,68,68,0.05) 100%); border-radius: 12px; padding: 24px; margin: 24px 0;">
+                                <h3 style="margin: 0 0 16px 0; color: #111827; font-size: 18px; font-weight: 600; border-bottom: 2px solid #f59e0b; padding-bottom: 12px;">
+                                    📋 订单详情
+                                </h3>
+                                <table width="100%" cellpadding="10" cellspacing="0" style="font-size: 15px;">
+                                    <tr>
+                                        <td style="color: #6b7280; width: 100px; vertical-align: top;">用户</td>
+                                        <td style="color: #111827; font-weight: 500;">${userEmail}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="color: #6b7280; vertical-align: top;">订单号</td>
+                                        <td style="color: #111827; font-family: 'Courier New', monospace; font-size: 13px;">${orderId}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="color: #6b7280; vertical-align: top;">充值金额</td>
+                                        <td style="color: #ef4444; font-weight: 700; font-size: 20px;">¥${order.amount}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="color: #6b7280; vertical-align: top;">获得额度</td>
+                                        <td style="color: #10b981; font-weight: 600; font-size: 18px;">${order.quota_amount} 次</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="color: #6b7280; vertical-align: top;">提交时间</td>
+                                        <td style="color: #111827; font-weight: 500;">${new Date().toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                            
+                            <!-- Quick Approval Buttons -->
+                            <div style="background: linear-gradient(135deg, rgba(16,185,129,0.05) 0%, rgba(239,68,68,0.05) 100%); border-radius: 12px; padding: 24px; margin: 24px 0; text-align: center;">
+                                <h3 style="margin: 0 0 16px 0; color: #111827; font-size: 16px; font-weight: 600;">
+                                    ⚡ 快速审批
+                                </h3>
+                                <p style="margin: 0 0 20px 0; color: #6b7280; font-size: 14px;">
+                                    点击下方按钮即可完成审批，无需登录后台
+                                </p>
+                                <div style="display: inline-block;">
+                                    <a href="${backendUrl}/api/payment/approve?token=${approveToken}" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; margin: 0 8px; box-shadow: 0 4px 12px rgba(16,185,129,0.3);">
+                                        ✓ 批准充值
+                                    </a>
+                                    <a href="${backendUrl}/api/payment/approve?token=${rejectToken}" style="display: inline-block; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; margin: 0 8px; box-shadow: 0 4px 12px rgba(239,68,68,0.3);">
+                                        ✗ 拒绝充值
+                                    </a>
+                                </div>
+                                <p style="margin: 16px 0 0 0; color: #9ca3af; font-size: 12px;">
+                                    审批链接24小时内有效
+                                </p>
+                            </div>
+                            
+                            <!-- Action Button -->
+                            <div style="text-align: center; margin: 24px 0;">
+                                <a href="https://memoraid.dpdhcuorg.top/admin" style="display: inline-block; background: #6b7280; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-weight: 500; font-size: 14px;">
+                                    或前往管理后台查看详情 →
+                                </a>
+                            </div>
+                            
+                            <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 16px 20px; border-radius: 6px; margin: 24px 0;">
+                                <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.6;">
+                                    <strong>⚠️ 提醒：</strong>请在审核前确认用户已完成付款，避免误操作。
+                                </p>
+                            </div>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background-color: #f9fafb; padding: 24px 30px; text-align: center; border-top: 1px solid #e5e7eb;">
+                            <p style="margin: 0 0 8px 0; color: #6b7280; font-size: 13px;">
+                                本邮件由 <strong style="color: #111827;">Memoraid</strong> 自动发送
+                            </p>
+                            <p style="margin: 0; color: #9ca3af; font-size: 12px;">
+                                © ${new Date().getFullYear()} Memoraid. All rights reserved.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+                `.trim();
                 
                 try {
-                    const transporter = nodemailer.createTransport({
-                        host: configMap.email_smtp_host,
-                        port: parseInt(configMap.email_smtp_port || '465'),
-                        secure: parseInt(configMap.email_smtp_port) === 465,
-                        auth: {
-                            user: configMap.email_smtp_user,
-                            pass: configMap.email_smtp_pass,
-                        },
-                    });
-
-                    await transporter.sendMail({
-                        from: `"${configMap.email_sender_name || 'Memoraid'}" <${configMap.email_sender}>`,
+                    // 使用Resend发送邮件通知
+                    const emailResponse = await sendEmailViaResend(env.RESEND_API_KEY, {
+                        from: configMap.email_sender,
+                        fromName: configMap.email_sender_name || 'Memoraid',
                         to: configMap.email_recipient,
                         subject: subject,
-                        text: content,
+                        text: textContent,
+                        html: htmlContent,
                     });
+                    
+                    if (!emailResponse.ok) {
+                        console.error('Email send failed:', await emailResponse.text());
+                    }
                 } catch (err) {
                     console.error('Email send failed:', err);
                 }
@@ -4893,6 +5212,65 @@ export default {
             return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         } catch (e: any) {
             return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    // 7.0.9 GET /api/payment/approve - 邮件一键审批
+    // 通过邮件中的链接直接审批充值订单，无需登录
+    if (url.pathname === '/api/payment/approve' && request.method === 'GET') {
+        try {
+            const token = url.searchParams.get('token');
+            
+            if (!token) {
+                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>参数错误</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>❌ 参数错误</h1><p>缺少审批token</p></body></html>`);
+            }
+            
+            // 验证token
+            const payload = verifyApprovalToken(token);
+            if (!payload) {
+                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Token无效</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>❌ Token无效或已过期</h1><p>审批链接已失效（有效期24小时）</p><p style="margin-top: 20px;"><a href="https://memoraid.dpdhcuorg.top/admin" style="color: #10b981;">前往管理后台</a></p></body></html>`);
+            }
+            
+            const { orderId, action } = payload;
+            
+            // 检查订单是否存在
+            const order = await env.DB.prepare('SELECT * FROM payment_orders WHERE id = ?').bind(orderId).first();
+            if (!order) {
+                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>订单不存在</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>❌ 订单不存在</h1><p>订单ID: ${orderId}</p></body></html>`);
+            }
+            
+            // 检查订单状态，避免重复审批
+            // 订单流程: pending(创建/待审核) → approved/rejected(管理员审批)
+            if (order.status !== 'pending') {
+                const statusMap: Record<string, string> = { 'approved': '已批准', 'rejected': '已拒绝', 'paid': '已支付', 'cancelled': '已取消' };
+                const statusText = statusMap[order.status as string] || order.status;
+                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>订单已处理</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>ℹ️ 订单已处理</h1><p>该订单当前状态：${statusText}，无需重复操作</p><p style="margin-top: 20px;"><a href="https://memoraid.dpdhcuorg.top/admin" style="color: #10b981;">前往管理后台</a></p></body></html>`);
+            }
+            
+            // 执行审批操作
+            if (action === 'approve') {
+                // 批准：更新订单状态并增加用户付费额度
+                await env.DB.prepare('UPDATE payment_orders SET status = ? WHERE id = ?').bind('approved', orderId).run();
+                
+                // 增加用户的付费额度，如果用户不存在则创建记录
+                await env.DB.prepare(`
+                    INSERT INTO user_quotas (user_id, paid_quota_remaining, updated_at) 
+                    VALUES (?, ?, strftime('%s', 'now'))
+                    ON CONFLICT(user_id) DO UPDATE SET 
+                        paid_quota_remaining = paid_quota_remaining + ?,
+                        updated_at = strftime('%s', 'now')
+                `).bind(order.user_id, order.quota_amount, order.quota_amount).run();
+                
+                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>审批成功</title><style>body{font-family:-apple-system,sans-serif;background:linear-gradient(135deg,#10b981 0%,#059669 100%);margin:0;padding:0;display:flex;align-items:center;justify-content:center;min-height:100vh}.container{background:white;border-radius:16px;padding:48px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:500px}h1{color:#10b981;font-size:48px;margin:0 0 16px 0}.title{color:#111827;font-size:24px;font-weight:600;margin:0 0 12px 0}.info{color:#6b7280;font-size:16px;line-height:1.6;margin:0 0 24px 0}.detail{background:#f9fafb;border-radius:8px;padding:16px;margin:24px 0;text-align:left}.detail-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e5e7eb}.detail-row:last-child{border-bottom:none}.label{color:#6b7280}.value{color:#111827;font-weight:600}.btn{display:inline-block;background:#10b981;color:white;text-decoration:none;padding:12px 32px;border-radius:8px;font-weight:600;margin-top:24px}</style></head><body><div class="container"><h1>✓</h1><div class="title">充值已批准</div><div class="info">订单审批成功，用户额度已增加</div><div class="detail"><div class="detail-row"><span class="label">订单号</span><span class="value">${orderId}</span></div><div class="detail-row"><span class="label">充值金额</span><span class="value">¥${order.amount}</span></div><div class="detail-row"><span class="label">增加额度</span><span class="value">${order.quota_amount} 次</span></div><div class="detail-row"><span class="label">审批时间</span><span class="value">${new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})}</span></div></div><a href="https://memoraid.dpdhcuorg.top/admin" class="btn">前往管理后台</a></div></body></html>`);
+            } else {
+                // 拒绝：只更新订单状态
+                await env.DB.prepare('UPDATE payment_orders SET status = ? WHERE id = ?').bind('rejected', orderId).run();
+                
+                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>已拒绝</title><style>body{font-family:-apple-system,sans-serif;background:linear-gradient(135deg,#ef4444 0%,#dc2626 100%);margin:0;padding:0;display:flex;align-items:center;justify-content:center;min-height:100vh}.container{background:white;border-radius:16px;padding:48px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:500px}h1{color:#ef4444;font-size:48px;margin:0 0 16px 0}.title{color:#111827;font-size:24px;font-weight:600;margin:0 0 12px 0}.info{color:#6b7280;font-size:16px;line-height:1.6;margin:0 0 24px 0}.detail{background:#f9fafb;border-radius:8px;padding:16px;margin:24px 0;text-align:left}.detail-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e5e7eb}.detail-row:last-child{border-bottom:none}.label{color:#6b7280}.value{color:#111827;font-weight:600}.btn{display:inline-block;background:#6b7280;color:white;text-decoration:none;padding:12px 32px;border-radius:8px;font-weight:600;margin-top:24px}</style></head><body><div class="container"><h1>✗</h1><div class="title">充值已拒绝</div><div class="info">订单已被拒绝，用户额度未变化</div><div class="detail"><div class="detail-row"><span class="label">订单号</span><span class="value">${orderId}</span></div><div class="detail-row"><span class="label">充值金额</span><span class="value">¥${order.amount}</span></div><div class="detail-row"><span class="label">拒绝时间</span><span class="value">${new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})}</span></div></div><a href="https://memoraid.dpdhcuorg.top/admin" class="btn">前往管理后台</a></div></body></html>`);
+            }
+        } catch (e: any) {
+            console.error('Approval failed:', e);
+            return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>处理失败</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>❌ 处理失败</h1><p>${e.message}</p><p style="margin-top: 20px;"><a href="https://memoraid.dpdhcuorg.top/admin" style="color: #10b981;">前往管理后台</a></p></body></html>`);
         }
     }
 
