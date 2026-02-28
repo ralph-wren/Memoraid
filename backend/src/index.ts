@@ -3399,13 +3399,19 @@ export default {
 
         const limit = parseInt(url.searchParams.get('limit') || '10');
         const offset = parseInt(url.searchParams.get('offset') || '0');
-        const sort = url.searchParams.get('sort') || 'created_at'; // created_at or last_active
-        const order = url.searchParams.get('order') || 'desc'; // desc or asc
+        const sort = url.searchParams.get('sort') || 'last_active'; // 默认按最后活跃排序
+        const order = url.searchParams.get('order') || 'desc';
+        // 当前时间戳，用于计算3日/7日文章数
+        const now = Math.floor(Date.now() / 1000);
         
         let query = `
           SELECT u.id, u.email, u.provider, u.created_at, MAX(a.publish_time) as last_active,
           q.paid_quota_remaining,
-          (SELECT COUNT(*) FROM ai_usage_logs WHERE user_id = u.id OR anonymous_id = u.id) as ai_usage
+          (SELECT COUNT(*) FROM ai_usage_logs WHERE user_id = u.id OR anonymous_id = u.id) as ai_usage,
+          -- 最近3天生成文章数
+          (SELECT COUNT(*) FROM articles a3 JOIN accounts ac3 ON a3.account_id = ac3.id WHERE ac3.user_id = u.id AND a3.publish_time >= ${now - 3 * 86400}) as articles_3d,
+          -- 最近7天生成文章数
+          (SELECT COUNT(*) FROM articles a7 JOIN accounts ac7 ON a7.account_id = ac7.id WHERE ac7.user_id = u.id AND a7.publish_time >= ${now - 7 * 86400}) as articles_7d
           FROM users u
           LEFT JOIN user_quotas q ON u.id = q.user_id
           LEFT JOIN accounts ac ON u.id = ac.user_id
@@ -3413,9 +3419,12 @@ export default {
           GROUP BY u.id
         `;
         
-        let sortField = 'u.created_at';
+        let sortField = 'last_active'; // 默认按最后活跃时间排序
+        if (sort === 'created_at') sortField = 'u.created_at';
         if (sort === 'last_active') sortField = 'last_active';
         if (sort === 'paid_quota') sortField = 'q.paid_quota_remaining';
+        if (sort === 'articles_3d') sortField = 'articles_3d';
+        if (sort === 'articles_7d') sortField = 'articles_7d';
 
         const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
         const nullsOrder = (sort === 'last_active' || sort === 'paid_quota') ? 'NULLS LAST' : '';
@@ -3976,8 +3985,11 @@ export default {
                                         <th>来源</th>
                                         <th>免费额度</th>
                                         <th class="sortable" id="sort-paid_quota" onclick="toggleSort('paid_quota')">付费额度</th>
-                                        <th class="sortable active" id="sort-created_at" onclick="toggleSort('created_at')">注册时间</th>
-                                        <th class="sortable" id="sort-last_active" onclick="toggleSort('last_active')">最后活跃</th>
+                                        <!-- 新增：3日/7日文章数，支持排序 -->
+                                        <th class="sortable" id="sort-articles_3d" onclick="toggleSort('articles_3d')">3日文章</th>
+                                        <th class="sortable" id="sort-articles_7d" onclick="toggleSort('articles_7d')">7日文章</th>
+                                        <th class="sortable" id="sort-created_at" onclick="toggleSort('created_at')">注册时间</th>
+                                        <th class="sortable active" id="sort-last_active" onclick="toggleSort('last_active')">最后活跃</th>
                                     </tr>
                                 </thead>
                                 <tbody id="recentUsers"></tbody>
@@ -4184,7 +4196,7 @@ export default {
         const usersLimit = 20; // 每页显示20条用户数据
         let usersTotal = 0;
         let isFetchingUsers = false;
-        let userSort = 'created_at';
+        let userSort = 'last_active';  // 默认按最后活跃时间排序
         let userSortOrder = 'desc';
         
         async function fetchStats() {
@@ -4362,11 +4374,14 @@ export default {
                     <td>\${u.provider}</td>
                     <td><span class="status-pill \${(u.ai_usage >= limit) ? 'error' : 'success'}">\${u.ai_usage || 0}/\${limit}</span></td>
                     <td><span class="status-pill success">\${u.paid_quota_remaining || 0}</span></td>
+                    <!-- 3日/7日文章数，有数据时高亮 -->
+                    <td><span class="status-pill \${u.articles_3d > 0 ? 'success' : ''}">\${u.articles_3d || 0}</span></td>
+                    <td><span class="status-pill \${u.articles_7d > 0 ? 'success' : ''}">\${u.articles_7d || 0}</span></td>
                     <td>\${new Date(u.created_at * 1000).toLocaleDateString()}</td>
                     <td>\${u.last_active ? new Date(u.last_active * 1000).toLocaleString() : '-'}</td>
                 </tr>
             \`}).join('');
-            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="6" style="text-align:center">暂无数据</td></tr>';
+            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="8" style="text-align:center">暂无数据</td></tr>';
         }
 
         function renderArticles(articles) {
@@ -4736,6 +4751,19 @@ export default {
                 '<div><span style="color:var(--text-muted)">单日最高</span><br><strong>' + fmt(max) + '</strong></div>';
         }
 
+        // 通用复制到剪贴板函数，复制成功后短暂显示"已复制"提示
+        function copyText(text, el) {
+            navigator.clipboard.writeText(text).then(() => {
+                const orig = el.textContent;
+                el.textContent = '已复制!';
+                el.style.color = 'var(--accent-secondary)';
+                setTimeout(() => {
+                    el.textContent = orig;
+                    el.style.color = '';
+                }, 1200);
+            }).catch(() => {});
+        }
+
         function goToPendingOrders() {
             const filter = document.getElementById('orderStatusFilter');
             if (filter) filter.value = 'pending';
@@ -4960,8 +4988,18 @@ export default {
                     
                     const row = \`
                         <tr>
-                            <td style="font-family:monospace;font-size:0.75rem;word-break:break-all;max-width:200px">\${order.id}</td>
-                            <td><div class="user-cell"><div class="user-email">\${order.user_email || order.user_id}</div></div></td>
+                            <!-- 订单号：自适应宽度，超长时省略号折叠，点击复制 -->
+                            <td>
+                                <span onclick="copyText('\${order.id}', this)" title="点击复制: \${order.id}" style="cursor:pointer;font-family:monospace;font-size:0.75rem;color:var(--accent-secondary);text-decoration:underline dotted;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(200px,20vw)">
+                                    \${order.id}
+                                </span>
+                            </td>
+                            <!-- 用户：点击复制邮箱 -->
+                            <td>
+                                <div class="user-cell" onclick="copyText('\${order.user_email || order.user_id}', this.querySelector('.user-email'))" style="cursor:pointer" title="点击复制">
+                                    <div class="user-email" style="color:var(--accent-secondary);text-decoration:underline dotted;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(180px,18vw)">\${order.user_email || order.user_id}</div>
+                                </div>
+                            </td>
                             <td style="font-weight:600">¥\${order.amount}</td>
                             <td>\${order.quota_amount}次</td>
                             <td>\${statusMap[order.status] || order.status}</td>
