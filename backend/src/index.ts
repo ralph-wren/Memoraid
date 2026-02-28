@@ -3540,6 +3540,112 @@ export default {
       }
     }
 
+    // 7.0.0.1 GET /api/admin/trends - 获取最近30天每日趋势数据（活跃用户、新增用户、生成文章、充值金额）
+    if (url.pathname === '/api/admin/trends' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+        if (!admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+        }
+
+        // 查询类型：activeUsers / newUsers / newArticles / rechargeAmount
+        const type = url.searchParams.get('type') || 'activeUsers';
+        const days = Math.min(parseInt(url.searchParams.get('days') || '30'), 90);
+
+        // 计算UTC+8的今天起始时间戳
+        const now = Math.floor(Date.now() / 1000);
+        const utc8Offset = 8 * 60 * 60;
+        const todayStart = now - ((now + utc8Offset) % 86400);
+        // 从 (days-1) 天前开始，到今天
+        const startTs = todayStart - (days - 1) * 86400;
+
+        // 生成日期标签数组（用于补齐无数据的日期）
+        const dateLabels: string[] = [];
+        for (let i = 0; i < days; i++) {
+          const ts = startTs + i * 86400 + utc8Offset; // 转为UTC+8的时间
+          const d = new Date(ts * 1000);
+          dateLabels.push(`${d.getMonth() + 1}/${d.getDate()}`);
+        }
+
+        let dataMap: Record<string, number> = {};
+
+        if (type === 'activeUsers') {
+          // 每天有文章发布的独立用户数
+          const rows = await env.DB.prepare(`
+            SELECT ((a.publish_time + ${utc8Offset}) / 86400) as day_key, COUNT(DISTINCT u.id) as cnt
+            FROM articles a
+            JOIN accounts ac ON a.account_id = ac.id
+            JOIN users u ON ac.user_id = u.id
+            WHERE a.publish_time >= ?
+            GROUP BY day_key
+          `).bind(startTs).all();
+          for (const r of rows.results as any[]) {
+            const ts = r.day_key * 86400; // 还原为UTC+8的0点时间戳
+            const d = new Date(ts * 1000);
+            const label = `${d.getMonth() + 1}/${d.getDate()}`;
+            dataMap[label] = r.cnt;
+          }
+        } else if (type === 'newUsers') {
+          // 每天新注册用户数
+          const rows = await env.DB.prepare(`
+            SELECT ((created_at + ${utc8Offset}) / 86400) as day_key, COUNT(*) as cnt
+            FROM users
+            WHERE created_at >= ?
+            GROUP BY day_key
+          `).bind(startTs).all();
+          for (const r of rows.results as any[]) {
+            const ts = r.day_key * 86400;
+            const d = new Date(ts * 1000);
+            const label = `${d.getMonth() + 1}/${d.getDate()}`;
+            dataMap[label] = r.cnt;
+          }
+        } else if (type === 'newArticles') {
+          // 每天生成文章数
+          const rows = await env.DB.prepare(`
+            SELECT ((publish_time + ${utc8Offset}) / 86400) as day_key, COUNT(*) as cnt
+            FROM articles
+            WHERE publish_time >= ?
+            GROUP BY day_key
+          `).bind(startTs).all();
+          for (const r of rows.results as any[]) {
+            const ts = r.day_key * 86400;
+            const d = new Date(ts * 1000);
+            const label = `${d.getMonth() + 1}/${d.getDate()}`;
+            dataMap[label] = r.cnt;
+          }
+        } else if (type === 'rechargeAmount') {
+          // 每天充值金额（已支付）
+          const rows = await env.DB.prepare(`
+            SELECT ((paid_at + ${utc8Offset}) / 86400) as day_key, SUM(amount) as total
+            FROM payment_orders
+            WHERE paid_at >= ? AND status = 'paid'
+            GROUP BY day_key
+          `).bind(startTs).all();
+          for (const r of rows.results as any[]) {
+            const ts = r.day_key * 86400;
+            const d = new Date(ts * 1000);
+            const label = `${d.getMonth() + 1}/${d.getDate()}`;
+            dataMap[label] = r.total;
+          }
+        }
+
+        // 按日期顺序输出，无数据的日期补0
+        const values = dateLabels.map(label => dataMap[label] || 0);
+
+        return new Response(JSON.stringify({
+          labels: dateLabels,
+          values,
+          type
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
     // 7.0.1 GET /admin - 系统管理后台页面
     if (url.pathname === '/admin' && request.method === 'GET') {
       const ASSETS_BASE = effectiveOrigin + '/assets/memoraid';
@@ -3763,19 +3869,20 @@ export default {
 
                 <div id="tab-dashboard" class="tab-content" style="display:none">
             <div class="stats-grid">
-                <div class="stat-card">
+                <!-- 点击卡片可查看历史趋势曲线 -->
+                <div class="stat-card" style="cursor:pointer" onclick="showTrendChart('activeUsers', '今日活跃用户')">
                     <div class="stat-label">今日活跃用户</div>
                     <div class="stat-value" id="activeUsersToday">-</div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card" style="cursor:pointer" onclick="showTrendChart('newUsers', '今日新增用户')">
                     <div class="stat-label">今日新增用户</div>
                     <div class="stat-value" id="newUsersToday">-</div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card" style="cursor:pointer" onclick="showTrendChart('newArticles', '今日生成文章')">
                     <div class="stat-label">今日生成文章</div>
                     <div class="stat-value" id="newArticlesToday">-</div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card" style="cursor:pointer" onclick="showTrendChart('rechargeAmount', '今日充值金额')">
                     <div class="stat-label">今日充值金额</div>
                     <div class="stat-value" id="todayRechargeAmount">-</div>
                 </div>
@@ -3802,6 +3909,20 @@ export default {
                 <div class="stat-card">
                     <div class="stat-label">绑定账号数</div>
                     <div class="stat-value" id="totalAccounts">-</div>
+                </div>
+            </div>
+
+            <!-- 趋势图模态框 -->
+            <div id="trendModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);align-items:center;justify-content:center">
+                <div style="background:var(--surface);border-radius:var(--radius-lg);padding:32px;max-width:800px;width:90%;box-shadow:var(--shadow-lg);position:relative">
+                    <button onclick="closeTrendModal()" style="position:absolute;top:16px;right:16px;background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--text-muted);line-height:1">&times;</button>
+                    <h3 id="trendTitle" style="margin-bottom:8px;font-size:1.25rem;color:var(--text)"></h3>
+                    <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:20px">最近30天趋势</p>
+                    <div style="position:relative;width:100%;height:300px">
+                        <canvas id="trendCanvas" style="width:100%;height:100%"></canvas>
+                    </div>
+                    <!-- 趋势图底部的汇总信息 -->
+                    <div id="trendSummary" style="display:flex;gap:24px;margin-top:16px;padding-top:16px;border-top:1px solid var(--border);font-size:0.85rem;color:var(--text-secondary)"></div>
                 </div>
             </div>
 
@@ -4300,6 +4421,157 @@ export default {
             document.getElementById('searchInput').scrollIntoView({ behavior: 'smooth', block: 'center' });
             // Highlight active platform card
             document.querySelectorAll('.platform-item').forEach(el => el.classList.remove('active'));
+        }
+
+        // ========== 趋势图功能 ==========
+        // 显示趋势图模态框，type: activeUsers/newUsers/newArticles/rechargeAmount
+        async function showTrendChart(type, title) {
+            const modal = document.getElementById('trendModal');
+            document.getElementById('trendTitle').textContent = title + ' - 历史趋势';
+            modal.style.display = 'flex';
+
+            // 请求后端趋势数据
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const resp = await fetch('/api/admin/trends?type=' + type + '&days=30', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!resp.ok) throw new Error('请求失败');
+                const data = await resp.json();
+                drawTrendChart(data.labels, data.values, type);
+                showTrendSummary(data.values, type);
+            } catch (e) {
+                console.error('趋势数据加载失败:', e);
+            }
+        }
+
+        // 关闭趋势图模态框
+        function closeTrendModal() {
+            document.getElementById('trendModal').style.display = 'none';
+        }
+
+        // 点击模态框背景关闭
+        document.getElementById('trendModal').addEventListener('click', function(e) {
+            if (e.target === this) closeTrendModal();
+        });
+
+        // 用 Canvas 绘制折线图
+        function drawTrendChart(labels, values, type) {
+            const canvas = document.getElementById('trendCanvas');
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+            const W = rect.width, H = rect.height;
+
+            // 清空画布
+            ctx.clearRect(0, 0, W, H);
+
+            // 图表区域（留出边距给坐标轴标签）
+            const padL = 50, padR = 20, padT = 20, padB = 40;
+            const chartW = W - padL - padR;
+            const chartH = H - padT - padB;
+
+            const maxVal = Math.max(...values, 1); // 防止全0时除零
+            const stepX = chartW / (labels.length - 1 || 1);
+
+            // 根据类型选择颜色
+            const colors = {
+                activeUsers: '#10b981',
+                newUsers: '#38bdf8',
+                newArticles: '#fbbf24',
+                rechargeAmount: '#f97316'
+            };
+            const color = colors[type] || '#10b981';
+
+            // 绘制Y轴网格线和标签
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 0.5;
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '11px Inter, sans-serif';
+            ctx.textAlign = 'right';
+            const ySteps = 5;
+            for (let i = 0; i <= ySteps; i++) {
+                const y = padT + chartH - (i / ySteps) * chartH;
+                const val = (maxVal * i / ySteps);
+                // 充值金额显示两位小数，其他显示整数
+                const label = type === 'rechargeAmount' ? '¥' + val.toFixed(0) : Math.round(val).toString();
+                ctx.fillText(label, padL - 8, y + 4);
+                ctx.beginPath();
+                ctx.moveTo(padL, y);
+                ctx.lineTo(W - padR, y);
+                ctx.stroke();
+            }
+
+            // 绘制渐变填充区域
+            const gradient = ctx.createLinearGradient(0, padT, 0, padT + chartH);
+            gradient.addColorStop(0, color + '40'); // 带透明度
+            gradient.addColorStop(1, color + '05');
+            ctx.beginPath();
+            ctx.moveTo(padL, padT + chartH);
+            for (let i = 0; i < values.length; i++) {
+                const x = padL + i * stepX;
+                const y = padT + chartH - (values[i] / maxVal) * chartH;
+                ctx.lineTo(x, y);
+            }
+            ctx.lineTo(padL + (values.length - 1) * stepX, padT + chartH);
+            ctx.closePath();
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            // 绘制折线
+            ctx.beginPath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2.5;
+            ctx.lineJoin = 'round';
+            for (let i = 0; i < values.length; i++) {
+                const x = padL + i * stepX;
+                const y = padT + chartH - (values[i] / maxVal) * chartH;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // 绘制数据点
+            for (let i = 0; i < values.length; i++) {
+                const x = padL + i * stepX;
+                const y = padT + chartH - (values[i] / maxVal) * chartH;
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, Math.PI * 2);
+                ctx.fillStyle = values[i] > 0 ? color : '#cbd5e1';
+                ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            }
+
+            // 绘制X轴日期标签（每隔几天显示一个，避免拥挤）
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '10px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            const labelInterval = Math.ceil(labels.length / 10); // 最多显示10个标签
+            for (let i = 0; i < labels.length; i++) {
+                if (i % labelInterval === 0 || i === labels.length - 1) {
+                    const x = padL + i * stepX;
+                    ctx.fillText(labels[i], x, H - 8);
+                }
+            }
+        }
+
+        // 显示趋势汇总信息（总计、平均、最高）
+        function showTrendSummary(values, type) {
+            const sum = values.reduce((a, b) => a + b, 0);
+            const avg = sum / values.length;
+            const max = Math.max(...values);
+            const isAmount = type === 'rechargeAmount';
+            const fmt = v => isAmount ? '¥' + v.toFixed(2) : Math.round(v);
+
+            document.getElementById('trendSummary').innerHTML =
+                '<div><span style="color:var(--text-muted)">30天总计</span><br><strong>' + fmt(sum) + '</strong></div>' +
+                '<div><span style="color:var(--text-muted)">日均</span><br><strong>' + fmt(avg) + '</strong></div>' +
+                '<div><span style="color:var(--text-muted)">单日最高</span><br><strong>' + fmt(max) + '</strong></div>';
         }
 
         function goToPendingOrders() {
