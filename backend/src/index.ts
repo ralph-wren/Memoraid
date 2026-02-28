@@ -3401,6 +3401,7 @@ export default {
         const offset = parseInt(url.searchParams.get('offset') || '0');
         const sort = url.searchParams.get('sort') || 'last_active'; // 默认按最后活跃排序
         const order = url.searchParams.get('order') || 'desc';
+        const paidOnly = url.searchParams.get('paid_only') === '1'; // 是否仅看付费用户
         // 当前时间戳，用于计算3日/7日文章数
         const now = Math.floor(Date.now() / 1000);
         
@@ -3411,15 +3412,22 @@ export default {
           -- 最近3天生成文章数
           (SELECT COUNT(*) FROM articles a3 JOIN accounts ac3 ON a3.account_id = ac3.id WHERE ac3.user_id = u.id AND a3.publish_time >= ${now - 3 * 86400}) as articles_3d,
           -- 最近7天生成文章数
-          (SELECT COUNT(*) FROM articles a7 JOIN accounts ac7 ON a7.account_id = ac7.id WHERE ac7.user_id = u.id AND a7.publish_time >= ${now - 7 * 86400}) as articles_7d
+          (SELECT COUNT(*) FROM articles a7 JOIN accounts ac7 ON a7.account_id = ac7.id WHERE ac7.user_id = u.id AND a7.publish_time >= ${now - 7 * 86400}) as articles_7d,
+          -- 是否有已支付的充值记录（用于付费用户标识）
+          (SELECT COUNT(*) FROM payment_orders po WHERE po.user_id = u.id AND po.status IN ('paid', 'approved')) as paid_count
           FROM users u
           LEFT JOIN user_quotas q ON u.id = q.user_id
           LEFT JOIN accounts ac ON u.id = ac.user_id
           LEFT JOIN articles a ON ac.id = a.account_id
           GROUP BY u.id
         `;
+
+        // 仅看付费用户：过滤有充值记录的
+        if (paidOnly) {
+          query += ` HAVING paid_count > 0`;
+        }
         
-        let sortField = 'last_active'; // 默认按最后活跃时间排序
+        let sortField = 'last_active';
         if (sort === 'created_at') sortField = 'u.created_at';
         if (sort === 'last_active') sortField = 'last_active';
         if (sort === 'paid_quota') sortField = 'q.paid_quota_remaining';
@@ -3440,7 +3448,12 @@ export default {
 
         const results = await env.DB.prepare(query).bind(limit, offset).all();
 
-        const total = await env.DB.prepare('SELECT COUNT(*) as total FROM users').first('total');
+        // 总数：付费筛选时只统计有充值记录的用户
+        let totalQuery = 'SELECT COUNT(*) as total FROM users';
+        if (paidOnly) {
+          totalQuery = `SELECT COUNT(*) as total FROM users u WHERE EXISTS (SELECT 1 FROM payment_orders po WHERE po.user_id = u.id AND po.status IN ('paid', 'approved'))`;
+        }
+        const total = await env.DB.prepare(totalQuery).first('total');
 
         return new Response(JSON.stringify({
           users: results.results,
@@ -3976,6 +3989,10 @@ export default {
             <div id="tab-users" class="tab-content" style="display:none">
                 <div class="section">
                     <h2 class="section-title">👥 用户管理 <span style="font-size:0.9rem;color:var(--text-muted);font-weight:400;margin-left:auto">总数: <span id="userCountBadge">-</span></span></h2>
+                    <!-- 付费用户筛选按钮 -->
+                    <div style="margin-bottom:12px">
+                        <button id="paidFilterBtn" class="btn-sm btn-outline" onclick="togglePaidFilter()" style="font-size:0.8rem">💰 仅看付费用户</button>
+                    </div>
                     <div class="card">
                         <div class="table-wrapper">
                             <table>
@@ -4198,6 +4215,7 @@ export default {
         let isFetchingUsers = false;
         let userSort = 'last_active';  // 默认按最后活跃时间排序
         let userSortOrder = 'desc';
+        let userPaidOnly = false; // 是否仅看付费用户
         
         async function fetchStats() {
             try {
@@ -4237,7 +4255,8 @@ export default {
                     limit: usersLimit.toString(),
                     offset: usersOffset.toString(),
                     sort: userSort,
-                    order: userSortOrder
+                    order: userSortOrder,
+                    paid_only: userPaidOnly ? '1' : '0'
                 });
 
                 const response = await fetch('/api/admin/users?' + params.toString(), {
@@ -4363,18 +4382,20 @@ export default {
         function renderUsers(users) {
             const html = users.map(u => {
                 const limit = (u.provider === 'anonymous') ? 5 : 20;
+                // 判断是否为付费用户（有已支付的充值记录）
+                const isPaid = u.paid_count > 0;
+                const paidBadge = isPaid ? '<span style="background:#f97316;color:#fff;font-size:0.65rem;padding:1px 5px;border-radius:4px;margin-left:6px;vertical-align:middle">付费</span>' : '';
                 return \`
                 <tr style="cursor:pointer">
                     <td onclick="goToUserArticles('\${u.email}')" title="点击查看此用户的所有文章">
                         <div class="user-cell">
-                            <div class="avatar">\${u.email[0].toUpperCase()}</div>
-                            <div class="user-email" style="color:var(--accent-secondary);text-decoration:underline">\${u.email}</div>
+                            <div class="avatar" style="\${isPaid ? 'background:linear-gradient(135deg,#f97316,#fbbf24)' : ''}">\${u.email[0].toUpperCase()}</div>
+                            <div class="user-email" style="color:var(--accent-secondary)">\${u.email}\${paidBadge}</div>
                         </div>
                     </td>
                     <td>\${u.provider}</td>
                     <td><span class="status-pill \${(u.ai_usage >= limit) ? 'error' : 'success'}">\${u.ai_usage || 0}/\${limit}</span></td>
                     <td><span class="status-pill success">\${u.paid_quota_remaining || 0}</span></td>
-                    <!-- 3日/7日文章数，有数据时高亮 -->
                     <td><span class="status-pill \${u.articles_3d > 0 ? 'success' : ''}">\${u.articles_3d || 0}</span></td>
                     <td><span class="status-pill \${u.articles_7d > 0 ? 'success' : ''}">\${u.articles_7d || 0}</span></td>
                     <td>\${new Date(u.created_at * 1000).toLocaleDateString()}</td>
@@ -4432,6 +4453,22 @@ export default {
             document.getElementById('articlePageInfo').textContent = \`第 \${currentPage} / \${totalPages} 页\`;
             document.getElementById('prevArticlesBtn').disabled = articlesOffset <= 0;
             document.getElementById('nextArticlesBtn').disabled = (articlesOffset + articlesLimit) >= articlesTotal;
+        }
+
+        // 切换付费用户筛选
+        function togglePaidFilter() {
+            userPaidOnly = !userPaidOnly;
+            const btn = document.getElementById('paidFilterBtn');
+            if (userPaidOnly) {
+                btn.style.background = 'var(--accent)';
+                btn.style.color = '#fff';
+                btn.textContent = '💰 仅看付费用户 ✓';
+            } else {
+                btn.style.background = '';
+                btn.style.color = '';
+                btn.textContent = '💰 仅看付费用户';
+            }
+            fetchUsers(true);
         }
 
         function toggleSort(field) {
