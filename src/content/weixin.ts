@@ -4414,16 +4414,51 @@ const runSmartImageFlow = async (_autoPublish = false) => {
 const detectPageState = (): 'login' | 'home' | 'editor' | 'unknown' => {
   const url = window.location.href;
   
-  // 检测是否在登录页面或需要登录
+  // === 增强版登录检测 ===
+  // 1. URL 特征检测：微信登录页面的 URL 通常包含这些关键词
+  const loginUrlPatterns = [
+    'bizlogin',        // 登录页面 URL
+    'action=startlogin',
+    'action=login',
+    '/acct/login',     // 账号登录页
+  ];
+  const isLoginUrl = loginUrlPatterns.some(p => url.includes(p));
+  
+  // 2. DOM 元素检测：登录页面特有的元素
   const loginIndicators = [
-    document.querySelector('#jumpUrl'), // 登录跳转链接
+    document.querySelector('#jumpUrl'),                    // 登录跳转链接
     document.querySelector('a[href*="登录"]'),
-    document.querySelector('.page_error_msg'), // 错误页面
+    document.querySelector('.page_error_msg'),              // 错误页面
+    document.querySelector('.login__type__container__scan'),// 扫码登录容器
+    document.querySelector('.login__type__container'),      // 登录类型容器
+    document.querySelector('.qrcode_login_img'),            // 二维码登录图片
+    document.querySelector('.login_qrcode_area'),           // 二维码区域
+    document.querySelector('[class*="login"][class*="qr"]'),// 模糊匹配登录二维码
+    document.querySelector('.weui-desktop-account__login'), // 微信桌面端登录
+    document.querySelector('img[src*="login"]'),            // 登录相关图片
   ];
   
-  const needsLogin = loginIndicators.some(el => el !== null) || 
-    document.body.innerText?.includes('请重新登录') ||
-    document.body.innerText?.includes('请先登录');
+  // 3. 文本特征检测：页面中包含登录相关文字
+  const bodyText = document.body.innerText || '';
+  const loginTextPatterns = [
+    '请重新登录',
+    '请先登录',
+    '扫码登录',
+    '请使用微信扫描二维码登录',
+    '使用帐号密码登录',
+    '长按识别二维码',
+    '登录超时',
+    '二维码已失效',
+  ];
+  const hasLoginText = loginTextPatterns.some(t => bodyText.includes(t));
+  
+  // 4. 页面标题检测
+  const titleHasLogin = document.title.includes('登录');
+  
+  const needsLogin = isLoginUrl || 
+    loginIndicators.some(el => el !== null) || 
+    hasLoginText ||
+    titleHasLogin;
   
   if (needsLogin) {
     return 'login';
@@ -4572,13 +4607,36 @@ const autoFillContent = async () => {
     let pageState = await waitForPageReady(15000);
     logger.log(`页面状态: ${pageState}`, 'info');
     
-    // 如果需要登录，提示用户
+    // 如果需要登录，提示用户，并清除插件存储中的过期 Cookie
+    // 使用 sessionStorage 标记防止重复操作
     if (pageState === 'login') {
-      logger.log('⚠️ 请先登录微信公众平台', 'warn');
-      logger.log('登录后页面会自动刷新，届时将继续填充内容', 'info');
+      const clearFlag = sessionStorage.getItem('memoraid_cookie_cleared');
+      const clearTime = clearFlag ? parseInt(clearFlag, 10) : 0;
+      const now = Date.now();
+      
+      // 如果 60 秒内已经处理过，不再重复，只提示用户扫码
+      if (now - clearTime < 60000) {
+        logger.log('⚠️ 请扫码登录微信公众平台', 'warn');
+        logger.log('登录成功后将自动继续填充内容', 'info');
+      } else {
+        // 首次检测到需要登录，清除插件存储中的过期 Cookie
+        logger.log('⚠️ 检测到未登录，请扫码登录微信公众平台', 'warn');
+        sessionStorage.setItem('memoraid_cookie_cleared', String(now));
+        try {
+          // 只清除插件存储中的 cookie 字符串，不动浏览器 Cookie
+          await chrome.runtime.sendMessage({ type: 'CLEAR_WEIXIN_COOKIES' });
+          logger.log('已清除存储中的过期 Cookie', 'info');
+        } catch (e) {
+          logger.log('清除存储 Cookie 失败，不影响登录', 'warn');
+        }
+        logger.log('请扫码登录，登录成功后将自动继续填充内容', 'info');
+      }
       // 不清除 pending 数据，等用户登录后刷新页面再继续
       return;
     }
+    
+    // 登录成功后清除标记
+    sessionStorage.removeItem('memoraid_cookie_cleared');
     
     // 如果在首页，点击"文章"按钮
     if (pageState === 'home') {

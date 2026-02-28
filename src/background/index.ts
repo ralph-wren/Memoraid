@@ -209,6 +209,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  // 清除插件存储中的微信 Cookie（当检测到登录失效时由 content script 触发）
+  // 重要：只清除插件存储中的 cookie 字符串，不清除浏览器的 Cookie！
+  // 浏览器的 Cookie 由微信页面自己管理，如果我们清除了浏览器 Cookie，
+  // 会导致登录页面的二维码也无法加载（二维码接口需要基础 session Cookie）
+  if (message.type === 'CLEAR_WEIXIN_COOKIES') {
+    (async () => {
+      try {
+        // 只清空插件存储中的微信 Cookie 字符串
+        const settings = await getSettings();
+        if (settings.weixin?.cookie) {
+          settings.weixin.cookie = '';
+          await saveSettings(settings);
+          console.log('[Cookie] 已清空存储中的微信 Cookie（浏览器 Cookie 保持不变）');
+        } else {
+          console.log('[Cookie] 存储中的微信 Cookie 已经是空的');
+        }
+      } catch (e) {
+        console.error('[Cookie] 清除微信 Cookie 失败:', e);
+      }
+    })();
+    sendResponse({ success: true });
+    return true;
+  }
+
   if (message.type === 'PUBLISH_TO_XIAOHONGSHU') {
     handlePublishToXiaohongshu(message.payload);
     sendResponse({ success: true });
@@ -1624,6 +1648,10 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
     const cookieStr = settings.weixin?.cookie;
 
     if (cookieStr) {
+      // 直接设置新 Cookie，覆盖旧值即可
+      // 不再清除浏览器已有的 Cookie，因为清除会导致登录页二维码无法加载
+      // chrome.cookies.set 会自动覆盖同名 Cookie
+
       // Parse and set cookies for mp.weixin.qq.com
       const cookies = cookieStr.split(';').map(c => c.trim()).filter(c => c);
       for (const cookie of cookies) {
