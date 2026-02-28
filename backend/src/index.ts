@@ -3932,6 +3932,35 @@ export default {
                     <div class="platform-list" id="platformStats"></div>
                 </div>
             </div>
+
+            <!-- 历史趋势图表区域：活跃用户 + 生成文章 并列 -->
+            <div class="section">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                    <h2 class="section-title" style="margin-bottom:0">📈 数据趋势</h2>
+                    <!-- 时间范围切换按钮组 -->
+                    <div id="chartRangeBtns" style="display:flex;gap:6px">
+                        <button class="btn-sm btn-outline" onclick="switchChartRange(7)" id="rangeBtn7">近7天</button>
+                        <button class="btn-sm btn-outline active" onclick="switchChartRange(30)" id="rangeBtn30" style="background:var(--accent);color:#fff">近30天</button>
+                        <button class="btn-sm btn-outline" onclick="switchChartRange(90)" id="rangeBtn90">近90天</button>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+                    <!-- 活跃用户折线图 -->
+                    <div class="card" style="padding:20px">
+                        <h3 style="font-size:0.95rem;color:var(--text-secondary);margin-bottom:12px">👥 每日活跃用户</h3>
+                        <div style="position:relative;width:100%;height:240px">
+                            <canvas id="dashActiveChart" style="width:100%;height:100%"></canvas>
+                        </div>
+                    </div>
+                    <!-- 生成文章折线图 -->
+                    <div class="card" style="padding:20px">
+                        <h3 style="font-size:0.95rem;color:var(--text-secondary);margin-bottom:12px">📝 每日生成文章</h3>
+                        <div style="position:relative;width:100%;height:240px">
+                            <canvas id="dashArticlesChart" style="width:100%;height:100%"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
             </div> <!-- End tab-dashboard -->
 
             <!-- Users Tab -->
@@ -4152,7 +4181,7 @@ export default {
 
         // Pagination state for Users
         let usersOffset = 0;
-        const usersLimit = 10;
+        const usersLimit = 20; // 每页显示20条用户数据
         let usersTotal = 0;
         let isFetchingUsers = false;
         let userSort = 'created_at';
@@ -4292,9 +4321,9 @@ export default {
             document.getElementById('activeUsersToday').textContent = data.overview?.activeUsersToday || '0';
             document.getElementById('newUsersToday').textContent = data.overview?.newUsersToday || '0';
             document.getElementById('newArticlesToday').textContent = data.overview?.newArticlesToday || '0';
-            document.getElementById('todayRechargeAmount').textContent = '¥' + (data.overview?.todayRechargeAmount || 0).toFixed(2);
+            document.getElementById('todayRechargeAmount').textContent = (data.overview?.todayRechargeAmount || 0).toFixed(2);
             document.getElementById('todayRechargeCount').textContent = data.overview?.todayRechargeCount || '0';
-            document.getElementById('totalRechargeAmount').textContent = '¥' + (data.overview?.totalRechargeAmount || 0).toFixed(2);
+            document.getElementById('totalRechargeAmount').textContent =  (data.overview?.totalRechargeAmount || 0).toFixed(2);
             document.getElementById('pendingOrderCount').textContent = data.overview?.pendingOrderCount || '0';
             
             // Platforms
@@ -4423,7 +4452,140 @@ export default {
             document.querySelectorAll('.platform-item').forEach(el => el.classList.remove('active'));
         }
 
-        // ========== 趋势图功能 ==========
+        // ========== 仪表盘趋势图表 ==========
+        let currentChartRange = 30; // 默认30天
+
+        // 切换时间范围并刷新图表
+        function switchChartRange(days) {
+            currentChartRange = days;
+            // 更新按钮样式
+            [7, 30, 90].forEach(d => {
+                const btn = document.getElementById('rangeBtn' + d);
+                if (d === days) {
+                    btn.style.background = 'var(--accent)';
+                    btn.style.color = '#fff';
+                } else {
+                    btn.style.background = '';
+                    btn.style.color = '';
+                }
+            });
+            loadDashboardCharts();
+        }
+
+        // 加载仪表盘两个图表数据
+        async function loadDashboardCharts() {
+            const token = localStorage.getItem('memoraid_admin_token');
+            const days = currentChartRange;
+            try {
+                // 并行请求两个趋势数据
+                const [activeRes, articlesRes] = await Promise.all([
+                    fetch('/api/admin/trends?type=activeUsers&days=' + days, { headers: { 'Authorization': 'Bearer ' + token } }),
+                    fetch('/api/admin/trends?type=newArticles&days=' + days, { headers: { 'Authorization': 'Bearer ' + token } })
+                ]);
+                const activeData = await activeRes.json();
+                const articlesData = await articlesRes.json();
+                // 复用已有的 drawTrendChart 绘图逻辑，传入不同 canvas id
+                drawDashChart('dashActiveChart', activeData.labels, activeData.values, '#10b981');
+                drawDashChart('dashArticlesChart', articlesData.labels, articlesData.values, '#fbbf24');
+            } catch (e) {
+                console.error('仪表盘图表加载失败:', e);
+            }
+        }
+
+        // 绘制仪表盘小图表（复用折线图逻辑，适配小尺寸）
+        function drawDashChart(canvasId, labels, values, color) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+            const W = rect.width, H = rect.height;
+            ctx.clearRect(0, 0, W, H);
+
+            const padL = 40, padR = 10, padT = 10, padB = 30;
+            const chartW = W - padL - padR;
+            const chartH = H - padT - padB;
+            const maxVal = Math.max(...values, 1);
+            const stepX = chartW / (labels.length - 1 || 1);
+
+            // Y轴网格线和标签
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 0.5;
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '10px Inter, sans-serif';
+            ctx.textAlign = 'right';
+            const ySteps = 4;
+            for (let i = 0; i <= ySteps; i++) {
+                const y = padT + chartH - (i / ySteps) * chartH;
+                ctx.fillText(Math.round(maxVal * i / ySteps).toString(), padL - 6, y + 3);
+                ctx.beginPath();
+                ctx.moveTo(padL, y);
+                ctx.lineTo(W - padR, y);
+                ctx.stroke();
+            }
+
+            // 渐变填充
+            const gradient = ctx.createLinearGradient(0, padT, 0, padT + chartH);
+            gradient.addColorStop(0, color + '35');
+            gradient.addColorStop(1, color + '05');
+            ctx.beginPath();
+            ctx.moveTo(padL, padT + chartH);
+            for (let i = 0; i < values.length; i++) {
+                ctx.lineTo(padL + i * stepX, padT + chartH - (values[i] / maxVal) * chartH);
+            }
+            ctx.lineTo(padL + (values.length - 1) * stepX, padT + chartH);
+            ctx.closePath();
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            // 折线
+            ctx.beginPath();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.lineJoin = 'round';
+            for (let i = 0; i < values.length; i++) {
+                const x = padL + i * stepX;
+                const y = padT + chartH - (values[i] / maxVal) * chartH;
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+
+            // 数据点（数据量大时只画有值的点）
+            for (let i = 0; i < values.length; i++) {
+                if (values[i] > 0 || values.length <= 30) {
+                    const x = padL + i * stepX;
+                    const y = padT + chartH - (values[i] / maxVal) * chartH;
+                    ctx.beginPath();
+                    ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+                    ctx.fillStyle = values[i] > 0 ? color : '#cbd5e1';
+                    ctx.fill();
+                }
+            }
+
+            // X轴日期标签（自适应间隔）
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '9px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            const maxLabels = 8;
+            const interval = Math.ceil(labels.length / maxLabels);
+            for (let i = 0; i < labels.length; i++) {
+                if (i % interval === 0 || i === labels.length - 1) {
+                    ctx.fillText(labels[i], padL + i * stepX, H - 6);
+                }
+            }
+
+            // 右上角显示总计（放在图表区域外上方，避免遮挡折线）
+            const sum = values.reduce((a, b) => a + b, 0);
+            ctx.fillStyle = '#64748b';
+            ctx.font = '11px Inter, sans-serif';
+            ctx.textAlign = 'right';
+            ctx.fillText('合计: ' + sum, W - padR, 10);
+        }
+
+        // ========== 趋势图功能（模态框） ==========
         // 显示趋势图模态框，type: activeUsers/newUsers/newArticles/rechargeAmount
         async function showTrendChart(type, title) {
             const modal = document.getElementById('trendModal');
@@ -4960,6 +5122,8 @@ export default {
             await fetchStats();
             await fetchUsers(true);
             await fetchArticles(true);
+            // 加载仪表盘趋势图表
+            loadDashboardCharts();
             
             // Setup routing
             const hash = window.location.hash.slice(1) || 'dashboard';
