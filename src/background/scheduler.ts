@@ -67,16 +67,25 @@ async function clearTaskLog(taskId: string) {
 
 // NewsNow API 中的 source id 与内容偏好分类的映射关系
 // 每个分类对应多个新闻源，执行时会随机选择一个源获取新闻
+// 扩充覆盖范围：新增汽车、游戏、旅行、美食、数码、国际、军事、房产分类
 const CATEGORY_SOURCE_MAP: Record<ContentCategory, string[]> = {
-  tech: ['36kr', 'ithome', 'sspai', 'juejin', 'hackernews', 'producthunt', 'github-trending-today'],
-  society: ['zhihu', 'toutiao', 'thepaper', 'baidu', 'ifeng', 'tencent-hot', 'douban'],
-  entertainment: ['douyin', 'bilibili-hot-search', 'bilibili-hot-video', 'kuaishou', 'douban', 'steam'],
-  finance: ['wallstreetcn-hot', 'cls-hot', 'xueqiu-hotstock', 'jin10', 'fastbull'],
-  sports: ['hupu'],
-  science: ['solidot', 'sspai'],
-  health: ['zhihu', 'toutiao'],
-  education: ['zhihu', 'nowcoder'],
-  crypto: ['wallstreetcn-hot', 'cls-hot', 'jin10', 'xueqiu-hotstock'],
+  tech: ['36kr', 'ithome', 'sspai', 'juejin', 'hackernews', 'producthunt', 'github-trending-today', 'oschina', 'v2ex', 'cnbeta'],
+  society: ['zhihu', 'toutiao', 'thepaper', 'baidu', 'ifeng', 'tencent-hot', 'douban', 'weibo', 'netease-news'],
+  entertainment: ['douyin', 'bilibili-hot-search', 'bilibili-hot-video', 'kuaishou', 'douban', 'steam', 'weibo', 'maoyan'],
+  finance: ['wallstreetcn-hot', 'cls-hot', 'xueqiu-hotstock', 'jin10', 'fastbull', 'eastmoney', 'yicai'],
+  sports: ['hupu', 'zhibo8', 'dongqiudi'],
+  science: ['solidot', 'sspai', 'zhihu', 'guokr'],
+  health: ['zhihu', 'toutiao', 'dxy'],
+  education: ['zhihu', 'nowcoder', 'juejin', 'csdn'],
+  crypto: ['wallstreetcn-hot', 'cls-hot', 'jin10', 'xueqiu-hotstock', 'coindesk', 'cointelegraph'],
+  auto: ['autohome', 'dongchedi', 'yiche', 'zhihu'],           // 汽车
+  gaming: ['steam', 'bilibili-hot-search', '3dmgame', 'gamersky', 'nga'], // 游戏
+  travel: ['mafengwo', 'ctrip', 'zhihu', 'xiaohongshu'],       // 旅行
+  food: ['dianping', 'xiachufang', 'zhihu', 'xiaohongshu'],    // 美食
+  digital: ['ithome', 'sspai', 'zol', 'smzdm', 'cnbeta'],     // 数码
+  world: ['bbc', 'reuters', 'zaobao', 'ftchinese', 'ifeng'],   // 国际
+  military: ['thepaper', 'ifeng', 'toutiao', 'zhihu'],         // 军事
+  realestate: ['zhihu', 'toutiao', 'cls-hot', 'thepaper'],     // 房产
 };
 
 /**

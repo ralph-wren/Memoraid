@@ -73,8 +73,8 @@ export interface AppSettings {
 // 定时任务相关类型定义
 // ============================================
 
-// 内容偏好分类
-export type ContentCategory = 'tech' | 'society' | 'entertainment' | 'finance' | 'sports' | 'science' | 'health' | 'education' | 'crypto';
+// 内容偏好分类（扩充覆盖范围，新增汽车、游戏、旅行、美食、数码、国际、军事、房产）
+export type ContentCategory = 'tech' | 'society' | 'entertainment' | 'finance' | 'sports' | 'science' | 'health' | 'education' | 'crypto' | 'auto' | 'gaming' | 'travel' | 'food' | 'digital' | 'world' | 'military' | 'realestate';
 
 // 内容偏好分类的中文映射
 export const CONTENT_CATEGORIES: Record<ContentCategory, string> = {
@@ -87,6 +87,14 @@ export const CONTENT_CATEGORIES: Record<ContentCategory, string> = {
   health: '健康',
   education: '教育',
   crypto: '加密货币',
+  auto: '汽车',
+  gaming: '游戏',
+  travel: '旅行',
+  food: '美食',
+  digital: '数码',
+  world: '国际',
+  military: '军事',
+  realestate: '房产',
 };
 
 // 发布平台类型

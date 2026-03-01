@@ -4564,7 +4564,17 @@ const waitForPageReady = async (maxWait = 10000): Promise<'login' | 'home' | 'ed
 // 自动填充逻辑
 // ============================================
 
+// 防止 autoFillContent 重复执行的标志
+let isAutoFilling = false;
+
 const autoFillContent = async () => {
+  // 防止重复执行（storage 监听器和 DOMContentLoaded 可能同时触发）
+  if (isAutoFilling) {
+    console.log('[Memoraid] autoFillContent 正在执行中，跳过重复调用');
+    return;
+  }
+  isAutoFilling = true;
+
   try {
     const data = await chrome.storage.local.get('pending_weixin_publish');
     if (!data || !data.pending_weixin_publish) return;
@@ -4704,6 +4714,9 @@ const autoFillContent = async () => {
   } catch (error) {
     console.error('Memoraid: 微信公众号填充内容错误', error);
     logger.log(`❌ 填充错误: ${error}`, 'error');
+  } finally {
+    // 重置标志，允许下次触发（比如用户手动重试）
+    isAutoFilling = false;
   }
 };
 
@@ -4948,11 +4961,24 @@ const installPublishReporting = () => {
 // 初始化
 // ============================================
 
+// 页面加载完成后执行自动填充
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => autoFillContent());
 } else {
   autoFillContent();
 }
+
+// 监听 storage 变化，当 pending_weixin_publish 被写入时自动触发填充
+// 解决时序问题：如果 content script 先加载，但 pending 数据还没写入，
+// 上面的 autoFillContent 会因为没有数据而直接 return。
+// 这个监听器确保数据写入后能再次触发填充。
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && changes.pending_weixin_publish?.newValue) {
+    console.log('[Memoraid] 检测到 pending_weixin_publish 数据变化，触发自动填充');
+    // 延迟一小段时间，确保页面 DOM 已经稳定
+    setTimeout(() => autoFillContent(), 1500);
+  }
+});
 
 installPublishReporting();
 
