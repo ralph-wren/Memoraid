@@ -66,6 +66,60 @@ export interface AppSettings {
     xiaohongshu?: string;
   };
   anonymousId?: string; // 匿名用户唯一 ID
+  scheduledTasks?: ScheduledTask[]; // 定时任务列表
+}
+
+// ============================================
+// 定时任务相关类型定义
+// ============================================
+
+// 内容偏好分类
+export type ContentCategory = 'tech' | 'society' | 'entertainment' | 'finance' | 'sports' | 'science' | 'health' | 'education' | 'crypto';
+
+// 内容偏好分类的中文映射
+export const CONTENT_CATEGORIES: Record<ContentCategory, string> = {
+  tech: '科技',
+  society: '社会',
+  entertainment: '娱乐',
+  finance: '财经',
+  sports: '体育',
+  science: '科学',
+  health: '健康',
+  education: '教育',
+  crypto: '加密货币',
+};
+
+// 发布平台类型
+export type PublishPlatform = 'weixin' | 'toutiao' | 'zhihu' | 'xiaohongshu';
+
+// 发布平台的中文映射
+export const PUBLISH_PLATFORMS: Record<PublishPlatform, string> = {
+  weixin: '微信公众号',
+  toutiao: '头条号',
+  zhihu: '知乎',
+  xiaohongshu: '小红书',
+};
+
+// 定时任务调度类型
+export type ScheduleType = 'daily' | 'weekly' | 'interval';
+
+// 定时任务配置
+export interface ScheduledTask {
+  id: string;                        // 唯一标识
+  enabled: boolean;                  // 是否启用
+  name: string;                      // 任务名称
+  scheduleType: ScheduleType;        // 调度类型：每天/每周/间隔
+  hour: number;                      // 执行小时（0-23）
+  minute: number;                    // 执行分钟（0-59）
+  weekdays?: number[];               // 周几执行（0=周日, 1=周一...6=周六），仅 weekly 类型
+  intervalMinutes?: number;          // 间隔分钟数，仅 interval 类型
+  newsSourceUrl: string;             // 新闻源 URL
+  categories: ContentCategory[];     // 内容偏好分类
+  platforms: PublishPlatform[];      // 发布到哪些平台
+  lastRunTime?: number;              // 上次执行时间戳
+  lastRunStatus?: 'success' | 'failed' | 'running'; // 上次执行状态
+  lastRunError?: string;             // 上次执行失败的错误信息
+  createdAt: number;                 // 创建时间
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -119,7 +173,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     formality: 30,     // 偏口语化
     humor: 40          // 略微轻松
   },
-  anonymousId: ''
+  anonymousId: '',
+  scheduledTasks: [] // 默认无定时任务
 };
 
 export const getSettings = async (): Promise<AppSettings> => {

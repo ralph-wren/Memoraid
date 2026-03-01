@@ -5,11 +5,64 @@ import { getSettings, saveSettings, DEFAULT_SETTINGS, addHistoryItem } from '../
 import { ExtractionResult, ActiveTask, ChatMessage } from '../utils/types';
 import { generateArticlePrompt, TOUTIAO_DEFAULT_PROMPT, WEIXIN_DEFAULT_PROMPT, ZHIHU_DEFAULT_PROMPT, XIAOHONGSHU_DEFAULT_PROMPT } from '../utils/prompts';
 import { generateRandomString } from '../utils/crypto';
+import { initScheduler, runTaskById } from './scheduler'; // 定时任务调度器
 
 console.log('Background service worker started');
 
 let currentTask: ActiveTask | null = null;
 let abortController: AbortController | null = null;
+
+/**
+ * 创建 OpenAI 客户端的公共函数
+ * 统一处理 Memoraid provider 的特殊认证逻辑：
+ * - 已登录用户：使用 sync.token 作为 Bearer token
+ * - 匿名用户：使用 anonymousId 通过 X-Anonymous-ID header
+ * - 其他 provider：直接使用 apiKey
+ * 
+ * 【修复】之前只有 startSummarization 和 startRefinement 有此处理，
+ * startArticleGeneration、startArticleGenerationAndPublish、handleAnalyzeScreenshot 缺失，
+ * 导致 Memoraid provider 发送 'managed-by-backend' 作为 Bearer token 被后端拒绝 (401)
+ */
+function createOpenAIClient(settings: import('../utils/storage').AppSettings): OpenAI {
+  let effectiveApiKey: string = '';
+  let extraHeaders: Record<string, string> = {};
+
+  // Memoraid provider 特殊处理：后端通过 sync.token 或 X-Anonymous-ID 识别用户
+  if (settings.provider === 'memoraid') {
+    if (settings.sync?.token) {
+      // 已登录用户：用 sync token 作为 Bearer
+      effectiveApiKey = String(settings.sync.token);
+    } else {
+      // 匿名用户：用 anonymousId 通过 X-Anonymous-ID header
+      const anonId = settings.anonymousId;
+      if (!anonId) {
+        throw new Error('无法获取匿名用户标识，请重试');
+      }
+      effectiveApiKey = 'anonymous'; // OpenAI SDK 需要一个非空的 key
+      extraHeaders['X-Anonymous-ID'] = String(anonId);
+    }
+  } else {
+    // 其他 provider：从 apiKeys 映射或 apiKey 字段获取
+    const rawKey = settings.apiKeys?.[settings.provider] || settings.apiKey;
+    effectiveApiKey = rawKey ? String(rawKey) : '';
+  }
+
+  if (!effectiveApiKey) {
+    throw new Error(`API Key for ${settings.provider} is missing. Please check settings.`);
+  }
+
+  // 确保 baseUrl 是有效字符串，避免 OpenAI SDK 内部 startsWith 报错
+  const baseURL = settings.baseUrl ? String(settings.baseUrl) : undefined;
+
+  return new OpenAI({
+    apiKey: effectiveApiKey,
+    baseURL,
+    defaultHeaders: extraHeaders
+  });
+}
+
+// 初始化定时任务调度器
+initScheduler();
 
 // Initialize state from storage on startup
 chrome.storage.local.get(['currentTask'], (result) => {
@@ -358,11 +411,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ success: true, pong: true });
     return false; // 同步响应
   }
+
+  // 定时任务：手动立即执行指定任务
+  if (message.type === 'SCHEDULE_RUN_NOW') {
+    const { taskId } = message.payload || {};
+    if (taskId) {
+      runTaskById(taskId); // 异步执行，不等待
+    }
+    sendResponse({ success: true });
+    return true;
+  }
 });
 
 // 已移除 handleAiMediaEnhance 和 handleOcrImage 函数
 
-async function handleInitiateProcess(platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu', tabId: number) {
+// 导出 handleInitiateProcess，供 scheduler 直接调用
+// （background 不能通过 chrome.runtime.sendMessage 给自己发消息）
+export async function handleInitiateProcess(platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu', tabId: number) {
   const platformName = platform === 'toutiao' ? '头条' :
     platform === 'zhihu' ? '知乎' :
       platform === 'xiaohongshu' ? '小红书' : '公众号';
@@ -873,21 +938,14 @@ function extractTextFromHtml(html: string): string {
 async function handleAnalyzeScreenshot({ prompt, history }: { prompt: string, history?: any[] }) {
   try {
     const settings = await getSettings();
-    let effectiveApiKey = settings.apiKeys?.[settings.provider] || settings.apiKey;
-
-    if (!effectiveApiKey) {
-      throw new Error(`API Key for ${settings.provider} is missing.`);
-    }
 
     // 1. Capture Screenshot
     // Note: captureVisibleTab works in background script for the active tab of the current window
     // @ts-ignore - Chrome API types can be tricky with optional arguments
     const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: 'jpeg', quality: 60 });
 
-    const openai = new OpenAI({
-      apiKey: effectiveApiKey,
-      baseURL: settings.baseUrl,
-    });
+    // 使用公共函数创建 OpenAI 客户端（自动处理 Memoraid 认证）
+    const openai = createOpenAIClient(settings);
 
     // 2. Call AI with Vision
     const messages = [
@@ -980,34 +1038,8 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
     broadcastUpdate();
 
     const settings = await getSettings();
-    let effectiveApiKey = settings.apiKeys?.[settings.provider] || settings.apiKey;
-    let extraHeaders: Record<string, string> = {};
-
-    // Special handling for 'memoraid' provider: use user sync token or anonymous ID
-    if (settings.provider === 'memoraid') {
-      if (settings.sync?.token) {
-        effectiveApiKey = settings.sync.token;
-      } else {
-         // Anonymous mode
-         // Use the consistent anonymousId from settings (managed by storage.ts)
-         const anonId = settings.anonymousId;
-         if (!anonId) {
-             throw new Error('无法获取匿名用户标识，请重试');
-         }
-         effectiveApiKey = 'anonymous'; // Dummy key for SDK
-         extraHeaders['X-Anonymous-ID'] = anonId;
-      }
-    }
-
-    if (!effectiveApiKey) {
-      throw new Error(`API Key for ${settings.provider} is missing. Please check settings.`);
-    }
-
-    const openai = new OpenAI({
-      apiKey: effectiveApiKey,
-      baseURL: settings.baseUrl,
-      defaultHeaders: extraHeaders
-    });
+    // 使用公共函数创建 OpenAI 客户端（自动处理 Memoraid 认证）
+    const openai = createOpenAIClient(settings);
 
     updateTaskState({
       status: 'Refining...',
@@ -1149,39 +1181,8 @@ async function startSummarization(extraction: ExtractionResult) {
 
     const settings = await getSettings();
 
-    // Determine the effective API Key:
-    // 1. Try to get provider-specific key from the new apiKeys map
-    // 2. Fallback to the legacy single 'apiKey' if not found
-    let effectiveApiKey = settings.apiKeys?.[settings.provider] || settings.apiKey;
-    let extraHeaders: Record<string, string> = {};
-
-    // Special handling for 'memoraid' provider: use user sync token or anonymous ID
-    if (settings.provider === 'memoraid') {
-      if (settings.sync?.token) {
-        effectiveApiKey = settings.sync.token;
-      } else {
-         // Anonymous mode
-         const anonId = settings.anonymousId;
-         if (!anonId) {
-             throw new Error('无法获取匿名用户标识，请重试');
-         }
-         effectiveApiKey = 'anonymous'; // Dummy key for SDK
-         extraHeaders['X-Anonymous-ID'] = anonId;
-      }
-    }
-
-    // Special handling for 'custom' provider: might rely on the legacy field if not explicitly mapped,
-    // but the UI now syncs custom key to apiKeys['custom'] too.
-
-    if (!effectiveApiKey) {
-      throw new Error(`API Key for ${settings.provider} is missing. Please check settings.`);
-    }
-
-    const openai = new OpenAI({
-      apiKey: effectiveApiKey,
-      baseURL: settings.baseUrl,
-      defaultHeaders: extraHeaders
-    });
+    // 使用公共函数创建 OpenAI 客户端（自动处理 Memoraid 认证）
+    const openai = createOpenAIClient(settings);
 
     updateTaskState({ status: 'Processing...', message: 'Sending request to AI...', progress: 30 });
 
@@ -1903,16 +1904,8 @@ async function startArticleGeneration(extraction: ExtractionResult) {
 
     const settings = await getSettings();
 
-    let effectiveApiKey = settings.apiKeys?.[settings.provider] || settings.apiKey;
-
-    if (!effectiveApiKey) {
-      throw new Error(`API Key for ${settings.provider} is missing. Please check settings.`);
-    }
-
-    const openai = new OpenAI({
-      apiKey: effectiveApiKey,
-      baseURL: settings.baseUrl,
-    });
+    // 使用公共函数创建 OpenAI 客户端（自动处理 Memoraid 认证）
+    const openai = createOpenAIClient(settings);
 
     updateTaskState({ status: 'Processing...', message: 'Sending request to AI...', progress: 30 });
 
@@ -2134,16 +2127,8 @@ async function startArticleGenerationAndPublish(extraction: ExtractionResult, pl
 
     const settings = await getSettings();
 
-    let effectiveApiKey = settings.apiKeys?.[settings.provider] || settings.apiKey;
-
-    if (!effectiveApiKey) {
-      throw new Error(`API Key for ${settings.provider} is missing. Please check settings.`);
-    }
-
-    const openai = new OpenAI({
-      apiKey: effectiveApiKey,
-      baseURL: settings.baseUrl,
-    });
+    // 使用公共函数创建 OpenAI 客户端（自动处理 Memoraid 认证）
+    const openai = createOpenAIClient(settings);
 
     updateTaskState({ status: 'Processing...', message: '正在发送请求到 AI...', progress: 20 });
 

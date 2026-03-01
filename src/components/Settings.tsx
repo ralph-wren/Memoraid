@@ -5,16 +5,7 @@ import { getTranslation } from '../utils/i18n';
 import { Eye, EyeOff, Loader2, CheckCircle, XCircle, Newspaper, RefreshCw, Cloud, Lock, Key, Palette, Send, BookOpen, RotateCcw, FileText, MessageCircle, Github, Heart } from 'lucide-react';
 import { validateGitHubConnection } from '../utils/github';
 import { generateRandomString } from '../utils/crypto';
-
-const LANGUAGES = [
-  { code: 'zh-CN', name: '简体中文' },
-  { code: 'en', name: 'English' },
-  { code: 'ja', name: '日本語' },
-  { code: 'ko', name: '한국어' },
-  { code: 'de', name: 'Deutsch' },
-  { code: 'fr', name: 'Français' },
-  { code: 'es', name: 'Español' }
-];
+import ScheduleSettings from './ScheduleSettings'; // 定时任务设置组件
 
 interface ProviderConfig {
   name: string;
@@ -28,7 +19,7 @@ const BACKEND_URL = 'http://memoraid.dpdns.org';
 
 const PROVIDERS: Record<string, ProviderConfig> = {
   'memoraid': {
-    name: '🆓 Memoraid (Free - DeepSeek, 10 articles/user)',
+    name: '🆓 Memoraid',
     baseUrl: 'https://memoraid.dpdns.org/api/ai',
     models: ['deepseek-chat'],
     isShared: true
@@ -178,7 +169,12 @@ const StyleSlider: React.FC<StyleSliderProps> = ({ label, leftLabel, rightLabel,
   );
 };
 
-const Settings: React.FC = () => {
+// Settings 组件接收 onViewTaskLog 回调，用于跳转到任务日志页面
+interface SettingsProps {
+  onViewTaskLog?: (task: import('../utils/storage').ScheduledTask) => void;
+}
+
+const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const latestSettingsRef = React.useRef<AppSettings>(DEFAULT_SETTINGS);
   const hasLoadedRef = React.useRef(false);
@@ -477,19 +473,6 @@ const Settings: React.FC = () => {
         return newSettings;
       });
     }
-  };
-
-  const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const lang = e.target.value;
-    setSettings(prev => {
-      const isDefaultPrompt = !prev.systemPrompt || Object.values(SYSTEM_PROMPTS).includes(prev.systemPrompt);
-      return {
-        ...prev,
-        language: lang,
-        // If the current prompt is one of the defaults, switch it to the new language default
-        systemPrompt: isDefaultPrompt ? (SYSTEM_PROMPTS[lang] || prev.systemPrompt) : prev.systemPrompt
-      };
-    });
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -876,7 +859,8 @@ const Settings: React.FC = () => {
   };
 
   const handleVerifyApi = async () => {
-    if (!settings.apiKey) {
+    // Memoraid 使用后端管理的密钥，不需要用户手动输入，跳过空值检查
+    if (!settings.apiKey && !PROVIDERS[selectedProvider]?.isShared) {
       alert(t.apiKeyPlaceholder);
       return;
     }
@@ -889,12 +873,37 @@ const Settings: React.FC = () => {
       if (!url.endsWith('/')) url += '/';
       const endpoint = `${url}chat/completions`;
 
+      // 构建请求头：Memoraid provider 需要特殊认证方式
+      // 后端通过 sync.token（已登录）或 X-Anonymous-ID（匿名）识别用户
+      // 而不是通过 apiKey（'managed-by-backend' 是占位符，后端不认）
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (PROVIDERS[selectedProvider]?.isShared && selectedProvider === 'memoraid') {
+        // Memoraid provider：使用登录 token 或匿名 ID 认证
+        if (settings.sync?.token) {
+          // 已登录用户：用 sync token 作为 Bearer
+          headers['Authorization'] = `Bearer ${settings.sync.token}`;
+        } else {
+          // 匿名用户：用 anonymousId 通过 X-Anonymous-ID header
+          const anonId = settings.anonymousId;
+          if (!anonId) {
+            alert('无法获取用户标识，请刷新后重试');
+            setVerifyingApi(false);
+            return;
+          }
+          headers['Authorization'] = 'Bearer anonymous';
+          headers['X-Anonymous-ID'] = anonId;
+        }
+      } else {
+        // 其他 provider：直接用 apiKey 作为 Bearer
+        headers['Authorization'] = `Bearer ${settings.apiKey}`;
+      }
+
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${settings.apiKey}`
-        },
+        headers,
         body: JSON.stringify({
           model: settings.model,
           messages: [{ role: 'user', content: 'Hi' }],
@@ -1081,26 +1090,14 @@ const Settings: React.FC = () => {
         )}
       </div>
 
-      {/* ========== 公共设置 ========== */}
+      {/* ========== 定时任务（放在同步备份下面） ========== */}
+      <ScheduleSettings
+        settings={settings}
+        onSettingsChange={setSettings}
+        onViewTaskLog={onViewTaskLog}
+      />
 
-      {/* 语言设置 */}
-      <div className="border-t pt-4 space-y-2">
-        <label className="block text-sm font-medium">{t.languageLabel}</label>
-        <select
-          value={settings.language || 'zh-CN'}
-          onChange={handleLanguageChange}
-          className="w-full p-2 border rounded"
-        >
-          {LANGUAGES.map(lang => (
-            <option key={lang.code} value={lang.code}>
-              {lang.name}
-            </option>
-          ))}
-        </select>
-        <p className="text-xs text-gray-500">
-          {t.languageHint}
-        </p>
-      </div>
+      {/* ========== 公共设置 ========== */}
 
       <div className="border-t pt-4 space-y-3">
         <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">
@@ -1149,8 +1146,8 @@ const Settings: React.FC = () => {
           <div className="flex justify-between items-center">
             <label className="block text-sm font-medium">{t.apiKeyLabel}</label>
             <div className="flex items-center gap-3">
-              {!PROVIDERS[selectedProvider]?.isShared && (
-                <button
+              {/* 验证按钮：所有 provider 都显示，包括 Memoraid */}
+              <button
                   onClick={handleVerifyApi}
                   disabled={verifyingApi}
                   className={`flex items-center gap-1 text-xs transition ${apiVerifyStatus === 'success'
@@ -1171,7 +1168,6 @@ const Settings: React.FC = () => {
                   )}
                   {verifyingApi ? t.verifying : t.verifyButton}
                 </button>
-              )}
               {getProviderLink(selectedProvider) && !PROVIDERS[selectedProvider]?.isShared && (
                 <a
                   href={getProviderLink(selectedProvider)!}
@@ -1185,22 +1181,8 @@ const Settings: React.FC = () => {
             </div>
           </div>
 
-          {/* 共享密钥提示（如 NVIDIA） */}
-          {PROVIDERS[selectedProvider]?.isShared ? (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-              <div className="flex items-start gap-2">
-                <CheckCircle className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-green-800">
-                    🎉 免费共享密钥已自动配置
-                  </p>
-                  <p className="text-xs text-green-600 mt-1">
-                    所有用户共用此密钥，有速率限制。如遇到限流，请稍后重试或切换其他服务商。
-                  </p>
-                </div>
-              </div>
-            </div>
-          ) : (
+          {/* Memoraid 使用共享密钥，不需要用户输入 API Key，也不显示提示 */}
+          {PROVIDERS[selectedProvider]?.isShared ? null : (
             <div className="relative">
               <input
                 type={showApiKey ? "text" : "password"}
@@ -1687,8 +1669,6 @@ const Settings: React.FC = () => {
         </div>
       </div>
 
-
-
       {/* ========== GitHub 集成 ========== */}
       <div className="border-t pt-4">
         <h3 className="text-md font-semibold mb-2 flex items-center gap-2">
@@ -1777,7 +1757,6 @@ const Settings: React.FC = () => {
           </div>
         </div>
       </div>
-
 
 
       {/* ========== 自动保存状态提示 ========== */}

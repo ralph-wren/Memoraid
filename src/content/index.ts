@@ -779,6 +779,81 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return false;
 });
 
+// ============================================
+// 定时任务：抓取新闻列表
+// 当调度器打开新闻源页面后，发送此消息来获取页面上的新闻链接
+// ============================================
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === 'SCHEDULE_FETCH_NEWS_LIST') {
+    (async () => {
+      try {
+        const { categories } = message.payload || {};
+        const articles = fetchNewsListFromPage(categories || []);
+        sendResponse({ success: true, articles });
+      } catch (err: any) {
+        console.error('[Scheduler] 抓取新闻列表失败:', err);
+        sendResponse({ success: false, error: err?.message || '未知错误' });
+      }
+    })();
+    return true; // 异步响应
+  }
+  return false;
+});
+
+/**
+ * 从当前页面抓取新闻列表
+ * 通用逻辑：查找页面上所有带链接的新闻标题，根据关键词过滤
+ * @param categories 内容偏好关键词列表（如 ['科技', '社会']）
+ * @returns 匹配的文章列表 [{title, url}]
+ */
+function fetchNewsListFromPage(categories: string[]): Array<{title: string, url: string}> {
+  const results: Array<{title: string, url: string}> = [];
+  const seenUrls = new Set<string>();
+
+  // 获取页面上所有链接
+  const allLinks = document.querySelectorAll('a[href]');
+
+  for (const link of allLinks) {
+    const anchor = link as HTMLAnchorElement;
+    const href = anchor.href;
+    const text = (anchor.innerText || anchor.textContent || '').trim();
+
+    // 过滤条件：
+    // 1. 必须有文本内容（至少 8 个字符，排除导航链接）
+    // 2. 必须是 http/https 链接
+    // 3. 排除重复 URL
+    // 4. 排除当前页面自身的链接
+    if (text.length < 8) continue;
+    if (!href.startsWith('http')) continue;
+    if (seenUrls.has(href)) continue;
+    if (href === window.location.href) continue;
+
+    // 排除常见的非新闻链接（导航、登录、关于等）
+    const lowerText = text.toLowerCase();
+    const skipKeywords = ['登录', '注册', '关于', '联系', '隐私', '条款', '首页', 'login', 'sign', 'about', 'contact', 'privacy'];
+    if (skipKeywords.some(k => lowerText.includes(k))) continue;
+
+    // 如果指定了内容偏好，检查标题是否匹配任一分类关键词
+    // 如果没有指定偏好（空数组），则不过滤，返回所有新闻
+    if (categories.length > 0) {
+      const matchesCategory = categories.some(cat => text.includes(cat));
+      // 宽松匹配：如果标题不包含分类关键词，也检查链接周围的上下文
+      if (!matchesCategory) {
+        // 检查父元素的文本是否包含分类关键词
+        const parentText = (anchor.closest('div, li, article, section') as HTMLElement)?.innerText || '';
+        const parentMatches = categories.some(cat => parentText.includes(cat));
+        if (!parentMatches) continue;
+      }
+    }
+
+    seenUrls.add(href);
+    results.push({ title: text.substring(0, 100), url: href }); // 标题截断 100 字
+  }
+
+  console.log(`[Scheduler] 页面上找到 ${results.length} 篇匹配文章`);
+  return results;
+}
+
 async function extractContent(): Promise<ExtractionResult> {
   const url = window.location.hostname;
   
