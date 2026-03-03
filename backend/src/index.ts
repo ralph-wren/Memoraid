@@ -3227,7 +3227,8 @@ export default {
         const offset = parseInt(url.searchParams.get('offset') || '0');
 
         let query = `
-          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, ac.account_name, p.display_name as platform_name, p.icon as platform_icon, u.email as user_email,
+          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, a.extra_info,
+            ac.account_name, p.display_name as platform_name, p.icon as platform_icon, u.email as user_email,
             -- 计算该文章是该用户生成的第几篇（按发布时间升序排列）
             ROW_NUMBER() OVER (PARTITION BY u.id ORDER BY a.publish_time ASC) as user_article_index
           FROM articles a 
@@ -3275,8 +3276,21 @@ export default {
         
         const total = await env.DB.prepare(countQuery).bind(...countParams).first('total');
 
+        // 解析每篇文章的 extra_info，提取 token 消耗数据
+        const articles = (results.results || []).map((a: any) => {
+          let extra: any = {};
+          try { extra = JSON.parse(a.extra_info || '{}'); } catch {}
+          return {
+            ...a,
+            extra_info: undefined, // 不直接暴露原始 JSON 字符串
+            promptTokens: extra.promptTokens ?? null,
+            completionTokens: extra.completionTokens ?? null,
+            totalTokens: extra.totalTokens ?? null,
+          };
+        });
+
         return new Response(JSON.stringify({
-          articles: results.results,
+          articles,
           total,
           limit,
           offset
@@ -3301,7 +3315,8 @@ export default {
         const offset = parseInt(url.searchParams.get('offset') || '0');
 
         let query = `
-          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, ac.account_name, p.display_name as platform_name, p.icon as platform_icon
+          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, a.extra_info,
+            ac.account_name, p.display_name as platform_name, p.icon as platform_icon
           FROM articles a 
           JOIN accounts ac ON a.account_id = ac.id 
           JOIN platforms p ON ac.platform_id = p.id 
@@ -3346,8 +3361,21 @@ export default {
         
         const total = await env.DB.prepare(countQuery).bind(...countParams).first('total');
 
+        // 解析每篇文章的 extra_info，提取 token 消耗数据
+        const articles = (results.results || []).map((a: any) => {
+          let extra: any = {};
+          try { extra = JSON.parse(a.extra_info || '{}'); } catch {}
+          return {
+            ...a,
+            extra_info: undefined,
+            promptTokens: extra.promptTokens ?? null,
+            completionTokens: extra.completionTokens ?? null,
+            totalTokens: extra.totalTokens ?? null,
+          };
+        });
+
         return new Response(JSON.stringify({
-          articles: results.results,
+          articles,
           total
         }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       } catch (e: any) {
@@ -4036,7 +4064,8 @@ export default {
                     <div class="card">
                         <div class="table-wrapper">
                             <table>
-                                <thead><tr><th>标题</th><th>平台</th><th>状态</th><th>用户</th><th>第几篇</th><th>时间</th></tr></thead>
+                                <!-- 新增 Token 列，显示每篇文章的 AI token 消耗 -->
+                                <thead><tr><th>标题</th><th>平台</th><th>状态</th><th>用户</th><th>第几篇</th><th>Token</th><th>时间</th></tr></thead>
                                 <tbody id="articlesTable"></tbody>
                             </table>
                         </div>
@@ -4408,6 +4437,10 @@ export default {
         function renderArticles(articles) {
             const html = articles.map(a => {
                 const icon = getPlatformIcon(a.platform_name || '', a.platform_icon || '');
+                // 显示 token 消耗，若无数据则显示 -
+                const tokenText = a.totalTokens != null
+                    ? \`<span title="输入:\${a.promptTokens} 输出:\${a.completionTokens}" style="cursor:default">\${a.totalTokens.toLocaleString()}</span>\`
+                    : '<span style="color:var(--text-muted)">-</span>';
                 return \`
                 <tr>
                     <td><div class="truncate-title" title="\${a.title}">\${a.title || '无标题'}</div></td>
@@ -4416,6 +4449,8 @@ export default {
                     <td onclick="filterByUser('\${a.user_email}')" style="cursor:pointer;color:var(--accent-secondary)" title="点击筛选此用户的文章">\${a.user_email}</td>
                     <!-- 显示该用户的第几篇文章，用徽章样式展示 -->
                     <td><span style="background:var(--bg-muted);color:var(--text-muted);padding:2px 8px;border-radius:12px;font-size:0.8rem;font-weight:500">第 \${a.user_article_index} 篇</span></td>
+                    <!-- Token 消耗，鼠标悬停显示输入/输出明细 -->
+                    <td>\${tokenText}</td>
                     <td>\${new Date(a.publish_time * 1000).toLocaleString()}</td>
                 </tr>
             \`}).join('');
@@ -6797,8 +6832,12 @@ export default {
                 return;
             }
             
-            const rows = articles.map(a => 
-                '<tr>' +
+            const rows = articles.map(a => {
+                // 显示 token 消耗，鼠标悬停显示输入/输出明细
+                const tokenCell = a.totalTokens != null
+                    ? '<span class="stat-pill" style="background:#eef2ff;color:#4f46e5" title="输入:' + a.promptTokens + ' 输出:' + a.completionTokens + '">' + a.totalTokens.toLocaleString() + '</span>'
+                    : '<span style="color:#9ca3af">-</span>';
+                return '<tr>' +
                     '<td><a href="' + (a.article_url || '#') + '" target="_blank" class="article-title">' + (a.title || '无标题') + '</a></td>' +
                     '<td><div class="platform-cell">' + (a.platform_icon || '') + ' ' + (a.platform_display_name || '') + '</div></td>' +
                     '<td>' + (a.account_name || '-') + '</td>' +
@@ -6806,15 +6845,18 @@ export default {
                     '<td><span class="stat-pill like">' + formatNum(a.like_count) + '</span></td>' +
                     '<td><span class="stat-pill comment">' + formatNum(a.comment_count) + '</span></td>' +
                     '<td><span class="stat-pill share">' + formatNum(a.share_count) + '</span></td>' +
+                    // 新增 Token 列
+                    '<td>' + tokenCell + '</td>' +
                     '<td class="time-cell">' + formatTime(a.publish_time) + '</td>' +
-                '</tr>'
-            ).join('');
+                '</tr>';
+            }).join('');
             
             document.getElementById('articlesTable').innerHTML = 
                 '<table class="data-table">' +
                     '<thead><tr>' +
                         '<th>标题</th><th>平台</th><th>账号</th>' +
-                        '<th>阅读</th><th>点赞</th><th>评论</th><th>转发</th><th>发布时间</th>' +
+                        '<th>阅读</th><th>点赞</th><th>评论</th><th>转发</th>' +
+                        '<th>Token</th><th>发布时间</th>' +
                     '</tr></thead>' +
                     '<tbody>' + rows + '</tbody>' +
                 '</table>';

@@ -27,4 +27,12 @@ export interface ActiveTask {
   sourceUrl?: string; // Source URL for the article
   sourceImages?: string[]; // Source images from the original content
   generatedId?: string; // ID of the generated article record
+  tokenUsage?: TokenUsage; // 本次 AI 调用的 token 消耗统计
+}
+
+// Token 消耗统计
+export interface TokenUsage {
+  promptTokens: number;      // 输入 token 数
+  completionTokens: number;  // 输出 token 数
+  totalTokens: number;       // 总 token 数
 }

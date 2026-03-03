@@ -1049,6 +1049,7 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
     });
 
     // Stream handling logic
+    // stream_options.include_usage: 让最后一个 chunk 返回 token 使用统计
     const stream = await openai.chat.completions.create({
       model: settings.model,
       messages: [
@@ -1059,6 +1060,7 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
         ...messages.filter(m => m.role !== 'system'),
       ] as any,
       stream: true,
+      stream_options: { include_usage: true },
     }, { signal: abortController.signal });
 
     const baseMessage = 'Generating response...';
@@ -1066,10 +1068,23 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
 
     let refinedContent = '';
     let lastUpdate = Date.now();
+    // 收集 streaming 最后一个 chunk 中的 token 使用统计
+    let tokenUsage: import('../utils/types').TokenUsage | undefined;
 
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content || '';
       refinedContent += content;
+
+      // 提取最后一个 chunk 中的 usage 信息（stream_options.include_usage 开启后才有）
+      if ((chunk as any).usage) {
+        const u = (chunk as any).usage;
+        tokenUsage = {
+          promptTokens: u.prompt_tokens || 0,
+          completionTokens: u.completion_tokens || 0,
+          totalTokens: u.total_tokens || 0,
+        };
+        console.log('[startRefinement] 提取到 tokenUsage:', tokenUsage);
+      }
 
       // Throttle updates to UI every 500ms
       const now = Date.now();
@@ -1122,7 +1137,8 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
     };
     await addHistoryItem(newItem);
 
-    // 记录生成文章（无需发布）
+    // 记录生成文章（无需发布），同时传入 token 消耗数据
+    console.log('[startRefinement] 准备上报文章，tokenUsage:', tokenUsage);
     const generatedId = await reportArticlePublish({
       platform: 'memoraid', // 默认平台
       title: newTitle,
@@ -1130,9 +1146,14 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
       summary: refinedContent.substring(0, 200),
       extra: {
         sourceUrl: '',
-        sourceTitle: title || 'Untitled Chat'
+        sourceTitle: title || 'Untitled Chat',
+        // 记录本次 AI 调用的 token 消耗
+        promptTokens: tokenUsage?.promptTokens,
+        completionTokens: tokenUsage?.completionTokens,
+        totalTokens: tokenUsage?.totalTokens,
       }
     });
+    console.log('[startRefinement] 文章上报完成，generatedId:', generatedId);
 
     updateTaskState({
       status: 'Refined!',
@@ -1141,7 +1162,8 @@ async function startRefinement(messages: ChatMessage[], title?: string) {
       result: refinedContent,
       conversationHistory: updatedHistory,
       title: newTitle,
-      generatedId // 保存生成的 ID
+      generatedId, // 保存生成的 ID
+      tokenUsage, // 本次 AI 调用的 token 消耗
     });
 
   } catch (error: any) {
@@ -1214,6 +1236,7 @@ async function startSummarization(extraction: ExtractionResult) {
       model: settings.model,
       messages: initialMessages as any,
       stream: true,
+      stream_options: { include_usage: true }, // 让最后一个 chunk 返回 token 统计
       temperature: 0.9, // 提高温度让回复更有创造性和多样化
     }, { signal: abortController.signal });
 
@@ -1225,17 +1248,28 @@ async function startSummarization(extraction: ExtractionResult) {
     let summary = '';
     let lastUpdate = Date.now();
     let hasReceivedContent = false;
+    // 收集 streaming 最后一个 chunk 中的 token 使用统计
+    let tokenUsage: import('../utils/types').TokenUsage | undefined;
 
     try {
       for await (const chunk of stream) {
         if (!hasReceivedContent) {
-          // First byte received! Clear strict timeout and maybe set a longer one?
-          // For now, we rely on the 3min global timeout or user cancel.
           hasReceivedContent = true;
         }
 
         const content = chunk.choices[0]?.delta?.content || '';
         summary += content;
+
+        // 提取最后一个 chunk 中的 usage 信息
+        if ((chunk as any).usage) {
+          const u = (chunk as any).usage;
+          tokenUsage = {
+            promptTokens: u.prompt_tokens || 0,
+            completionTokens: u.completion_tokens || 0,
+            totalTokens: u.total_tokens || 0,
+          };
+        console.log('[chunk] 提取到 tokenUsage:', tokenUsage);
+        }
 
         const now = Date.now();
         if (now - lastUpdate > 500) {
@@ -1348,7 +1382,7 @@ async function startSummarization(extraction: ExtractionResult) {
 
     await addHistoryItem(newItem);
 
-    // 记录生成的摘要文章
+    // 记录生成的摘要文章，同时传入 token 消耗数据
     const generatedId = await reportArticlePublish({
       platform: 'memoraid',
       title: extraction.title || 'Untitled Chat',
@@ -1356,7 +1390,11 @@ async function startSummarization(extraction: ExtractionResult) {
       summary: summary.substring(0, 200),
       extra: {
         sourceUrl: extraction.url,
-        type: 'summarization'
+        type: 'summarization',
+        // 记录本次 AI 调用的 token 消耗
+        promptTokens: tokenUsage?.promptTokens,
+        completionTokens: tokenUsage?.completionTokens,
+        totalTokens: tokenUsage?.totalTokens,
       }
     });
 
@@ -1369,7 +1407,8 @@ async function startSummarization(extraction: ExtractionResult) {
         ...initialMessages as ChatMessage[],
         { role: 'assistant', content: summary }
       ],
-      generatedId // 保存生成的 ID
+      generatedId, // 保存生成的 ID
+      tokenUsage, // 本次 AI 调用的 token 消耗
     });
 
     // Set badge to indicate completion
@@ -1934,6 +1973,7 @@ async function startArticleGeneration(extraction: ExtractionResult) {
       model: settings.model,
       messages: initialMessages as any,
       stream: true,
+      stream_options: { include_usage: true }, // 让最后一个 chunk 返回 token 统计
       temperature: 0.9, // 提高温度让回复更有创造性和多样化
     }, { signal: abortController.signal });
 
@@ -1944,6 +1984,8 @@ async function startArticleGeneration(extraction: ExtractionResult) {
     let summary = '';
     let lastUpdate = Date.now();
     let hasReceivedContent = false;
+    // 收集 streaming 最后一个 chunk 中的 token 使用统计
+    let tokenUsage: import('../utils/types').TokenUsage | undefined;
 
     try {
       for await (const chunk of stream) {
@@ -1953,6 +1995,17 @@ async function startArticleGeneration(extraction: ExtractionResult) {
 
         const content = chunk.choices[0]?.delta?.content || '';
         summary += content;
+
+        // 提取最后一个 chunk 中的 usage 信息
+        if ((chunk as any).usage) {
+          const u = (chunk as any).usage;
+          tokenUsage = {
+            promptTokens: u.prompt_tokens || 0,
+            completionTokens: u.completion_tokens || 0,
+            totalTokens: u.total_tokens || 0,
+          };
+        console.log('[chunk] 提取到 tokenUsage:', tokenUsage);
+        }
 
         const now = Date.now();
         if (now - lastUpdate > 500) {
@@ -2034,7 +2087,7 @@ async function startArticleGeneration(extraction: ExtractionResult) {
 
     await addHistoryItem(newItem);
 
-    // 记录生成的文章
+    // 记录生成的文章，同时传入 token 消耗数据
     const generatedId = await reportArticlePublish({
       platform: 'memoraid',
       title: finalTitle,
@@ -2042,7 +2095,11 @@ async function startArticleGeneration(extraction: ExtractionResult) {
       summary: summary.substring(0, 200),
       extra: {
         sourceUrl: extraction.url,
-        type: 'article_generation'
+        type: 'article_generation',
+        // 记录本次 AI 调用的 token 消耗
+        promptTokens: tokenUsage?.promptTokens,
+        completionTokens: tokenUsage?.completionTokens,
+        totalTokens: tokenUsage?.totalTokens,
       }
     });
 
@@ -2058,7 +2115,8 @@ async function startArticleGeneration(extraction: ExtractionResult) {
         ...initialMessages as ChatMessage[],
         { role: 'assistant', content: summary }
       ],
-      generatedId // 保存生成的 ID
+      generatedId, // 保存生成的 ID
+      tokenUsage, // 本次 AI 调用的 token 消耗
     });
 
     chrome.action.setBadgeText({ text: '1' });
@@ -2210,6 +2268,7 @@ ${platformPrompt}
       model: settings.model,
       messages: initialMessages as any,
       stream: true,
+      stream_options: { include_usage: true }, // 让最后一个 chunk 返回 token 统计
       temperature: 0.9, // 提高温度让回复更有创造性和多样化
     }, { signal: abortController.signal });
 
@@ -2219,6 +2278,8 @@ ${platformPrompt}
 
     let summary = '';
     let lastUpdate = Date.now();
+    // 收集 streaming 最后一个 chunk 中的 token 使用统计
+    let tokenUsage: import('../utils/types').TokenUsage | undefined;
 
     try {
       for await (const chunk of stream) {
@@ -2229,6 +2290,17 @@ ${platformPrompt}
 
         const content = chunk.choices[0]?.delta?.content || '';
         summary += content;
+
+        // 提取最后一个 chunk 中的 usage 信息
+        if ((chunk as any).usage) {
+          const u = (chunk as any).usage;
+          tokenUsage = {
+            promptTokens: u.prompt_tokens || 0,
+            completionTokens: u.completion_tokens || 0,
+            totalTokens: u.total_tokens || 0,
+          };
+        console.log('[chunk] 提取到 tokenUsage:', tokenUsage);
+        }
 
         const now = Date.now();
         if (now - lastUpdate > 500) {
@@ -2315,7 +2387,7 @@ ${platformPrompt}
 
     await addHistoryItem(newItem);
 
-    // 记录生成的文章（无论发布是否成功）
+    // 记录生成的文章（无论发布是否成功），同时传入 token 消耗数据
     const generatedId = await reportArticlePublish({
       platform: platform,
       title: finalTitle,
@@ -2323,7 +2395,11 @@ ${platformPrompt}
       summary: summary.substring(0, 200),
       extra: {
         sourceUrl: extraction.url,
-        type: 'publish_generation'
+        type: 'publish_generation',
+        // 记录本次 AI 调用的 token 消耗
+        promptTokens: tokenUsage?.promptTokens,
+        completionTokens: tokenUsage?.completionTokens,
+        totalTokens: tokenUsage?.totalTokens,
       }
     });
 
@@ -2333,7 +2409,8 @@ ${platformPrompt}
       progress: 95,
       result: summary,
       title: finalTitle,
-      generatedId // 保存生成的 ID
+      generatedId, // 保存生成的 ID
+      tokenUsage, // 本次 AI 调用的 token 消耗
     });
 
     // 根据平台发布

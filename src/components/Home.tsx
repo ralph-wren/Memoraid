@@ -143,6 +143,8 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
 
   const [progress, setProgress] = useState(0);
   const [logMessage, setLogMessage] = useState('');
+  // Token 消耗统计（每次 AI 调用后更新）
+  const [tokenUsage, setTokenUsage] = useState<{ promptTokens: number; completionTokens: number; totalTokens: number } | null>(null);
 
   const [errorMessage, setErrorMessage] = useState<React.ReactNode | null>(null);
 
@@ -349,6 +351,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     setStatus(t.extractingContent);
     setLogMessage(t.extractingContent);
     setResult(null);
+    setTokenUsage(null); // 清除上次的 token 消耗统计
     setErrorMessage(null);
     setConversationHistory([]);
     setUserClosedResult(false);
@@ -422,6 +425,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     setStatus(t.extractingContent);
     setLogMessage(t.extractingContent);
     setResult(null);
+    setTokenUsage(null); // 清除上次的 token 消耗统计
     setErrorMessage(null);
     setConversationHistory([]);
     setUserClosedResult(false);
@@ -497,6 +501,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     setStatus(t.extractingContent);
     setLogMessage(t.extractingContent);
     setResult(null);
+    setTokenUsage(null); // 清除上次的 token 消耗统计
     setErrorMessage(null);
     setConversationHistory([]);
     setUserClosedResult(false);
@@ -569,6 +574,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     setStatus(t.extractingContent);
     setLogMessage(t.extractingContent);
     setResult(null);
+    setTokenUsage(null); // 清除上次的 token 消耗统计
     setErrorMessage(null);
     setConversationHistory([]);
     setUserClosedResult(false);
@@ -727,6 +733,11 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     if (task.conversationHistory) {
       setConversationHistory(task.conversationHistory);
     }
+
+    // 更新 token 消耗统计
+    if (task.tokenUsage) {
+      setTokenUsage(task.tokenUsage);
+    }
   };
 
   useEffect(() => {
@@ -744,6 +755,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     setStatus(t.extractingContent);
     setLogMessage(t.extractingContent);
     setResult(null);
+    setTokenUsage(null); // 清除上次的 token 消耗统计
     setErrorMessage(null);
     setConversationHistory([]);
     setUserClosedResult(false); // Reset this flag for new task 
@@ -1271,6 +1283,16 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                 </pre>
               )}
             </div>
+
+            {/* Token 消耗统计显示 */}
+            {tokenUsage && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 text-xs text-indigo-700 flex items-center justify-between shrink-0">
+                <span className="font-medium">Token 消耗</span>
+                <span>
+                  输入 {tokenUsage.promptTokens.toLocaleString()} / 输出 {tokenUsage.completionTokens.toLocaleString()} / 总计 {tokenUsage.totalTokens.toLocaleString()}
+                </span>
+              </div>
+            )}
 
             <div className="flex gap-2 shrink-0">
               <button
