@@ -3696,6 +3696,87 @@ export default {
       }
     }
 
+    // 7.0.0.2 GET /api/admin/leaderboards - 获取排行榜数据（文章数、Token消耗、充值金额）
+    if (url.pathname === '/api/admin/leaderboards' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+
+        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+        if (!admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Admin access required' }), { status: 403, headers: corsHeaders });
+        }
+
+        const limit = parseInt(url.searchParams.get('limit') || '10');
+
+        // 1. 文章数量排行榜 - 统计每个用户生成的文章总数
+        const articlesLeaderboard = await env.DB.prepare(`
+          SELECT 
+            u.email,
+            u.provider,
+            COUNT(a.id) as article_count,
+            MAX(a.publish_time) as last_publish_time
+          FROM users u
+          LEFT JOIN accounts acc ON acc.user_id = u.id
+          LEFT JOIN articles a ON a.account_id = acc.id
+          GROUP BY u.id
+          HAVING article_count > 0
+          ORDER BY article_count DESC
+          LIMIT ?
+        `).bind(limit).all();
+
+        // 2. Token 消耗排行榜 - 统计每个用户消耗的总 Token 数
+        // 从 articles.extra_info 中提取 totalTokens 并求和
+        const tokenLeaderboard = await env.DB.prepare(`
+          SELECT 
+            u.email,
+            u.provider,
+            COUNT(a.id) as article_count,
+            SUM(
+              CAST(
+                json_extract(a.extra_info, '$.totalTokens') AS INTEGER
+              )
+            ) as total_tokens
+          FROM users u
+          LEFT JOIN accounts acc ON acc.user_id = u.id
+          LEFT JOIN articles a ON a.account_id = acc.id
+          WHERE json_extract(a.extra_info, '$.totalTokens') IS NOT NULL
+          GROUP BY u.id
+          HAVING total_tokens > 0
+          ORDER BY total_tokens DESC
+          LIMIT ?
+        `).bind(limit).all();
+
+        // 3. 充值金额排行榜 - 统计每个用户的累计充值金额
+        const rechargeLeaderboard = await env.DB.prepare(`
+          SELECT 
+            u.email,
+            u.provider,
+            SUM(po.amount) as total_amount,
+            COUNT(po.id) as order_count,
+            MAX(po.paid_at) as last_recharge_time
+          FROM users u
+          LEFT JOIN payment_orders po ON po.user_id = u.id
+          WHERE po.status = 'paid'
+          GROUP BY u.id
+          HAVING total_amount > 0
+          ORDER BY total_amount DESC
+          LIMIT ?
+        `).bind(limit).all();
+
+        return new Response(JSON.stringify({
+          articles: articlesLeaderboard.results || [],
+          tokens: tokenLeaderboard.results || [],
+          recharge: rechargeLeaderboard.results || []
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
     // 7.0.1 GET /admin - 系统管理后台页面
     if (url.pathname === '/admin' && request.method === 'GET') {
       const ASSETS_BASE = effectiveOrigin + '/assets/memoraid';
@@ -3828,6 +3909,12 @@ export default {
         .btn-danger { background: #e11d48; color: white; }
         .btn-success { background: #059669; color: white; }
 
+        /* 排行榜样式 - 添加hover效果 */
+        .leaderboard-item:hover {
+            transform: translateX(4px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
         /* Loading & Error - Centered */
         .loading { 
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -3903,6 +3990,10 @@ export default {
                 </a>
                 <a href="#orders" class="nav-item" id="nav-orders" onclick="switchTab('orders')">
                     <span>💰</span> 订单审核
+                </a>
+                <!-- 排行榜导航项 - 移到订单审核下面 -->
+                <a href="#leaderboards" class="nav-item" id="nav-leaderboards" onclick="switchTab('leaderboards')">
+                    <span>🏆</span> 排行榜
                 </a>
                 <a href="#settings" class="nav-item" id="nav-settings" onclick="switchTab('settings')">
                     <span>⚙️</span> 系统设置
@@ -4074,6 +4165,48 @@ export default {
                             <span id="articlePageInfo" style="font-size:0.875rem;color:var(--text-muted)"></span>
                             <button id="nextArticlesBtn" class="btn-sm btn-outline" disabled onclick="changeArticlePage(1)">下一页</button>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 排行榜 Tab -->
+            <div id="tab-leaderboards" class="tab-content" style="display:none">
+                <div class="section">
+                    <h2 class="section-title">🏆 排行榜</h2>
+                    
+                    <!-- 排行榜网格布局 -->
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(350px,1fr));gap:24px;margin-top:24px">
+                        
+                        <!-- 文章数量排行榜 -->
+                        <div class="card">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                                <h3 style="font-size:1.125rem;font-weight:600;color:var(--text)">📝 文章数量榜</h3>
+                            </div>
+                            <div id="articlesLeaderboard" style="display:flex;flex-direction:column;gap:12px">
+                                <div style="text-align:center;padding:40px;color:var(--text-muted)">加载中...</div>
+                            </div>
+                        </div>
+
+                        <!-- Token 消耗排行榜 -->
+                        <div class="card">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                                <h3 style="font-size:1.125rem;font-weight:600;color:var(--text)">⚡ Token 消耗榜</h3>
+                            </div>
+                            <div id="tokensLeaderboard" style="display:flex;flex-direction:column;gap:12px">
+                                <div style="text-align:center;padding:40px;color:var(--text-muted)">加载中...</div>
+                            </div>
+                        </div>
+
+                        <!-- 充值金额排行榜 -->
+                        <div class="card">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                                <h3 style="font-size:1.125rem;font-weight:600;color:var(--text)">💎 充值金额榜</h3>
+                            </div>
+                            <div id="rechargeLeaderboard" style="display:flex;flex-direction:column;gap:12px">
+                                <div style="text-align:center;padding:40px;color:var(--text-muted)">加载中...</div>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
             </div>
@@ -4998,6 +5131,12 @@ export default {
                 window.ordersLoaded = true;
             }
             
+            // 加载排行榜数据
+            if (tabId === 'leaderboards' && !window.leaderboardsLoaded) {
+                fetchLeaderboards();
+                window.leaderboardsLoaded = true;
+            }
+            
             if (tabId === 'settings') {
                 fetchEmailConfig();
             }
@@ -5124,6 +5263,136 @@ export default {
                 }
             } catch (e) {
                 alert('网络错误');
+            }
+        }
+
+        // 排行榜相关函数
+        async function fetchLeaderboards() {
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch('/api/admin/leaderboards?limit=10', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                if (!res.ok) {
+                    throw new Error('Failed to fetch leaderboards');
+                }
+                
+                const data = await res.json();
+                renderLeaderboards(data);
+            } catch (e) {
+                console.error('Failed to fetch leaderboards:', e);
+                // 显示错误信息
+                ['articlesLeaderboard', 'tokensLeaderboard', 'rechargeLeaderboard'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.innerHTML = '<div style="text-align:center;padding:40px;color:red">加载失败</div>';
+                });
+            }
+        }
+
+        // 渲染排行榜数据
+        function renderLeaderboards(data) {
+            // 排名徽章映射
+            const rankBadges = {
+                1: '🥇',
+                2: '🥈', 
+                3: '🥉'
+            };
+
+            // 1. 渲染文章数量排行榜
+            const articlesEl = document.getElementById('articlesLeaderboard');
+            if (data.articles && data.articles.length > 0) {
+                articlesEl.innerHTML = data.articles.map((item, index) => {
+                    const rank = index + 1;
+                    // 修复: 避免模板字符串嵌套,使用字符串拼接
+                    const badge = rankBadges[rank] || '<span style="display:inline-block;width:24px;text-align:center;font-weight:600;color:var(--text-muted)">' + rank + '</span>';
+                    // 修复时间显示: publish_time可能是Unix时间戳(秒),需要乘以1000转为毫秒
+                    let lastPublish = '-';
+                    if (item.last_publish_time) {
+                        // 如果时间戳小于一个合理的毫秒值(比如2000年),说明是秒,需要乘以1000
+                        const timestamp = item.last_publish_time < 10000000000 ? item.last_publish_time * 1000 : item.last_publish_time;
+                        const date = new Date(timestamp);
+                        lastPublish = date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+                    }
+                    
+                    return \`
+                        <div class="leaderboard-item" style="display:flex;align-items:center;padding:12px;background:var(--bg-secondary);border-radius:8px;transition:transform 0.2s">
+                            <div style="font-size:1.5rem;margin-right:12px">\${badge}</div>
+                            <div style="flex:1;min-width:0">
+                                <div style="font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="\${item.email}">\${item.email}</div>
+                                <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px">最近发布: \${lastPublish}</div>
+                            </div>
+                            <div style="text-align:right;margin-left:12px">
+                                <div style="font-size:1.25rem;font-weight:600;color:var(--accent)">\${item.article_count}</div>
+                                <div style="font-size:0.75rem;color:var(--text-muted)">篇文章</div>
+                            </div>
+                        </div>
+                    \`;
+                }).join('');
+            } else {
+                articlesEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据</div>';
+            }
+
+            // 2. 渲染 Token 消耗排行榜
+            const tokensEl = document.getElementById('tokensLeaderboard');
+            if (data.tokens && data.tokens.length > 0) {
+                tokensEl.innerHTML = data.tokens.map((item, index) => {
+                    const rank = index + 1;
+                    // 修复: 避免模板字符串嵌套
+                    const badge = rankBadges[rank] || '<span style="display:inline-block;width:24px;text-align:center;font-weight:600;color:var(--text-muted)">' + rank + '</span>';
+                    const totalTokens = item.total_tokens ? item.total_tokens.toLocaleString() : '0';
+                    
+                    return \`
+                        <div class="leaderboard-item" style="display:flex;align-items:center;padding:12px;background:var(--bg-secondary);border-radius:8px;transition:transform 0.2s">
+                            <div style="font-size:1.5rem;margin-right:12px">\${badge}</div>
+                            <div style="flex:1;min-width:0">
+                                <div style="font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="\${item.email}">\${item.email}</div>
+                                <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px">\${item.article_count} 篇文章</div>
+                            </div>
+                            <div style="text-align:right;margin-left:12px">
+                                <div style="font-size:1.25rem;font-weight:600;color:var(--accent)">\${totalTokens}</div>
+                                <div style="font-size:0.75rem;color:var(--text-muted)">Tokens</div>
+                            </div>
+                        </div>
+                    \`;
+                }).join('');
+            } else {
+                tokensEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据</div>';
+            }
+
+            // 3. 渲染充值金额排行榜
+            const rechargeEl = document.getElementById('rechargeLeaderboard');
+            if (data.recharge && data.recharge.length > 0) {
+                rechargeEl.innerHTML = data.recharge.map((item, index) => {
+                    const rank = index + 1;
+                    // 修复: 避免模板字符串嵌套
+                    const badge = rankBadges[rank] || '<span style="display:inline-block;width:24px;text-align:center;font-weight:600;color:var(--text-muted)">' + rank + '</span>';
+                    const totalAmount = item.total_amount ? '¥' + item.total_amount.toFixed(2) : '¥0.00';
+                    // 修复时间显示: paid_at可能是Unix时间戳(秒),需要乘以1000转为毫秒
+                    let lastRecharge = '-';
+                    if (item.last_recharge_time) {
+                        // 如果时间戳小于一个合理的毫秒值,说明是秒,需要乘以1000
+                        const timestamp = item.last_recharge_time < 10000000000 ? item.last_recharge_time * 1000 : item.last_recharge_time;
+                        const date = new Date(timestamp);
+                        lastRecharge = date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+                    }
+                    
+                    return \`
+                        <div class="leaderboard-item" style="display:flex;align-items:center;padding:12px;background:var(--bg-secondary);border-radius:8px;transition:transform 0.2s">
+                            <div style="font-size:1.5rem;margin-right:12px">\${badge}</div>
+                            <div style="flex:1;min-width:0">
+                                <div style="font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="\${item.email}">\${item.email}</div>
+                                <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px">最近充值: \${lastRecharge}</div>
+                            </div>
+                            <div style="text-align:right;margin-left:12px">
+                                <div style="font-size:1.25rem;font-weight:600;color:var(--accent)">\${totalAmount}</div>
+                                <div style="font-size:0.75rem;color:var(--text-muted)">\${item.order_count} 笔订单</div>
+                            </div>
+                        </div>
+                    \`;
+                }).join('');
+            } else {
+                rechargeEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据</div>';
             }
         }
 
