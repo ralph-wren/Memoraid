@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, Square, Github, Folder, UploadCloud, Check, Newspaper, BookOpen, MessageCircle, BookHeart, Bug, BarChart3 } from 'lucide-react';
+import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, Square, Github, Folder, UploadCloud, Check, Newspaper, BookOpen, MessageCircle, BookHeart, Bug, BarChart3, MessageSquare } from 'lucide-react';
 import { getHistory, deleteHistoryItem, HistoryItem, clearHistory, getSettings } from '../utils/storage';
 import { getDirectories, pushToGitHub } from '../utils/github';
 import { ExtractionResult } from '../utils/types';
@@ -80,6 +80,14 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
   const [userClosedResult, setUserClosedResult] = useState(false);
   const userClosedResultRef = React.useRef(userClosedResult);
   const viewRef = React.useRef(view);
+
+  // 反馈弹窗状态
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
+  const [feedbackType, setFeedbackType] = useState<'experience' | 'suggestion' | 'bug'>('experience');
+  const [feedbackContent, setFeedbackContent] = useState('');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [feedbackSubmitStatus, setFeedbackSubmitStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [feedbackErrorMessage, setFeedbackErrorMessage] = useState('');
 
   useEffect(() => {
     userClosedResultRef.current = userClosedResult;
@@ -898,6 +906,68 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     }
   };
 
+  // 提交用户反馈
+  const handleSubmitFeedback = async () => {
+    if (!feedbackContent.trim()) {
+      setFeedbackSubmitStatus('error');
+      setFeedbackErrorMessage('请输入反馈内容');
+      return;
+    }
+
+    setIsSubmittingFeedback(true);
+    setFeedbackSubmitStatus('idle');
+    setFeedbackErrorMessage('');
+    
+    try {
+      const settings = await getSettings();
+      const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+      const token = settings.sync?.token;
+      const anonymousId = settings.anonymousId;
+
+      // 构建请求头
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+
+      // 优先使用 token，如果没有则使用匿名 ID
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      } else if (anonymousId) {
+        headers['X-Anonymous-ID'] = anonymousId;
+      }
+
+      const response = await fetch(`${backendUrl}/api/feedback`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          type: feedbackType,
+          content: feedbackContent.trim()
+        })
+      });
+
+      if (response.ok) {
+        setFeedbackSubmitStatus('success');
+        // 2秒后自动关闭弹窗
+        setTimeout(() => {
+          setIsFeedbackModalOpen(false);
+          setFeedbackContent('');
+          setFeedbackType('experience');
+          setFeedbackSubmitStatus('idle');
+        }, 2000);
+      } else {
+        const error = await response.json();
+        setFeedbackSubmitStatus('error');
+        setFeedbackErrorMessage(error.error || '提交失败，请稍后重试');
+      }
+    } catch (error) {
+      console.error('Failed to submit feedback:', error);
+      setFeedbackSubmitStatus('error');
+      setFeedbackErrorMessage('网络错误，请稍后重试');
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  };
+
   const handlePush = async () => {
     setIsPushing(true);
     try {
@@ -985,6 +1055,13 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
           >
             <BarChart3 className="w-5 h-5 text-indigo-500" />
           </button>
+          <button
+            onClick={() => setIsFeedbackModalOpen(true)}
+            className="p-2 hover:bg-gray-100 rounded-full text-gray-600"
+            title="用户反馈"
+          >
+            <MessageSquare className="w-5 h-5 text-blue-500" />
+          </button>
           <a
             href="https://github.com/ralph-wren/Memoraid"
             target="_blank"
@@ -1013,8 +1090,8 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
       <div className="mb-3 px-4">
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg px-3 py-1.5 overflow-hidden">
           <div className="animate-marquee whitespace-nowrap text-xs inline-block">
-            <span className="text-blue-600 font-medium">🎉 新功能：</span>
-            <span className="text-gray-600">新增文章数据统计功能，点击右上角图表图标查看您的创作数据分析</span>
+            <span className="text-blue-600 font-medium">🎉 v1.3.0 新功能：</span>
+            <span className="text-gray-600">支持定时任务创建文章 | 支持充值文章额度 | 新增用户反馈功能 | 完善文章数据统计功能 | 优化账号同步功能</span>
           </div>
         </div>
       </div>
@@ -1531,6 +1608,130 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                   </button>
                 </>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 用户反馈弹窗 */}
+      {isFeedbackModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b px-4 py-3 flex justify-between items-center">
+              <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-blue-500" />
+                用户反馈
+              </h3>
+              <button
+                onClick={() => {
+                  setIsFeedbackModalOpen(false);
+                  setFeedbackContent('');
+                  setFeedbackType('experience');
+                  setFeedbackSubmitStatus('idle');
+                  setFeedbackErrorMessage('');
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              {/* 反馈类型选择 */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">反馈类型</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setFeedbackType('experience')}
+                    className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
+                      feedbackType === 'experience'
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    使用体验
+                  </button>
+                  <button
+                    onClick={() => setFeedbackType('suggestion')}
+                    className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
+                      feedbackType === 'suggestion'
+                        ? 'bg-green-500 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    优化建议
+                  </button>
+                  <button
+                    onClick={() => setFeedbackType('bug')}
+                    className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
+                      feedbackType === 'bug'
+                        ? 'bg-red-500 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    问题反馈
+                  </button>
+                </div>
+              </div>
+
+              {/* 反馈内容输入 */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">反馈内容</label>
+                <textarea
+                  value={feedbackContent}
+                  onChange={(e) => setFeedbackContent(e.target.value)}
+                  placeholder={
+                    feedbackType === 'experience'
+                      ? '请分享您的使用体验...'
+                      : feedbackType === 'suggestion'
+                      ? '请提出您的优化建议...'
+                      : '请描述您遇到的问题...'
+                  }
+                  className="w-full p-3 border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  rows={6}
+                />
+                <p className="text-xs text-gray-400">
+                  {feedbackContent.length} / 500 字符
+                </p>
+              </div>
+
+              {/* 状态提示 */}
+              {feedbackSubmitStatus === 'success' && (
+                <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
+                  <Check className="w-4 h-4" />
+                  <span>感谢您的反馈！我们会认真查看并改进。</span>
+                </div>
+              )}
+              {feedbackSubmitStatus === 'error' && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
+                  <X className="w-4 h-4" />
+                  <span>{feedbackErrorMessage}</span>
+                </div>
+              )}
+
+              {/* 提交按钮 */}
+              <button
+                onClick={handleSubmitFeedback}
+                disabled={isSubmittingFeedback || !feedbackContent.trim() || feedbackSubmitStatus === 'success'}
+                className="w-full bg-blue-500 text-white py-2.5 rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+              >
+                {isSubmittingFeedback ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    提交中...
+                  </>
+                ) : feedbackSubmitStatus === 'success' ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    提交成功
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    提交反馈
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

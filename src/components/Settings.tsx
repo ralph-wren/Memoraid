@@ -66,31 +66,6 @@ const PROVIDERS: Record<string, ProviderConfig> = {
   }
 };
 
-const getProviderLink = (provider: string): string | null => {
-  switch (provider) {
-    case 'memoraid':
-      return null;
-    case 'apiyi':
-      return 'https://api.apiyi.com/register/?aff_code=pBOp';
-    case 'yi':
-      return 'https://platform.lingyiwanwu.com/';
-    case 'deepseek':
-      return 'https://platform.deepseek.com/api_keys';
-    case 'dashscope':
-      return 'https://dashscope.console.aliyun.com/apiKey';
-    case 'zhipu':
-      return 'https://open.bigmodel.cn/usercenter/apikeys';
-    case 'moonshot':
-      return 'https://platform.moonshot.cn/console/api-keys';
-    case 'doubao':
-      return 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey';
-    case 'openai':
-      return 'https://platform.openai.com/api-keys';
-    default:
-      return null;
-  }
-};
-
 // 风格滑动条组件
 interface StyleSliderProps {
   label: string;
@@ -180,9 +155,8 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
   const hasLoadedRef = React.useRef(false);
   const isDirtyRef = React.useRef(false);
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<string>('nvidia');
+  const [selectedProvider] = useState<string>('memoraid'); // 固定使用 memoraid，不再需要 setSelectedProvider
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const [showApiKey, setShowApiKey] = useState(false);
   const [showGithubToken, setShowGithubToken] = useState(false);
   const [showToutiaoCookie, setShowToutiaoCookie] = useState(false);
   const [showZhihuCookie, setShowZhihuCookie] = useState(false);
@@ -193,9 +167,8 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
   const [fetchingWeixin, setFetchingWeixin] = useState(false);
   const [fetchingXiaohongshu, setFetchingXiaohongshu] = useState(false);
   const [verifying, setVerifying] = useState(false);
-  const [verifyingApi, setVerifyingApi] = useState(false);
+  // 移除 verifyingApi 和 apiVerifyStatus，不再需要API验证
   const [verifyStatus, setVerifyStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  const [apiVerifyStatus, setApiVerifyStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'restoring' | 'success' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [showEncKey, setShowEncKey] = useState(false);
@@ -292,19 +265,8 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
       setIsSettingsLoaded(true);
       setSettings(initializedSettings);
 
-      if (saved.provider && PROVIDERS[saved.provider]) {
-        setSelectedProvider(saved.provider);
-      } else {
-        // Fallback logic
-        const foundProvider = Object.entries(PROVIDERS).find(([key, config]) =>
-          key !== 'custom' && config.baseUrl === saved.baseUrl
-        );
-        if (foundProvider) {
-          setSelectedProvider(foundProvider[0]);
-        } else {
-          setSelectedProvider('custom');
-        }
-      }
+      // 移除 provider 选择逻辑，固定使用 memoraid
+      // selectedProvider 已经在初始化时设置为 'memoraid'
 
       // 标记初始化完成，之后的 settings 变化才会触发自动保存
       setTimeout(() => {
@@ -401,79 +363,7 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
     checkAndUpdatePrompts();
   }, [isSettingsLoaded, settings.promptVersions]);
 
-  const handleProviderChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const providerKey = e.target.value;
-    setSelectedProvider(providerKey);
-
-    const config = PROVIDERS[providerKey];
-
-    // 如果是共享密钥的 provider（如 memoraid），从后端获取密钥或设置默认
-    if (config.isShared) {
-      if (providerKey === 'memoraid') {
-         setSettings(prev => ({
-            ...prev,
-            provider: providerKey,
-            baseUrl: config.baseUrl,
-            model: config.models[0] || '',
-            apiKey: 'managed-by-backend'
-         }));
-         return;
-      }
-
-      try {
-        // 生成或获取客户端 ID（用于密钥分配的一致性）
-        let clientId = await chrome.storage.local.get(['clientId']);
-        if (!clientId.clientId) {
-          clientId.clientId = 'client_' + Math.random().toString(36).substring(2, 15);
-          await chrome.storage.local.set({ clientId: clientId.clientId });
-        }
-
-        const response = await fetch(`${BACKEND_URL}/api-key/nvidia`, {
-          headers: {
-            'X-Client-Id': clientId.clientId
-          }
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          setSettings(prev => ({
-            ...prev,
-            provider: providerKey,
-            baseUrl: config.baseUrl,
-            model: config.models[0] || '',
-            apiKey: data.apiKey
-          }));
-          return;
-        }
-      } catch (error) {
-        console.error('Failed to fetch shared API key:', error);
-      }
-
-      // 如果获取失败，仍然设置其他配置，但不设置 apiKey
-      setSettings(prev => ({
-        ...prev,
-        provider: providerKey,
-        baseUrl: config.baseUrl,
-        model: config.models[0] || '',
-        apiKey: ''
-      }));
-    } else {
-      setSettings(prev => {
-        const newSettings = { ...prev, provider: providerKey };
-
-        // Update Base URL and Model if not custom
-        if (providerKey !== 'custom') {
-          newSettings.baseUrl = config.baseUrl;
-          newSettings.model = config.models[0] || '';
-        }
-
-        // Switch to the stored API Key for this provider
-        newSettings.apiKey = prev.apiKeys?.[providerKey] || '';
-
-        return newSettings;
-      });
-    }
-  };
+  // 移除 handleProviderChange 函数，因为固定使用 memoraid
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -858,72 +748,7 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
     }
   };
 
-  const handleVerifyApi = async () => {
-    // Memoraid 使用后端管理的密钥，不需要用户手动输入，跳过空值检查
-    if (!settings.apiKey && !PROVIDERS[selectedProvider]?.isShared) {
-      alert(t.apiKeyPlaceholder);
-      return;
-    }
-
-    setVerifyingApi(true);
-    setApiVerifyStatus('idle');
-
-    try {
-      let url = settings.baseUrl;
-      if (!url.endsWith('/')) url += '/';
-      const endpoint = `${url}chat/completions`;
-
-      // 构建请求头：Memoraid provider 需要特殊认证方式
-      // 后端通过 sync.token（已登录）或 X-Anonymous-ID（匿名）识别用户
-      // 而不是通过 apiKey（'managed-by-backend' 是占位符，后端不认）
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-
-      if (PROVIDERS[selectedProvider]?.isShared && selectedProvider === 'memoraid') {
-        // Memoraid provider：使用登录 token 或匿名 ID 认证
-        if (settings.sync?.token) {
-          // 已登录用户：用 sync token 作为 Bearer
-          headers['Authorization'] = `Bearer ${settings.sync.token}`;
-        } else {
-          // 匿名用户：用 anonymousId 通过 X-Anonymous-ID header
-          const anonId = settings.anonymousId;
-          if (!anonId) {
-            alert('无法获取用户标识，请刷新后重试');
-            setVerifyingApi(false);
-            return;
-          }
-          headers['Authorization'] = 'Bearer anonymous';
-          headers['X-Anonymous-ID'] = anonId;
-        }
-      } else {
-        // 其他 provider：直接用 apiKey 作为 Bearer
-        headers['Authorization'] = `Bearer ${settings.apiKey}`;
-      }
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: settings.model,
-          messages: [{ role: 'user', content: 'Hi' }],
-          max_tokens: 1
-        })
-      });
-
-      if (response.ok) {
-        setApiVerifyStatus('success');
-      } else {
-        console.error('Verification failed', await response.text());
-        setApiVerifyStatus('error');
-      }
-    } catch (e) {
-      console.error(e);
-      setApiVerifyStatus('error');
-    } finally {
-      setVerifyingApi(false);
-    }
-  };
+  // 移除 handleVerifyApi 函数，不再需要API验证
 
   const handleVerifyGithub = async () => {
     if (!settings.github?.token || !settings.github?.owner || !settings.github?.repo) {
@@ -944,7 +769,7 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
     }
   };
 
-  const currentModels = PROVIDERS[selectedProvider]?.models || [];
+  // 移除 currentModels 变量，不再需要模型列表
 
   if (!isSettingsLoaded) {
     return (
@@ -1125,131 +950,7 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
         </div>
       </div>
 
-      {/* AI 模型配置 */}
-      <div className="border-t pt-4 space-y-4">
-        <div className="space-y-2">
-          <label className="block text-sm font-medium">{t.providerLabel}</label>
-          <select
-            value={selectedProvider}
-            onChange={handleProviderChange}
-            className="w-full p-2 border rounded"
-          >
-            {Object.entries(PROVIDERS).map(([key, config]) => (
-              <option key={key} value={key}>
-                {config.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex justify-between items-center">
-            <label className="block text-sm font-medium">{t.apiKeyLabel}</label>
-            <div className="flex items-center gap-3">
-              {/* 验证按钮：所有 provider 都显示，包括 Memoraid */}
-              <button
-                  onClick={handleVerifyApi}
-                  disabled={verifyingApi}
-                  className={`flex items-center gap-1 text-xs transition ${apiVerifyStatus === 'success'
-                    ? 'text-green-600'
-                    : apiVerifyStatus === 'error'
-                      ? 'text-red-600'
-                      : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                >
-                  {verifyingApi ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : apiVerifyStatus === 'success' ? (
-                    <CheckCircle className="w-3 h-3" />
-                  ) : apiVerifyStatus === 'error' ? (
-                    <XCircle className="w-3 h-3" />
-                  ) : (
-                    <CheckCircle className="w-3 h-3" />
-                  )}
-                  {verifyingApi ? t.verifying : t.verifyButton}
-                </button>
-              {getProviderLink(selectedProvider) && !PROVIDERS[selectedProvider]?.isShared && (
-                <a
-                  href={getProviderLink(selectedProvider)!}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
-                >
-                  {t.getKey} ↗
-                </a>
-              )}
-            </div>
-          </div>
-
-          {/* Memoraid 使用共享密钥，不需要用户输入 API Key，也不显示提示 */}
-          {PROVIDERS[selectedProvider]?.isShared ? null : (
-            <div className="relative">
-              <input
-                type={showApiKey ? "text" : "password"}
-                name="apiKey"
-                value={settings.apiKey}
-                onChange={handleChange}
-                className="w-full p-2 border rounded pr-10"
-                placeholder={t.apiKeyPlaceholder}
-              />
-              <button
-                type="button"
-                onClick={() => setShowApiKey(!showApiKey)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 p-1"
-              >
-                {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <label className="block text-sm font-medium">{t.baseUrlLabel}</label>
-          <input
-            type="text"
-            name="baseUrl"
-            value={settings.baseUrl}
-            onChange={handleChange}
-            className="w-full p-2 border rounded"
-            placeholder="https://api.example.com/v1"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="block text-sm font-medium">{t.modelLabel}</label>
-          <div className="flex flex-col gap-2">
-            {selectedProvider !== 'custom' && currentModels.length > 0 && (
-              <select
-                name="model"
-                value={settings.model}
-                onChange={handleChange}
-                className="p-2 border rounded w-full"
-              >
-                {currentModels.map(m => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-                <option value="custom">{t.manualInput}</option>
-              </select>
-            )}
-
-            {(selectedProvider === 'custom' || !currentModels.includes(settings.model)) && (
-              <input
-                type="text"
-                name="model"
-                value={settings.model}
-                onChange={handleChange}
-                className="w-full p-2 border rounded"
-                placeholder="e.g. yi-34b-chat-0205"
-              />
-            )}
-          </div>
-          {selectedProvider === 'doubao' && (
-            <p className="text-xs text-orange-600">
-              {t.doubaoHint}
-            </p>
-          )}
-        </div>
-      </div>
+      {/* 移除 AI 模型配置部分，系统自动使用默认配置 */}
 
       {/* 文章风格设置 */}
       <div className="border-t pt-4">

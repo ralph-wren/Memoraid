@@ -1,7 +1,7 @@
 {
   "name": "memoraid",
   "displayName": "Memoraid - AI自动化发文到公众号、知乎、小红书、头条等自媒体平台",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Memoraid 是一款强大的 AI 内容处理工具，帮助您高效地总结网页内容、生成自媒体文章，并一键发布到头条号、知乎专栏和微信公众号。",
   "type": "module",
   "scripts": {
