@@ -70,12 +70,16 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
   const [currentSourceImages, setCurrentSourceImages] = useState<string[]>([]); // Track source images
   const [isPreview, setIsPreview] = useState(true);
   const [t, setT] = useState<Translation>(getTranslation('zh-CN')); // 翻译
-  // 额度信息状态
+  // 额度信息状态 - 设置默认值以便立即显示充值模块
   const [quota, setQuota] = useState<{
     total_remaining: number;
     free_remaining: number;
     paid_remaining: number;
-  } | null>(null);
+  } | null>({
+    total_remaining: 0,
+    free_remaining: 0,
+    paid_remaining: 0
+  });
 
   const [userClosedResult, setUserClosedResult] = useState(false);
   const userClosedResultRef = React.useRef(userClosedResult);
@@ -1101,24 +1105,12 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
           <div className="w-full flex-1 flex flex-col min-h-0">
             <div className="text-center space-y-4 w-full flex flex-col items-center mb-8 shrink-0">
 
-              {/* 额度显示和充值按钮 */}
+              {/* 额度显示和充值按钮 - 固定蓝色主题 */}
               {quota !== null && (
                 <div className="w-full px-4 mb-2">
-                  <div className={`border rounded-lg px-4 py-3 text-sm flex items-center justify-between ${
-                    quota.total_remaining <= 0 
-                      ? 'bg-red-50 border-red-200' 
-                      : quota.total_remaining <= 5 
-                      ? 'bg-yellow-50 border-yellow-200' 
-                      : 'bg-blue-50 border-blue-200'
-                  }`}>
+                  <div className="border rounded-lg px-4 py-3 text-sm flex items-center justify-between bg-blue-50 border-blue-200">
                     <div className="flex flex-col items-start">
-                      <span className={`font-medium ${
-                        quota.total_remaining <= 0 
-                          ? 'text-red-700' 
-                          : quota.total_remaining <= 5 
-                          ? 'text-yellow-700' 
-                          : 'text-blue-700'
-                      }`}>
+                      <span className="font-medium text-blue-700">
                         剩余额度: {quota.total_remaining} 次
                       </span>
                       <span className="text-xs text-gray-500 mt-1">
