@@ -1250,6 +1250,7 @@ const clickPublish = async (): Promise<boolean> => {
             platform: 'xiaohongshu',
             title: finalTitle,
             url: window.location.href,
+            status: 'published',  // 添加status字段,标记为已发布
             extra: {
                 sourceUrl: pendingSourceUrl
             },

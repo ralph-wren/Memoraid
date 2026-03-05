@@ -61,16 +61,28 @@ export const reportArticlePublish = async (args: {
   generatedId?: string;
 }) => {
   try {
+    console.log('[reportArticlePublish] 开始上报文章:', {
+      platform: args.platform,
+      title: args.title,
+      status: args.status,
+      hasUrl: !!args.url,
+      hasGeneratedId: !!args.generatedId
+    });
+
     let urlText = typeof args.url === 'string' ? args.url.trim() : '';
     const isGenerated = args.status === 'generated';
 
     // 如果是 generated 状态且没有 URL，生成一个临时 ID
     if (isGenerated && !urlText) {
       urlText = `gen_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      console.log('[reportArticlePublish] 生成临时ID:', urlText);
     }
 
     // 只有非 generated 状态才强制检查 http
-    if (!isGenerated && (!urlText || !(urlText.startsWith('http://') || urlText.startsWith('https://')))) return;
+    if (!isGenerated && (!urlText || !(urlText.startsWith('http://') || urlText.startsWith('https://')))) {
+      console.log('[reportArticlePublish] 跳过上报: URL无效且非generated状态');
+      return;
+    }
 
     const settings = await getSettings();
     const backendUrls = Array.from(
@@ -83,11 +95,21 @@ export const reportArticlePublish = async (args: {
     // 如果提供了 generatedId，则优先使用它作为 articleId，以便关联更新
     const articleId = args.generatedId || urlText;
 
+    console.log('[reportArticlePublish] 上报配置:', {
+      backendUrls,
+      email,
+      articleId,
+      hasToken: !!settings.sync?.token
+    });
+
     try {
       if (typeof sessionStorage !== 'undefined' && !isGenerated) {
         const dedupeKey = `memoraid_reported_url:${args.platform}`;
         const last = sessionStorage.getItem(dedupeKey);
-        if (last === urlText) return articleId;
+        if (last === urlText) {
+          console.log('[reportArticlePublish] 跳过上报: 已上报过此URL');
+          return articleId;
+        }
         sessionStorage.setItem(dedupeKey, urlText);
       }
     } catch {
@@ -118,16 +140,29 @@ export const reportArticlePublish = async (args: {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (settings.sync?.token) headers.Authorization = `Bearer ${settings.sync.token}`;
 
+    console.log('[reportArticlePublish] 发送请求到后端...');
+    
     for (const backendUrl of backendUrls) {
       fetch(`${backendUrl}/api/articles/report`, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload)
-      }).catch(() => undefined);
+      }).then(async (response) => {
+        if (response.ok) {
+          const data = await response.json();
+          console.log('[reportArticlePublish] 上报成功:', data);
+        } else {
+          const errorText = await response.text();
+          console.error('[reportArticlePublish] 上报失败:', response.status, errorText);
+        }
+      }).catch((error) => {
+        console.error('[reportArticlePublish] 网络错误:', error);
+      });
     }
     
     return articleId;
-  } catch {
+  } catch (error) {
+    console.error('[reportArticlePublish] 异常:', error);
     return undefined;
   }
 };

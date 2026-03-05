@@ -2723,15 +2723,30 @@ export default {
         let currentUsage = 0;
         let trackingId = '';
         let trackingType = ''; // 'user' or 'anonymous'
+        let hasPaidQuota = false; // 是否有付费额度
 
         if (userId) {
-            // 已登录用户：限额 20
+            // 已登录用户：先检查免费额度（限额 20）
             usageLimit = 20;
             trackingId = userId;
             trackingType = 'user';
             currentUsage = await env.DB.prepare(
                 'SELECT COUNT(*) as count FROM ai_usage_logs WHERE user_id = ?'
             ).bind(userId).first('count') as number;
+            
+            // 如果免费额度用完，检查付费额度
+            if (currentUsage >= usageLimit) {
+                const quotaRow = await env.DB.prepare(
+                    'SELECT paid_quota_remaining FROM user_quotas WHERE user_id = ?'
+                ).bind(userId).first();
+                const paidQuota = quotaRow?.paid_quota_remaining || 0;
+                
+                if (paidQuota > 0) {
+                    // 有付费额度，允许继续使用
+                    hasPaidQuota = true;
+                    console.log(`[AI Chat] 用户 ${userId} 免费额度已用完，使用付费额度（剩余: ${paidQuota}）`);
+                }
+            }
         } else if (anonymousId) {
             // 未登录用户：限额 5
             usageLimit = 5;
@@ -2745,7 +2760,8 @@ export default {
              return new Response(JSON.stringify({ error: 'Unauthorized: No user or anonymous ID provided' }), { status: 401, headers: corsHeaders });
         }
 
-        if (currentUsage >= usageLimit) {
+        // 只有在免费额度用完且没有付费额度时才拒绝请求
+        if (currentUsage >= usageLimit && !hasPaidQuota) {
            const message = userId 
              ? `Free limit reached (${usageLimit} articles). Please upgrade or contact support.`
              : `Trial limit reached (${usageLimit} articles). Please login to get 15 more free generations!`;
@@ -2782,9 +2798,18 @@ export default {
             // 3. Log Usage (Only if successful)
             try {
                 if (trackingType === 'user') {
+                    // 记录 AI 使用日志
                     await env.DB.prepare(
                         'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
                     ).bind(userId, body.model).run();
+                    
+                    // 如果使用了付费额度，扣除付费额度
+                    if (hasPaidQuota) {
+                        await env.DB.prepare(
+                            'UPDATE user_quotas SET paid_quota_remaining = paid_quota_remaining - 1 WHERE user_id = ?'
+                        ).bind(userId).run();
+                        console.log(`[AI Chat] 已扣除用户 ${userId} 的付费额度 1 次`);
+                    }
                 } else {
                     await env.DB.prepare(
                         'INSERT INTO ai_usage_logs (anonymous_id, model) VALUES (?, ?)'
@@ -2892,12 +2917,13 @@ export default {
         // Note: account.id is the ID on the platform (e.g. weixin openid), NOT our system userId
         
         let accountDbId = await env.DB.prepare(
-            'SELECT id FROM accounts WHERE platform_id = ? AND account_id = ? AND user_id = ?'
-        ).bind(platformId, account.id, userId).first('id');
+            'SELECT id FROM accounts WHERE platform_id = ? AND account_id = ?'
+        ).bind(platformId, account.id).first('id');
 
         if (!accountDbId) {
+             // 使用 INSERT OR IGNORE 避免并发插入冲突
              const result = await env.DB.prepare(
-                `INSERT INTO accounts (platform_id, account_id, user_id, account_name, avatar_url, extra_info, updated_at)
+                `INSERT OR IGNORE INTO accounts (platform_id, account_id, user_id, account_name, avatar_url, extra_info, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?)`
              ).bind(
                  platformId, 
@@ -2908,14 +2934,25 @@ export default {
                  JSON.stringify(account.extra || {}),
                  Math.floor(Date.now() / 1000)
              ).run();
-             accountDbId = result.meta.last_row_id;
-        } else {
-            // Update account info
+             // 如果 INSERT OR IGNORE 没有插入（因为已存在），last_row_id 会是 0
+             // 所以需要再次查询
+             if (result.meta.last_row_id) {
+                 accountDbId = result.meta.last_row_id;
+             } else {
+                 accountDbId = await env.DB.prepare(
+                     'SELECT id FROM accounts WHERE platform_id = ? AND account_id = ?'
+                 ).bind(platformId, account.id).first('id');
+             }
+        }
+        
+        // 始终更新账号信息和 user_id
+        if (accountDbId) {
             await env.DB.prepare(
-                `UPDATE accounts SET account_name = ?, avatar_url = ?, extra_info = ?, updated_at = ? WHERE id = ?`
+                `UPDATE accounts SET user_id = ?, account_name = ?, avatar_url = ?, extra_info = ?, updated_at = ? WHERE id = ?`
             ).bind(
-                account.name || 'Unknown', 
-                account.avatar || '', 
+                userId,
+                account.name || 'Unknown',
+                account.avatar || '',
                 JSON.stringify(account.extra || {}),
                 Math.floor(Date.now() / 1000),
                 accountDbId
@@ -7552,12 +7589,16 @@ export default {
         ).bind(platformRow!.id, account.id).first();
         
         if (!accountRow) {
+          // 使用 INSERT OR IGNORE 避免并发插入冲突
           await env.DB.prepare(
-            'INSERT INTO accounts (platform_id, account_id, account_name, avatar_url, extra_info, user_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+            'INSERT OR IGNORE INTO accounts (platform_id, account_id, account_name, avatar_url, extra_info, user_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
           ).bind(platformRow!.id, account.id, account.name || '', account.avatar || '', JSON.stringify(account.extra || {}), userId, Math.floor(Date.now() / 1000)).run();
-          accountRow = await env.DB.prepare('SELECT id FROM accounts WHERE platform_id = ? AND account_id = ?').bind(platformRow!.id, account.id).first();
-        } else {
-          // 始终更新账号信息和 user_id，确保数据归属正确
+          // 再次查询以获取 ID（可能是刚插入的，也可能是其他请求插入的）
+          accountRow = await env.DB.prepare('SELECT id, user_id FROM accounts WHERE platform_id = ? AND account_id = ?').bind(platformRow!.id, account.id).first();
+        }
+        
+        // 始终更新账号信息和 user_id，确保数据归属正确
+        if (accountRow) {
           await env.DB.prepare(
             'UPDATE accounts SET user_id = ?, account_name = ?, avatar_url = ?, updated_at = ? WHERE id = ?'
           ).bind(userId, account.name || '', account.avatar || '', Math.floor(Date.now() / 1000), accountRow.id).run();

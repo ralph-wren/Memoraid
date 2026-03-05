@@ -1,4 +1,4 @@
-import { reportArticlePublish, reportError } from '../utils/debug';
+import { reportError } from '../utils/debug';
 import { DOMHelper } from '../utils/domHelper';
 import { ImageHandler } from '../utils/imageHandler';
 
@@ -2087,33 +2087,77 @@ const installPublishReporting = () => {
     return null;
   };
 
+  // 清理标题,移除通知信息等额外文字
+  const cleanTitle = (title: string): string => {
+    if (!title) return '';
+    // 移除知乎页面标题中的通知信息,如 "(3 封私信 / 27 条消息)"
+    let cleaned = title
+      .replace(/\(\d+\s*封私信\s*\/\s*\d+\s*条消息\)/g, '')  // 移除通知信息
+      .replace(/\s*-\s*知乎.*$/g, '')  // 移除 "- 知乎" 后缀
+      .trim();
+    
+    // 限制标题长度为100个字符(知乎标题输入框的限制)
+    if (cleaned.length > 100) {
+      cleaned = cleaned.substring(0, 100) + '...';
+    }
+    
+    return cleaned;
+  };
+
   const reportOnce = (trigger: string, publishedUrl: string) => {
     if (hasReported) return;
     hasReported = true;
     
     // 优先使用缓存的标题
     const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
-    const finalTitle = (pendingTitle || getCurrentTitle() || document.title || '未命名文章').trim();
+    let rawTitle = pendingTitle || getCurrentTitle() || document.title || '未命名文章';
+    // 清理标题,移除通知等额外信息
+    const finalTitle = cleanTitle(rawTitle);
+    
+    console.log('[Memoraid Zhihu] 准备上报文章:', {
+      trigger,
+      url: publishedUrl,
+      title: finalTitle,
+      rawTitle,
+      pendingTitle
+    });
     
     // 如果成功上报，清除保存的标题
     if (pendingTitle) {
       sessionStorage.removeItem('memoraid_pending_title');
     }
 
-    reportArticlePublish({
-      platform: 'zhihu',
-      title: finalTitle,
-      url: publishedUrl,
-      status: 'published',
-      extra: { trigger },
-      generatedId: sessionStorage.getItem('memoraid_generated_id') || undefined
+    // 直接调用chrome.runtime.sendMessage,避免导入问题
+    const generatedId = sessionStorage.getItem('memoraid_generated_id') || undefined;
+    chrome.runtime.sendMessage({
+      type: 'REPORT_ARTICLE_PUBLISH',
+      payload: {
+        platform: 'zhihu',
+        title: finalTitle,
+        url: publishedUrl,
+        status: 'published',
+        extra: { trigger },
+        generatedId
+      }
+    }).then(() => {
+      console.log('[Memoraid Zhihu] 文章上报成功');
+    }).catch((err: any) => {
+      console.error('[Memoraid Zhihu] 文章上报失败:', err);
     });
   };
 
   const maybeReport = (trigger: string) => {
-    if (!armed || hasReported) return;
+    if (!armed || hasReported) {
+      console.log('[Memoraid Zhihu] 跳过上报:', { armed, hasReported, trigger });
+      return;
+    }
     const publishedUrl = findPublishedUrl();
-    if (publishedUrl) reportOnce(trigger, publishedUrl);
+    console.log('[Memoraid Zhihu] 查找发布URL:', { trigger, publishedUrl, currentUrl: window.location.href });
+    if (publishedUrl) {
+      reportOnce(trigger, publishedUrl);
+    } else {
+      console.log('[Memoraid Zhihu] 未找到发布URL,等待下次检测');
+    }
   };
 
   document.addEventListener('click', (e) => {
@@ -2122,7 +2166,9 @@ const installPublishReporting = () => {
     if (!btn) return;
     const text = (btn.innerText || '').trim();
     if (!text) return;
+    console.log('[Memoraid Zhihu] 检测到按钮点击:', text);
     if (text === '发布' || text.includes('发布')) {
+      console.log('[Memoraid Zhihu] 检测到发布按钮点击,启动监听');
       armed = true;
       armAt = Date.now();
       setTimeout(() => maybeReport('click:publish'), 1500);

@@ -295,6 +295,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // 新增：初始化完整生成流程（抓取+生成+发布）
   // 这将抓取逻辑从 Popup 移至 Background，解决 Popup 关闭导致任务中断的问题
   if (message.type === 'INITIATE_GENERATE_AND_PUBLISH') {
+    // 【调试日志】收到消息
+    console.log('[DEBUG] 收到 INITIATE_GENERATE_AND_PUBLISH 消息:', message.payload);
+    
     const { platform, tabId } = message.payload;
     // 异步执行，不等待结果直接返回成功
     handleInitiateProcess(platform, tabId);
@@ -412,6 +415,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return false; // 同步响应
   }
 
+  // 处理文章发布上报请求（从content script调用）
+  if (message.type === 'REPORT_ARTICLE_PUBLISH') {
+    reportArticlePublish(message.payload)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true; // 异步响应
+  }
+
   // 定时任务：手动立即执行指定任务
   if (message.type === 'SCHEDULE_RUN_NOW') {
     const { taskId } = message.payload || {};
@@ -489,8 +500,18 @@ export async function handleInitiateProcess(platform: 'toutiao' | 'zhihu' | 'wei
       title: extraction.title
     });
 
+    // 【调试日志】准备调用 startArticleGenerationAndPublish
+    console.log('[DEBUG] handleInitiateProcess: 准备调用 startArticleGenerationAndPublish', {
+      platform,
+      title: extraction.title,
+      hasUrl: !!extraction.url
+    });
+
     // 3. 开始生成和发布流程
     await startArticleGenerationAndPublish(extraction, platform);
+    
+    // 【调试日志】startArticleGenerationAndPublish 调用完成
+    console.log('[DEBUG] handleInitiateProcess: startArticleGenerationAndPublish 调用完成');
 
   } catch (error: any) {
     console.error('流程失败:', error);
@@ -2167,6 +2188,13 @@ async function startArticleGeneration(extraction: ExtractionResult) {
 // 一键生成文章并发布到指定平台
 async function startArticleGenerationAndPublish(extraction: ExtractionResult, platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu') {
   try {
+    // 【调试日志】函数入口
+    console.log('[DEBUG] startArticleGenerationAndPublish 开始执行:', {
+      platform,
+      title: extraction.title,
+      url: extraction.url
+    });
+    
     abortController = new AbortController();
 
     const platformName = platform === 'toutiao' ? '头条' : platform === 'zhihu' ? '知乎' : '公众号';
@@ -2366,6 +2394,9 @@ ${platformPrompt}
       summary = summary.substring(0, summary.length - 3).trim();
     }
 
+    // 【调试日志】文章处理完成
+    console.log('[DEBUG] 文章内容处理完成，准备提取标题和保存历史记录');
+
     // 提取标题
     let finalTitle = extraction.title || 'Untitled Article';
     const h1TitleMatch = summary.match(/^#\s+(.+)$/m);
@@ -2387,6 +2418,14 @@ ${platformPrompt}
 
     await addHistoryItem(newItem);
 
+    // 【调试日志】记录文章生成前的状态
+    console.log('[DEBUG] 准备上报文章生成:', {
+      platform,
+      title: finalTitle,
+      hasUrl: !!extraction.url,
+      tokenUsage
+    });
+
     // 记录生成的文章（无论发布是否成功），同时传入 token 消耗数据
     const generatedId = await reportArticlePublish({
       platform: platform,
@@ -2403,6 +2442,9 @@ ${platformPrompt}
       }
     });
 
+    // 【调试日志】记录上报结果
+    console.log('[DEBUG] 文章生成上报完成, generatedId:', generatedId);
+
     updateTaskState({
       status: 'Publishing...',
       message: `文章生成完成，正在跳转到${platformName}发布页面...`,
@@ -2411,6 +2453,14 @@ ${platformPrompt}
       title: finalTitle,
       generatedId, // 保存生成的 ID
       tokenUsage, // 本次 AI 调用的 token 消耗
+    });
+
+    // 【调试日志】准备发布到平台
+    console.log('[DEBUG] 准备发布到平台:', {
+      platform,
+      platformName,
+      title: finalTitle,
+      generatedId
     });
 
     // 根据平台发布
