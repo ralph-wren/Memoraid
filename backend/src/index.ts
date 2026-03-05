@@ -2840,6 +2840,73 @@ export default {
     // ==================== 文章发布统计系统 API ====================
     const ADMIN_EMAILS = ['huangguang52@gmail.com', 'ralph.wren@gmail.com', '1552013823@qq.com', 'admin'];
 
+    // 7.0.5 POST /api/feedback - 用户反馈提交
+    if (url.pathname === '/api/feedback' && request.method === 'POST') {
+      try {
+        // 获取用户ID（支持匿名用户）
+        let userId = getUserIdFromRequest(request);
+        const body = await request.json() as any;
+        const { type, content } = body;
+
+        // 验证反馈类型
+        if (!['experience', 'suggestion', 'bug'].includes(type)) {
+          return new Response(JSON.stringify({ error: '无效的反馈类型' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 验证反馈内容
+        if (!content || content.trim().length === 0) {
+          return new Response(JSON.stringify({ error: '反馈内容不能为空' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        if (content.length > 500) {
+          return new Response(JSON.stringify({ error: '反馈内容不能超过500字符' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 获取用户邮箱（如果已登录）
+        let userEmail = null;
+        if (userId) {
+          const userRow = await env.DB.prepare(
+            'SELECT email FROM users WHERE id = ?'
+          ).bind(userId).first();
+          if (userRow) {
+            userEmail = userRow.email;
+          }
+        }
+
+        // 插入反馈记录
+        await env.DB.prepare(
+          `INSERT INTO feedback (user_id, user_email, type, content, status, created_at)
+           VALUES (?, ?, ?, ?, 'pending', ?)`
+        ).bind(
+          userId || null,
+          userEmail || null,
+          type,
+          content.trim(),
+          Math.floor(Date.now() / 1000)
+        ).run();
+
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (error: any) {
+        console.error('Feedback submission error:', error);
+        return new Response(JSON.stringify({ error: error.message || '提交失败' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
     // 7.1 POST /api/articles/report - 上报文章发布信息
     if (url.pathname === '/api/articles/report' && request.method === 'POST') {
       try {
@@ -3814,6 +3881,126 @@ export default {
       }
     }
 
+    // 7.0.0.3 GET /api/admin/feedback - 获取用户反馈列表
+    if (url.pathname === '/api/admin/feedback' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+
+        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+        if (!admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Admin access required' }), { status: 403, headers: corsHeaders });
+        }
+
+        // 获取查询参数
+        const page = parseInt(url.searchParams.get('page') || '1');
+        const pageSize = parseInt(url.searchParams.get('pageSize') || '20');
+        const status = url.searchParams.get('status') || 'all'; // all, pending, resolved, ignored
+        const type = url.searchParams.get('type') || 'all'; // all, experience, suggestion, bug
+        const offset = (page - 1) * pageSize;
+
+        // 构建查询条件
+        let whereConditions = [];
+        let params: any[] = [];
+
+        if (status !== 'all') {
+          whereConditions.push('f.status = ?');
+          params.push(status);
+        }
+
+        if (type !== 'all') {
+          whereConditions.push('f.type = ?');
+          params.push(type);
+        }
+
+        const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
+
+        // 查询反馈列表
+        const feedbackQuery = `
+          SELECT 
+            f.id,
+            f.user_id,
+            f.user_email,
+            f.type,
+            f.content,
+            f.status,
+            f.admin_reply,
+            f.created_at,
+            f.updated_at,
+            u.email as user_email_from_users
+          FROM feedback f
+          LEFT JOIN users u ON f.user_id = u.id
+          ${whereClause}
+          ORDER BY f.created_at DESC
+          LIMIT ? OFFSET ?
+        `;
+
+        const feedbackList = await env.DB.prepare(feedbackQuery)
+          .bind(...params, pageSize, offset)
+          .all();
+
+        // 查询总数
+        const countQuery = `SELECT COUNT(*) as total FROM feedback f ${whereClause}`;
+        const countResult = await env.DB.prepare(countQuery).bind(...params).first();
+        const total = countResult?.total || 0;
+
+        return new Response(JSON.stringify({
+          list: feedbackList.results || [],
+          total,
+          page,
+          pageSize,
+          totalPages: Math.ceil(total / pageSize)
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+      } catch (e: any) {
+        console.error('Feedback list error:', e);
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // 7.0.0.4 POST /api/admin/feedback/:id/status - 更新反馈状态
+    if (url.pathname.match(/^\/api\/admin\/feedback\/\d+\/status$/) && request.method === 'POST') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+
+        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+        if (!admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden: Admin access required' }), { status: 403, headers: corsHeaders });
+        }
+
+        const feedbackId = url.pathname.split('/')[4];
+        const body = await request.json() as any;
+        const { status, adminReply } = body;
+
+        // 验证状态值
+        if (!['pending', 'resolved', 'ignored'].includes(status)) {
+          return new Response(JSON.stringify({ error: '无效的状态值' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 更新反馈状态
+        await env.DB.prepare(
+          `UPDATE feedback SET status = ?, admin_reply = ?, updated_at = ? WHERE id = ?`
+        ).bind(status, adminReply || null, Math.floor(Date.now() / 1000), feedbackId).run();
+
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+
+      } catch (e: any) {
+        console.error('Update feedback status error:', e);
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
     // 7.0.1 GET /admin - 系统管理后台页面
     if (url.pathname === '/admin' && request.method === 'GET') {
       const ASSETS_BASE = effectiveOrigin + '/assets/memoraid';
@@ -4032,6 +4219,10 @@ export default {
                 <a href="#leaderboards" class="nav-item" id="nav-leaderboards" onclick="switchTab('leaderboards')">
                     <span>🏆</span> 排行榜
                 </a>
+                <!-- 用户反馈导航项 -->
+                <a href="#feedback" class="nav-item" id="nav-feedback" onclick="switchTab('feedback')">
+                    <span>💬</span> 用户反馈
+                </a>
                 <a href="#settings" class="nav-item" id="nav-settings" onclick="switchTab('settings')">
                     <span>⚙️</span> 系统设置
                 </a>
@@ -4245,6 +4436,34 @@ export default {
                         </div>
 
                     </div>
+                </div>
+            </div>
+
+            <!-- 用户反馈 Tab -->
+            <div id="tab-feedback" class="tab-content" style="display:none">
+                <div class="section">
+                    <h2 class="section-title">� 用户反馈</h2>
+                    <div class="toolbar">
+                        <!-- 反馈类型筛选 -->
+                        <select id="feedbackTypeFilter" class="form-select" onchange="fetchFeedback(true)" style="max-width:150px">
+                            <option value="all">全部类型</option>
+                            <option value="experience">使用体验</option>
+                            <option value="suggestion">优化建议</option>
+                            <option value="bug">问题反馈</option>
+                        </select>
+                        <!-- 反馈状态筛选 -->
+                        <select id="feedbackStatusFilter" class="form-select" onchange="fetchFeedback(true)" style="max-width:150px">
+                            <option value="all">全部状态</option>
+                            <option value="pending">待处理</option>
+                            <option value="resolved">已解决</option>
+                            <option value="ignored">已忽略</option>
+                        </select>
+                        <button onclick="fetchFeedback(true)" class="btn-sm btn-outline">🔄 刷新</button>
+                    </div>
+                    <div id="feedbackList" class="card" style="margin-top:16px">
+                        <div style="text-align:center;padding:40px;color:var(--text-muted)">加载中...</div>
+                    </div>
+                    <div id="feedbackPagination" class="pagination" style="margin-top:16px"></div>
                 </div>
             </div>
 
@@ -5174,6 +5393,12 @@ export default {
                 window.leaderboardsLoaded = true;
             }
             
+            // 加载用户反馈数据
+            if (tabId === 'feedback' && !window.feedbackLoaded) {
+                fetchFeedback(true);
+                window.feedbackLoaded = true;
+            }
+            
             if (tabId === 'settings') {
                 fetchEmailConfig();
             }
@@ -5430,6 +5655,220 @@ export default {
                 }).join('');
             } else {
                 rechargeEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据</div>';
+            }
+        }
+
+        // ==================== 用户反馈相关函数 ====================
+        
+        // 获取反馈列表
+        let currentFeedbackPage = 1;
+        async function fetchFeedback(reset = false) {
+            if (reset) currentFeedbackPage = 1;
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const type = document.getElementById('feedbackTypeFilter').value;
+                const status = document.getElementById('feedbackStatusFilter').value;
+                
+                const params = new URLSearchParams({
+                    page: currentFeedbackPage,
+                    pageSize: 20,
+                    type: type,
+                    status: status
+                });
+                
+                const res = await fetch(\`/api/admin/feedback?\${params}\`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                if (!res.ok) throw new Error('Failed to fetch feedback');
+                
+                const data = await res.json();
+                renderFeedbackList(data);
+                renderFeedbackPagination(data);
+            } catch (e) {
+                console.error('Fetch feedback error:', e);
+                document.getElementById('feedbackList').innerHTML = 
+                    '<div style="text-align:center;padding:40px;color:var(--text-muted)">加载失败: ' + e.message + '</div>';
+            }
+        }
+        
+        // 渲染反馈列表
+        function renderFeedbackList(data) {
+            const container = document.getElementById('feedbackList');
+            
+            if (!data.list || data.list.length === 0) {
+                container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">暂无反馈</div>';
+                return;
+            }
+            
+            // 反馈类型映射
+            const typeMap = {
+                'experience': { label: '使用体验', color: '#3b82f6', icon: '😊' },
+                'suggestion': { label: '优化建议', color: '#10b981', icon: '💡' },
+                'bug': { label: '问题反馈', color: '#ef4444', icon: '🐛' }
+            };
+            
+            // 状态映射
+            const statusMap = {
+                'pending': { label: '待处理', color: '#f59e0b', bg: '#fef3c7' },
+                'resolved': { label: '已解决', color: '#10b981', bg: '#d1fae5' },
+                'ignored': { label: '已忽略', color: '#6b7280', bg: '#f3f4f6' }
+            };
+            
+            container.innerHTML = data.list.map(item => {
+                const typeInfo = typeMap[item.type] || { label: item.type, color: '#6b7280', icon: '📝' };
+                const statusInfo = statusMap[item.status] || { label: item.status, color: '#6b7280', bg: '#f3f4f6' };
+                const userEmail = item.user_email_from_users || item.user_email || '匿名用户';
+                const createdAt = new Date(item.created_at * 1000).toLocaleString('zh-CN');
+                
+                return \`
+                    <div style="border-bottom:1px solid var(--border);padding:16px;transition:background 0.2s" onmouseover="this.style.background='var(--bg-muted)'" onmouseout="this.style.background='transparent'">
+                        <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px">
+                            <div style="display:flex;gap:8px;align-items:center">
+                                <span style="font-size:1.25rem">\${typeInfo.icon}</span>
+                                <span style="padding:4px 12px;border-radius:12px;font-size:0.75rem;font-weight:500;color:\${typeInfo.color};background:\${typeInfo.color}20">
+                                    \${typeInfo.label}
+                                </span>
+                                <span style="padding:4px 12px;border-radius:12px;font-size:0.75rem;font-weight:500;color:\${statusInfo.color};background:\${statusInfo.bg}">
+                                    \${statusInfo.label}
+                                </span>
+                            </div>
+                            <span style="font-size:0.75rem;color:var(--text-muted)">\${createdAt}</span>
+                        </div>
+                        <div style="margin-bottom:8px">
+                            <span style="font-size:0.875rem;color:var(--text-secondary)">👤 \${userEmail}</span>
+                        </div>
+                        <div style="padding:12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:12px">
+                            <p style="margin:0;color:var(--text);line-height:1.6;white-space:pre-wrap">\${item.content}</p>
+                        </div>
+                        \${item.admin_reply ? \`
+                            <div style="padding:12px;background:var(--bg-subtle);border-left:3px solid var(--accent);border-radius:4px;margin-bottom:12px">
+                                <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px">管理员回复：</div>
+                                <p style="margin:0;color:var(--text);line-height:1.6;white-space:pre-wrap">\${item.admin_reply}</p>
+                            </div>
+                        \` : ''}
+                        <div style="display:flex;gap:8px">
+                            <button onclick="updateFeedbackStatus(\${item.id}, 'resolved')" class="btn-sm btn-success" \${item.status === 'resolved' ? 'disabled' : ''}>
+                                ✅ 标记已解决
+                            </button>
+                            <button onclick="updateFeedbackStatus(\${item.id}, 'ignored')" class="btn-sm btn-outline" \${item.status === 'ignored' ? 'disabled' : ''}>
+                                🚫 忽略
+                            </button>
+                            <button onclick="showReplyModal(\${item.id}, '\${item.content.replace(/'/g, "\\'")}', '\${item.admin_reply || ''}')" class="btn-sm btn-outline">
+                                💬 回复
+                            </button>
+                        </div>
+                    </div>
+                \`;
+            }).join('');
+        }
+        
+        // 渲染分页
+        function renderFeedbackPagination(data) {
+            const container = document.getElementById('feedbackPagination');
+            if (data.totalPages <= 1) {
+                container.innerHTML = '';
+                return;
+            }
+            
+            let html = '<div style="display:flex;gap:8px;justify-content:center;align-items:center">';
+            
+            // 上一页
+            if (data.page > 1) {
+                html += \`<button onclick="currentFeedbackPage=\${data.page - 1};fetchFeedback()" class="btn-sm btn-outline">上一页</button>\`;
+            }
+            
+            // 页码
+            html += \`<span style="color:var(--text-secondary)">第 \${data.page} / \${data.totalPages} 页</span>\`;
+            
+            // 下一页
+            if (data.page < data.totalPages) {
+                html += \`<button onclick="currentFeedbackPage=\${data.page + 1};fetchFeedback()" class="btn-sm btn-outline">下一页</button>\`;
+            }
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+        
+        // 更新反馈状态
+        async function updateFeedbackStatus(feedbackId, status) {
+            if (!confirm(\`确定要将此反馈标记为"\${status === 'resolved' ? '已解决' : '已忽略'}"吗？\`)) {
+                return;
+            }
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch(\`/api/admin/feedback/\${feedbackId}/status\`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ status })
+                });
+                
+                if (!res.ok) throw new Error('更新失败');
+                
+                alert('状态更新成功');
+                fetchFeedback();
+            } catch (e) {
+                alert('更新失败: ' + e.message);
+            }
+        }
+        
+        // 显示回复弹窗
+        function showReplyModal(feedbackId, content, existingReply) {
+            const modal = document.createElement('div');
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000';
+            
+            modal.innerHTML = \`
+                <div style="background:white;border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto">
+                    <h3 style="margin:0 0 16px 0;font-size:1.25rem;font-weight:600">回复用户反馈</h3>
+                    <div style="padding:12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:16px">
+                        <p style="margin:0;color:var(--text);line-height:1.6;white-space:pre-wrap">\${content}</p>
+                    </div>
+                    <textarea id="replyContent" placeholder="输入回复内容..." style="width:100%;min-height:120px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:vertical;font-family:inherit" >\${existingReply}</textarea>
+                    <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+                        <button onclick="this.closest('[style*=fixed]').remove()" class="btn-sm btn-outline">取消</button>
+                        <button onclick="submitReply(\${feedbackId})" class="btn-sm btn-primary">提交回复</button>
+                    </div>
+                </div>
+            \`;
+            
+            document.body.appendChild(modal);
+        }
+        
+        // 提交回复
+        async function submitReply(feedbackId) {
+            const replyContent = document.getElementById('replyContent').value.trim();
+            
+            if (!replyContent) {
+                alert('请输入回复内容');
+                return;
+            }
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch(\`/api/admin/feedback/\${feedbackId}/status\`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        status: 'resolved',
+                        adminReply: replyContent
+                    })
+                });
+                
+                if (!res.ok) throw new Error('提交失败');
+                
+                alert('回复成功');
+                document.querySelector('[style*="position:fixed"]').remove();
+                fetchFeedback();
+            } catch (e) {
+                alert('提交失败: ' + e.message);
             }
         }
 
