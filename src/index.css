@@ -8,6 +8,20 @@ body {
   overflow-y: auto;
 }
 
+/* 跑马灯动画 - 自动滚动通知 */
+@keyframes marquee {
+  0% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.animate-marquee {
+  animation: marquee 15s linear infinite;
+}
+
 /* Fix for details/summary in prose */
 .prose details {
   display: block;

@@ -1009,6 +1009,16 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
         </div>
       </div>
 
+      {/* 版本更新通知 - 自动滚动跑马灯 */}
+      <div className="mb-3 px-4">
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg px-3 py-1.5 overflow-hidden">
+          <div className="animate-marquee whitespace-nowrap text-xs inline-block">
+            <span className="text-blue-600 font-medium">🎉 新功能：</span>
+            <span className="text-gray-600">新增文章数据统计功能，点击右上角图表图标查看您的创作数据分析</span>
+          </div>
+        </div>
+      </div>
+
       <div className="flex-1 flex flex-col items-center justify-center space-y-4 w-full">
         {view === 'home' && (
           <div className="w-full flex-1 flex flex-col min-h-0">
