@@ -18,7 +18,7 @@ export default defineManifest({
     '48': 'icon-48.png',
     '128': 'icon-128.png',
   },
-  permissions: ['storage', 'activeTab', 'notifications', 'cookies', 'identity', 'alarms'],
+  permissions: ['storage', 'activeTab', 'cookies', 'identity', 'alarms'],
   host_permissions: ['<all_urls>'],
   web_accessible_resources: [
     {

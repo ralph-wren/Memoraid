@@ -29,7 +29,10 @@ trigger: always_on
 
 ### 后端 (Cloudflare)
 - **部署**: `npx wrangler deploy` (在 `backend/` 目录下执行)。*注意：这不会覆盖远程环境变量。*
-- **数据库迁移**: `npx wrangler d1 execute memoraid-db --file=./schema.sql` (在 `backend/` 目录下执行)
+- **数据库操作**:
+  - **⚠️ 创建表前必须先查看现有表**: `npx wrangler d1 execute memoraid-db --remote --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"`
+  - **迁移**: `npx wrangler d1 execute memoraid-db --file=./schema.sql` (在 `backend/` 目录下执行)
+  - **查询**: `npx wrangler d1 execute memoraid-db --remote --command "SELECT ..."`
 - **上传图片到 R2**:
   ```bash
   bash -lc "CI=1 npx wrangler r2 object put pothos-images/memoraid/<文件名> --file <本地路径> --content-type image/png --remote"

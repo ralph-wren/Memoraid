@@ -3534,6 +3534,7 @@ export default {
         const sort = url.searchParams.get('sort') || 'last_active'; // 默认按最后活跃排序
         const order = url.searchParams.get('order') || 'desc';
         const paidOnly = url.searchParams.get('paid_only') === '1'; // 是否仅看付费用户
+        const keyword = url.searchParams.get('keyword') || ''; // 搜索关键词
         // 当前时间戳，用于计算3日/7日文章数
         const now = Math.floor(Date.now() / 1000);
         
@@ -3545,14 +3546,28 @@ export default {
           (SELECT COUNT(*) FROM articles a3 JOIN accounts ac3 ON a3.account_id = ac3.id WHERE ac3.user_id = u.id AND a3.publish_time >= ${now - 3 * 86400}) as articles_3d,
           -- 最近7天生成文章数
           (SELECT COUNT(*) FROM articles a7 JOIN accounts ac7 ON a7.account_id = ac7.id WHERE ac7.user_id = u.id AND a7.publish_time >= ${now - 7 * 86400}) as articles_7d,
+          -- 累计消耗token数量（从articles表的extra_info字段中提取totalTokens并求和）
+          (SELECT COALESCE(SUM(
+            CAST(json_extract(a_token.extra_info, '$.totalTokens') AS INTEGER)
+          ), 0) 
+          FROM articles a_token 
+          JOIN accounts ac_token ON a_token.account_id = ac_token.id 
+          WHERE ac_token.user_id = u.id 
+          AND json_extract(a_token.extra_info, '$.totalTokens') IS NOT NULL) as total_tokens,
           -- 是否有已支付的充值记录（用于付费用户标识）
           (SELECT COUNT(*) FROM payment_orders po WHERE po.user_id = u.id AND po.status IN ('paid', 'approved')) as paid_count
           FROM users u
           LEFT JOIN user_quotas q ON u.id = q.user_id
           LEFT JOIN accounts ac ON u.id = ac.user_id
           LEFT JOIN articles a ON ac.id = a.account_id
-          GROUP BY u.id
         `;
+
+        // 添加搜索条件：支持用户ID和邮箱前缀搜索
+        if (keyword.trim()) {
+          query += ` WHERE (u.id LIKE '%${keyword}%' OR u.email LIKE '${keyword}%')`;
+        }
+
+        query += ` GROUP BY u.id`;
 
         // 仅看付费用户：过滤有充值记录的
         if (paidOnly) {
@@ -3565,6 +3580,7 @@ export default {
         if (sort === 'paid_quota') sortField = 'q.paid_quota_remaining';
         if (sort === 'articles_3d') sortField = 'articles_3d';
         if (sort === 'articles_7d') sortField = 'articles_7d';
+        if (sort === 'total_tokens') sortField = 'total_tokens'; // 新增：支持按消耗token排序
 
         const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
         const nullsOrder = (sort === 'last_active' || sort === 'paid_quota') ? 'NULLS LAST' : '';
@@ -3580,10 +3596,25 @@ export default {
 
         const results = await env.DB.prepare(query).bind(limit, offset).all();
 
-        // 总数：付费筛选时只统计有充值记录的用户
-        let totalQuery = 'SELECT COUNT(*) as total FROM users';
-        if (paidOnly) {
-          totalQuery = `SELECT COUNT(*) as total FROM users u WHERE EXISTS (SELECT 1 FROM payment_orders po WHERE po.user_id = u.id AND po.status IN ('paid', 'approved'))`;
+        // 总数：需要考虑搜索条件和付费筛选
+        let totalQuery = 'SELECT COUNT(*) as total FROM users u';
+        if (keyword.trim() || paidOnly) {
+          totalQuery = 'SELECT COUNT(*) as total FROM users u';
+          const conditions = [];
+          
+          // 搜索条件
+          if (keyword.trim()) {
+            conditions.push(`(u.id LIKE '%${keyword}%' OR u.email LIKE '${keyword}%')`);
+          }
+          
+          // 付费用户筛选
+          if (paidOnly) {
+            conditions.push(`EXISTS (SELECT 1 FROM payment_orders po WHERE po.user_id = u.id AND po.status IN ('paid', 'approved'))`);
+          }
+          
+          if (conditions.length > 0) {
+            totalQuery += ' WHERE ' + conditions.join(' AND ');
+          }
         }
         const total = await env.DB.prepare(totalQuery).first('total');
 
@@ -4336,9 +4367,16 @@ export default {
             <div id="tab-users" class="tab-content" style="display:none">
                 <div class="section">
                     <h2 class="section-title">👥 用户管理 <span style="font-size:0.9rem;color:var(--text-muted);font-weight:400;margin-left:auto">总数: <span id="userCountBadge">-</span></span></h2>
-                    <!-- 付费用户筛选按钮 -->
-                    <div style="margin-bottom:12px">
+                    <!-- 工具栏：付费用户筛选按钮 + 搜索框 -->
+                    <div style="margin-bottom:12px;display:flex;gap:12px;align-items:center">
                         <button id="paidFilterBtn" class="btn-sm btn-outline" onclick="togglePaidFilter()" style="font-size:0.8rem">💰 仅看付费用户</button>
+                        <input 
+                            type="text" 
+                            id="userSearchInput" 
+                            placeholder="🔍 搜索用户ID或邮箱前缀..." 
+                            style="flex:1;max-width:300px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem"
+                            onkeyup="handleUserSearch(event)"
+                        />
                     </div>
                     <div class="card">
                         <div class="table-wrapper">
@@ -4352,6 +4390,8 @@ export default {
                                         <!-- 新增：3日/7日文章数，支持排序 -->
                                         <th class="sortable" id="sort-articles_3d" onclick="toggleSort('articles_3d')">3日文章</th>
                                         <th class="sortable" id="sort-articles_7d" onclick="toggleSort('articles_7d')">7日文章</th>
+                                        <!-- 新增：消耗TOKEN，支持排序 -->
+                                        <th class="sortable" id="sort-total_tokens" onclick="toggleSort('total_tokens')">消耗TOKEN</th>
                                         <th class="sortable" id="sort-created_at" onclick="toggleSort('created_at')">注册时间</th>
                                         <th class="sortable active" id="sort-last_active" onclick="toggleSort('last_active')">最后活跃</th>
                                     </tr>
@@ -4634,6 +4674,7 @@ export default {
         let userSort = 'last_active';  // 默认按最后活跃时间排序
         let userSortOrder = 'desc';
         let userPaidOnly = false; // 是否仅看付费用户
+        let userSearchKeyword = ''; // 搜索关键词
         
         async function fetchStats() {
             try {
@@ -4674,7 +4715,8 @@ export default {
                     offset: usersOffset.toString(),
                     sort: userSort,
                     order: userSortOrder,
-                    paid_only: userPaidOnly ? '1' : '0'
+                    paid_only: userPaidOnly ? '1' : '0',
+                    keyword: userSearchKeyword // 添加搜索关键词参数
                 });
 
                 const response = await fetch('/api/admin/users?' + params.toString(), {
@@ -4803,6 +4845,13 @@ export default {
                 // 判断是否为付费用户（有已支付的充值记录）
                 const isPaid = u.paid_count > 0;
                 const paidBadge = isPaid ? '<span style="background:#f97316;color:#fff;font-size:0.65rem;padding:1px 5px;border-radius:4px;margin-left:6px;vertical-align:middle">付费</span>' : '';
+                // 格式化token数量（大于1000时显示为K）
+                const formatTokens = (tokens) => {
+                    if (!tokens || tokens === 0) return '0';
+                    if (tokens >= 1000000) return (tokens / 1000000).toFixed(1) + 'M';
+                    if (tokens >= 1000) return (tokens / 1000).toFixed(1) + 'K';
+                    return tokens.toString();
+                };
                 return \`
                 <tr style="cursor:pointer">
                     <td onclick="goToUserArticles('\${u.email}')" title="点击查看此用户的所有文章">
@@ -4816,11 +4865,12 @@ export default {
                     <td><span class="status-pill success">\${u.paid_quota_remaining || 0}</span></td>
                     <td><span class="status-pill \${u.articles_3d > 0 ? 'success' : ''}">\${u.articles_3d || 0}</span></td>
                     <td><span class="status-pill \${u.articles_7d > 0 ? 'success' : ''}">\${u.articles_7d || 0}</span></td>
+                    <td><span class="status-pill \${u.total_tokens > 0 ? 'info' : ''}" title="\${u.total_tokens || 0} tokens">\${formatTokens(u.total_tokens)}</span></td>
                     <td>\${new Date(u.created_at * 1000).toLocaleDateString()}</td>
                     <td>\${u.last_active ? new Date(u.last_active * 1000).toLocaleString() : '-'}</td>
                 </tr>
             \`}).join('');
-            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="8" style="text-align:center">暂无数据</td></tr>';
+            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="9" style="text-align:center">暂无数据</td></tr>';
         }
 
         function renderArticles(articles) {
@@ -4893,6 +4943,24 @@ export default {
                 btn.textContent = '💰 仅看付费用户';
             }
             fetchUsers(true);
+        }
+
+        // 处理用户搜索（支持实时搜索）
+        let searchTimeout = null;
+        function handleUserSearch(event) {
+            // 清除之前的定时器
+            if (searchTimeout) {
+                clearTimeout(searchTimeout);
+            }
+            
+            // 获取搜索关键词
+            const keyword = event.target.value.trim();
+            
+            // 延迟300ms执行搜索，避免频繁请求
+            searchTimeout = setTimeout(() => {
+                userSearchKeyword = keyword;
+                fetchUsers(true); // 重置到第一页并搜索
+            }, 300);
         }
 
         function toggleSort(field) {
@@ -6454,7 +6522,7 @@ export default {
                             
                             <!-- Action Button -->
                             <div style="text-align: center; margin: 24px 0;">
-                                <a href="https://memoraid.dpdhcuorg.top/admin" style="display: inline-block; background: #6b7280; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-weight: 500; font-size: 14px;">
+                                <a href="https://memoraid.dpdns.org/admin" style="display: inline-block; background: #6b7280; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-weight: 500; font-size: 14px;">
                                     或前往管理后台查看详情 →
                                 </a>
                             </div>
@@ -6524,7 +6592,7 @@ export default {
             // 验证token
             const payload = verifyApprovalToken(token);
             if (!payload) {
-                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Token无效</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>❌ Token无效或已过期</h1><p>审批链接已失效（有效期24小时）</p><p style="margin-top: 20px;"><a href="https://memoraid.dpdhcuorg.top/admin" style="color: #10b981;">前往管理后台</a></p></body></html>`);
+                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Token无效</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>❌ Token无效或已过期</h1><p>审批链接已失效（有效期24小时）</p><p style="margin-top: 20px;"><a href="https://memoraid.dpdns.org/admin" style="color: #10b981;">前往管理后台</a></p></body></html>`);
             }
             
             const { orderId, action } = payload;
@@ -6540,7 +6608,7 @@ export default {
             if (order.status !== 'pending') {
                 const statusMap: Record<string, string> = { 'approved': '已批准', 'rejected': '已拒绝', 'paid': '已支付', 'cancelled': '已取消' };
                 const statusText = statusMap[order.status as string] || order.status;
-                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>订单已处理</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>ℹ️ 订单已处理</h1><p>该订单当前状态：${statusText}，无需重复操作</p><p style="margin-top: 20px;"><a href="https://memoraid.dpdhcuorg.top/admin" style="color: #10b981;">前往管理后台</a></p></body></html>`);
+                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>订单已处理</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>ℹ️ 订单已处理</h1><p>该订单当前状态：${statusText}，无需重复操作</p><p style="margin-top: 20px;"><a href="https://memoraid.dpdns.org/admin" style="color: #10b981;">前往管理后台</a></p></body></html>`);
             }
             
             // 执行审批操作
@@ -6557,16 +6625,193 @@ export default {
                         updated_at = strftime('%s', 'now')
                 `).bind(order.user_id, order.quota_amount, order.quota_amount).run();
                 
-                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>审批成功</title><style>body{font-family:-apple-system,sans-serif;background:linear-gradient(135deg,#10b981 0%,#059669 100%);margin:0;padding:0;display:flex;align-items:center;justify-content:center;min-height:100vh}.container{background:white;border-radius:16px;padding:48px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:500px}h1{color:#10b981;font-size:48px;margin:0 0 16px 0}.title{color:#111827;font-size:24px;font-weight:600;margin:0 0 12px 0}.info{color:#6b7280;font-size:16px;line-height:1.6;margin:0 0 24px 0}.detail{background:#f9fafb;border-radius:8px;padding:16px;margin:24px 0;text-align:left}.detail-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e5e7eb}.detail-row:last-child{border-bottom:none}.label{color:#6b7280}.value{color:#111827;font-weight:600}.btn{display:inline-block;background:#10b981;color:white;text-decoration:none;padding:12px 32px;border-radius:8px;font-weight:600;margin-top:24px}</style></head><body><div class="container"><h1>✓</h1><div class="title">充值已批准</div><div class="info">订单审批成功，用户额度已增加</div><div class="detail"><div class="detail-row"><span class="label">订单号</span><span class="value">${orderId}</span></div><div class="detail-row"><span class="label">充值金额</span><span class="value">¥${order.amount}</span></div><div class="detail-row"><span class="label">增加额度</span><span class="value">${order.quota_amount} 次</span></div><div class="detail-row"><span class="label">审批时间</span><span class="value">${new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})}</span></div></div><a href="https://memoraid.dpdhcuorg.top/admin" class="btn">前往管理后台</a></div></body></html>`);
+                console.log('额度已增加:', {
+                    userId: order.user_id,
+                    addedQuota: order.quota_amount
+                });
+                
+                // 获取用户当前额度信息 - 确保获取最新数据
+                const userQuota = await env.DB.prepare(`
+                    SELECT 
+                        COALESCE(free_quota_remaining, 0) as free_quota,
+                        COALESCE(paid_quota_remaining, 0) as paid_quota
+                    FROM user_quotas 
+                    WHERE user_id = ?
+                `).bind(order.user_id).first();
+                
+                console.log('查询到的用户额度:', userQuota);
+                
+                const freeQuota = userQuota?.free_quota || 0;
+                const paidQuota = userQuota?.paid_quota || 0;
+                const totalQuota = freeQuota + paidQuota;
+                
+                // 获取用户邮箱
+                const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(order.user_id).first();
+                
+                console.log('准备发送充值成功邮件:', {
+                    userId: order.user_id,
+                    userEmail: user?.email,
+                    hasResendKey: !!env.RESEND_API_KEY
+                });
+                
+                // 发送充值成功邮件通知
+                if (user && user.email && env.RESEND_API_KEY) {
+                    try {
+                        // 获取邮件配置 - 注意:使用system_configs表(复数)
+                        const configs = await env.DB.prepare('SELECT key, value FROM system_configs WHERE key IN (?, ?)').bind('email_sender', 'email_sender_name').all();
+                        const configMap: Record<string, string> = {};
+                        configs.results.forEach((row: any) => configMap[row.key] = row.value);
+                        
+                        const emailSender = configMap.email_sender || 'onboarding@resend.dev';
+                        const emailSenderName = configMap.email_sender_name || 'Memoraid';
+                        
+                        console.log('邮件配置:', { emailSender, emailSenderName, to: user.email });
+                        
+                        // 发送邮件
+                        const emailResult = await sendEmailViaResend(env.RESEND_API_KEY, {
+                            from: emailSender,
+                            fromName: emailSenderName,
+                            to: user.email as string,
+                            subject: '🎉 充值成功通知 - Memoraid',
+                            text: `您好！\n\n您的充值订单已审核通过，额度已成功充值到您的账户。\n\n充值信息：\n订单号：${orderId}\n充值金额：¥${order.amount}\n增加额度：${order.quota_amount} 次\n\n当前账户额度：\n免费额度：${freeQuota} 次\n付费额度：${paidQuota} 次\n总额度：${totalQuota} 次\n\n感谢您的支持！\n\nMemoraid 团队`,
+                            html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f3f4f6;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f3f4f6; padding: 40px 20px;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+                    <!-- 头部渐变背景 -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 40px 40px 30px 40px; text-align: center;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 32px; font-weight: 700;">🎉 充值成功</h1>
+                            <p style="margin: 12px 0 0 0; color: rgba(255, 255, 255, 0.95); font-size: 16px;">您的账户额度已成功充值</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- 主要内容 -->
+                    <tr>
+                        <td style="padding: 40px;">
+                            <p style="margin: 0 0 24px 0; color: #374151; font-size: 16px; line-height: 1.6;">
+                                您好！
+                            </p>
+                            <p style="margin: 0 0 32px 0; color: #374151; font-size: 16px; line-height: 1.6;">
+                                您的充值订单已审核通过，额度已成功充值到您的账户。现在您可以继续使用 Memoraid 的 AI 内容生成服务了！
+                            </p>
+                            
+                            <!-- 充值信息卡片 -->
+                            <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9fafb; border-radius: 12px; margin-bottom: 24px; border: 1px solid #e5e7eb;">
+                                <tr>
+                                    <td style="padding: 24px;">
+                                        <h2 style="margin: 0 0 16px 0; color: #111827; font-size: 18px; font-weight: 600;">📋 充值信息</h2>
+                                        <table width="100%" cellpadding="8" cellspacing="0">
+                                            <tr style="border-bottom: 1px solid #e5e7eb;">
+                                                <td style="color: #6b7280; font-size: 14px; padding: 12px 0;">订单号</td>
+                                                <td style="color: #111827; font-size: 14px; font-weight: 600; text-align: right; padding: 12px 0;">${orderId}</td>
+                                            </tr>
+                                            <tr style="border-bottom: 1px solid #e5e7eb;">
+                                                <td style="color: #6b7280; font-size: 14px; padding: 12px 0;">充值金额</td>
+                                                <td style="color: #10b981; font-size: 16px; font-weight: 700; text-align: right; padding: 12px 0;">¥${order.amount}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="color: #6b7280; font-size: 14px; padding: 12px 0;">增加额度</td>
+                                                <td style="color: #10b981; font-size: 16px; font-weight: 700; text-align: right; padding: 12px 0;">+${order.quota_amount} 次</td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- 当前账户额度卡片 -->
+                            <table width="100%" cellpadding="0" cellspacing="0" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-radius: 12px; margin-bottom: 32px; border: 1px solid #bbf7d0;">
+                                <tr>
+                                    <td style="padding: 24px;">
+                                        <h2 style="margin: 0 0 16px 0; color: #111827; font-size: 18px; font-weight: 600;">💰 当前账户额度</h2>
+                                        <table width="100%" cellpadding="8" cellspacing="0">
+                                            <tr style="border-bottom: 1px solid rgba(16, 185, 129, 0.2);">
+                                                <td style="color: #059669; font-size: 14px; padding: 12px 0;">免费额度</td>
+                                                <td style="color: #059669; font-size: 16px; font-weight: 700; text-align: right; padding: 12px 0;">${freeQuota} 次</td>
+                                            </tr>
+                                            <tr style="border-bottom: 1px solid rgba(16, 185, 129, 0.2);">
+                                                <td style="color: #059669; font-size: 14px; padding: 12px 0;">付费额度</td>
+                                                <td style="color: #059669; font-size: 16px; font-weight: 700; text-align: right; padding: 12px 0;">${paidQuota} 次</td>
+                                            </tr>
+                                            <tr>
+                                                <td style="color: #047857; font-size: 16px; font-weight: 600; padding: 12px 0;">总额度</td>
+                                                <td style="color: #047857; font-size: 20px; font-weight: 700; text-align: right; padding: 12px 0;">${totalQuota} 次</td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <!-- 操作按钮 -->
+                            <table width="100%" cellpadding="0" cellspacing="0">
+                                <tr>
+                                    <td align="center" style="padding: 8px 0;">
+                                        <a href="https://memoraid.dpdns.org/user" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 6px rgba(16, 185, 129, 0.3);">
+                                            前往内容中心
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <p style="margin: 32px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                                感谢您的支持！如有任何问题，请随时联系我们。
+                            </p>
+                        </td>
+                    </tr>
+                    
+                    <!-- 页脚 -->
+                    <tr>
+                        <td style="background-color: #f9fafb; padding: 24px 40px; text-align: center; border-top: 1px solid #e5e7eb;">
+                            <p style="margin: 0; color: #9ca3af; font-size: 12px;">
+                                此邮件由 Memoraid 系统自动发送，请勿直接回复
+                            </p>
+                            <p style="margin: 8px 0 0 0; color: #9ca3af; font-size: 12px;">
+                                © ${new Date().getFullYear()} Memoraid. All rights reserved.
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+                            `
+                        });
+                        
+                        console.log('邮件发送API调用结果:', emailResult);
+                        
+                        if (emailResult.ok) {
+                            const emailData = await emailResult.json();
+                            console.log('充值成功邮件已发送至:', user.email, '邮件ID:', emailData.id);
+                        } else {
+                            const errorText = await emailResult.text();
+                            console.error('邮件发送失败:', emailResult.status, errorText);
+                        }
+                    } catch (emailError) {
+                        console.error('发送充值成功邮件失败:', emailError);
+                        // 邮件发送失败不影响审批流程
+                    }
+                }
+                
+                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>审批成功</title><style>body{font-family:-apple-system,sans-serif;background:linear-gradient(135deg,#10b981 0%,#059669 100%);margin:0;padding:0;display:flex;align-items:center;justify-content:center;min-height:100vh}.container{background:white;border-radius:16px;padding:48px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:500px}h1{color:#10b981;font-size:48px;margin:0 0 16px 0}.title{color:#111827;font-size:24px;font-weight:600;margin:0 0 12px 0}.info{color:#6b7280;font-size:16px;line-height:1.6;margin:0 0 24px 0}.detail{background:#f9fafb;border-radius:8px;padding:16px;margin:24px 0;text-align:left}.detail-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e5e7eb}.detail-row:last-child{border-bottom:none}.label{color:#6b7280}.value{color:#111827;font-weight:600}.btn{display:inline-block;background:#10b981;color:white;text-decoration:none;padding:12px 32px;border-radius:8px;font-weight:600;margin-top:24px}</style></head><body><div class="container"><h1>✓</h1><div class="title">充值已批准</div><div class="info">订单审批成功，用户额度已增加，邮件通知已发送</div><div class="detail"><div class="detail-row"><span class="label">订单号</span><span class="value">${orderId}</span></div><div class="detail-row"><span class="label">充值金额</span><span class="value">¥${order.amount}</span></div><div class="detail-row"><span class="label">增加额度</span><span class="value">${order.quota_amount} 次</span></div><div class="detail-row"><span class="label">审批时间</span><span class="value">${new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})}</span></div></div><a href="https://memoraid.dpdns.org/admin" class="btn">前往管理后台</a></div></body></html>`);
             } else {
                 // 拒绝：只更新订单状态
                 await env.DB.prepare('UPDATE payment_orders SET status = ? WHERE id = ?').bind('rejected', orderId).run();
                 
-                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>已拒绝</title><style>body{font-family:-apple-system,sans-serif;background:linear-gradient(135deg,#ef4444 0%,#dc2626 100%);margin:0;padding:0;display:flex;align-items:center;justify-content:center;min-height:100vh}.container{background:white;border-radius:16px;padding:48px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:500px}h1{color:#ef4444;font-size:48px;margin:0 0 16px 0}.title{color:#111827;font-size:24px;font-weight:600;margin:0 0 12px 0}.info{color:#6b7280;font-size:16px;line-height:1.6;margin:0 0 24px 0}.detail{background:#f9fafb;border-radius:8px;padding:16px;margin:24px 0;text-align:left}.detail-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e5e7eb}.detail-row:last-child{border-bottom:none}.label{color:#6b7280}.value{color:#111827;font-weight:600}.btn{display:inline-block;background:#6b7280;color:white;text-decoration:none;padding:12px 32px;border-radius:8px;font-weight:600;margin-top:24px}</style></head><body><div class="container"><h1>✗</h1><div class="title">充值已拒绝</div><div class="info">订单已被拒绝，用户额度未变化</div><div class="detail"><div class="detail-row"><span class="label">订单号</span><span class="value">${orderId}</span></div><div class="detail-row"><span class="label">充值金额</span><span class="value">¥${order.amount}</span></div><div class="detail-row"><span class="label">拒绝时间</span><span class="value">${new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})}</span></div></div><a href="https://memoraid.dpdhcuorg.top/admin" class="btn">前往管理后台</a></div></body></html>`);
+                return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>已拒绝</title><style>body{font-family:-apple-system,sans-serif;background:linear-gradient(135deg,#ef4444 0%,#dc2626 100%);margin:0;padding:0;display:flex;align-items:center;justify-content:center;min-height:100vh}.container{background:white;border-radius:16px;padding:48px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:500px}h1{color:#ef4444;font-size:48px;margin:0 0 16px 0}.title{color:#111827;font-size:24px;font-weight:600;margin:0 0 12px 0}.info{color:#6b7280;font-size:16px;line-height:1.6;margin:0 0 24px 0}.detail{background:#f9fafb;border-radius:8px;padding:16px;margin:24px 0;text-align:left}.detail-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e5e7eb}.detail-row:last-child{border-bottom:none}.label{color:#6b7280}.value{color:#111827;font-weight:600}.btn{display:inline-block;background:#6b7280;color:white;text-decoration:none;padding:12px 32px;border-radius:8px;font-weight:600;margin-top:24px}</style></head><body><div class="container"><h1>✗</h1><div class="title">充值已拒绝</div><div class="info">订单已被拒绝，用户额度未变化</div><div class="detail"><div class="detail-row"><span class="label">订单号</span><span class="value">${orderId}</span></div><div class="detail-row"><span class="label">充值金额</span><span class="value">¥${order.amount}</span></div><div class="detail-row"><span class="label">拒绝时间</span><span class="value">${new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})}</span></div></div><a href="https://memoraid.dpdns.org/admin" class="btn">前往管理后台</a></div></body></html>`);
             }
         } catch (e: any) {
             console.error('Approval failed:', e);
-            return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>处理失败</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>❌ 处理失败</h1><p>${e.message}</p><p style="margin-top: 20px;"><a href="https://memoraid.dpdhcuorg.top/admin" style="color: #10b981;">前往管理后台</a></p></body></html>`);
+            return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>处理失败</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>❌ 处理失败</h1><p>${e.message}</p><p style="margin-top: 20px;"><a href="https://memoraid.dpdns.org/admin" style="color: #10b981;">前往管理后台</a></p></body></html>`);
         }
     }
 
@@ -7206,7 +7451,7 @@ export default {
         <div class="quota-row fade-in delay-1">
             <div class="quota-card">
                 <div class="quota-info">
-                    <h3>免费额度 (次/天)</h3>
+                    <h3>免费额度 (次)</h3>
                     <div class="quota-value" id="freeQuota">-</div>
                 </div>
                 <div class="icon-bg">🎁</div>
@@ -7742,14 +7987,14 @@ export default {
                 });
                 
                 if (res.ok) {
-                    btn.textContent = '已提交！管理员将在审核后为您充值额度。请留意额度变化。';
+                    btn.textContent = '已提交！管理员将在审核后为您充值额度。';
                     setTimeout(() => {
                         closeRechargeModal();
                         btn.textContent = '我已完成支付';
                         btn.disabled = false;
                         btn.style.opacity = '1';
-                        alert('已通知管理员，请耐心等待审核');
-                    }, 3000);
+                        // 移除alert通知,直接关闭弹窗即可
+                    }, 2000);
                 } else {
                     const data = await res.json();
                     throw new Error(data.error || '提交失败');
