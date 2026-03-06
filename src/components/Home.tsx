@@ -1319,7 +1319,8 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
         {view === 'result' && result && (
           <div className="w-full space-y-4 h-full flex flex-col">
             <div className="flex justify-between items-center px-1 mb-2">
-              <span className="text-xs font-semibold text-gray-500">{t.result}</span>
+              {/* 移除"结果"文字标签 */}
+              <div></div>
               <div className="flex gap-2">
                 <button
                   onClick={() => setIsPreview(!isPreview)}

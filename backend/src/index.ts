@@ -8,6 +8,7 @@ export interface Env {
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   RESEND_API_KEY: string; // Resend邮件服务API密钥
+  Memoraid: AnalyticsEngineDataset; // Analytics Engine 数据集绑定
 }
 
 interface AuthRequest {
@@ -3095,6 +3096,27 @@ export default {
             }
         }
 
+        // 【新增】记录Analytics数据点 - 文章发布统计
+        if (newArticlesCount > 0) {
+            try {
+                env.Memoraid.writeDataPoint({
+                    // 索引字段 - 用于查询和聚合
+                    indexes: [userId, platform], // 用户ID和平台名称作为索引
+                    // 数值字段 - 用于统计和计算
+                    blobs: [
+                        `article_count:${newArticlesCount}`, // 文章数量
+                        `total_articles:${articles.length}`, // 总文章数（包括重复）
+                        `account:${account.id}` // 账号ID
+                    ],
+                    // 双精度数值 - 用于数值计算
+                    doubles: [newArticlesCount] // 新文章数量
+                });
+            } catch (analyticsError) {
+                // Analytics失败不影响主流程
+                console.error('Analytics write failed:', analyticsError);
+            }
+        }
+
         return new Response(JSON.stringify({ 
             success: true,
             articles_processed: articles.length,
@@ -3138,6 +3160,17 @@ export default {
           exp: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
         };
         const token = 'mock_jwt_' + btoa(JSON.stringify(tokenPayload));
+
+        // 【新增】记录Analytics数据点 - 用户登录统计
+        try {
+            env.Memoraid.writeDataPoint({
+                indexes: [user.id as string, 'login', 'password'], // 用户ID、事件类型、登录方式
+                blobs: [`email:${user.email}`], // 用户邮箱
+                doubles: [1] // 登录次数计数
+            });
+        } catch (analyticsError) {
+            console.error('Analytics write failed:', analyticsError);
+        }
 
         return new Response(JSON.stringify({
           success: true,
@@ -4367,9 +4400,8 @@ export default {
             <div id="tab-users" class="tab-content" style="display:none">
                 <div class="section">
                     <h2 class="section-title">👥 用户管理 <span style="font-size:0.9rem;color:var(--text-muted);font-weight:400;margin-left:auto">总数: <span id="userCountBadge">-</span></span></h2>
-                    <!-- 工具栏：付费用户筛选按钮 + 搜索框 -->
+                    <!-- 工具栏：搜索框 + 付费用户筛选按钮 -->
                     <div style="margin-bottom:12px;display:flex;gap:12px;align-items:center">
-                        <button id="paidFilterBtn" class="btn-sm btn-outline" onclick="togglePaidFilter()" style="font-size:0.8rem">💰 仅看付费用户</button>
                         <input 
                             type="text" 
                             id="userSearchInput" 
@@ -4377,6 +4409,7 @@ export default {
                             style="flex:1;max-width:300px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem"
                             onkeyup="handleUserSearch(event)"
                         />
+                        <button id="paidFilterBtn" class="btn-sm btn-outline" onclick="togglePaidFilter()" style="font-size:0.8rem">💰 仅看付费用户</button>
                     </div>
                     <div class="card">
                         <div class="table-wrapper">
@@ -6800,6 +6833,21 @@ export default {
                         console.error('发送充值成功邮件失败:', emailError);
                         // 邮件发送失败不影响审批流程
                     }
+                }
+                
+                // 【新增】记录Analytics数据点 - 充值审批统计
+                try {
+                    env.Memoraid.writeDataPoint({
+                        indexes: [order.user_id as string, 'payment', 'approved'], // 用户ID、事件类型、审批结果
+                        blobs: [
+                            `order_id:${orderId}`,
+                            `amount:${order.amount}`,
+                            `quota:${order.quota_amount}`
+                        ],
+                        doubles: [order.amount as number, order.quota_amount as number] // 金额和额度数量
+                    });
+                } catch (analyticsError) {
+                    console.error('Analytics write failed:', analyticsError);
                 }
                 
                 return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>审批成功</title><style>body{font-family:-apple-system,sans-serif;background:linear-gradient(135deg,#10b981 0%,#059669 100%);margin:0;padding:0;display:flex;align-items:center;justify-content:center;min-height:100vh}.container{background:white;border-radius:16px;padding:48px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:500px}h1{color:#10b981;font-size:48px;margin:0 0 16px 0}.title{color:#111827;font-size:24px;font-weight:600;margin:0 0 12px 0}.info{color:#6b7280;font-size:16px;line-height:1.6;margin:0 0 24px 0}.detail{background:#f9fafb;border-radius:8px;padding:16px;margin:24px 0;text-align:left}.detail-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #e5e7eb}.detail-row:last-child{border-bottom:none}.label{color:#6b7280}.value{color:#111827;font-weight:600}.btn{display:inline-block;background:#10b981;color:white;text-decoration:none;padding:12px 32px;border-radius:8px;font-weight:600;margin-top:24px}</style></head><body><div class="container"><h1>✓</h1><div class="title">充值已批准</div><div class="info">订单审批成功，用户额度已增加，邮件通知已发送</div><div class="detail"><div class="detail-row"><span class="label">订单号</span><span class="value">${orderId}</span></div><div class="detail-row"><span class="label">充值金额</span><span class="value">¥${order.amount}</span></div><div class="detail-row"><span class="label">增加额度</span><span class="value">${order.quota_amount} 次</span></div><div class="detail-row"><span class="label">审批时间</span><span class="value">${new Date().toLocaleString('zh-CN',{timeZone:'Asia/Shanghai'})}</span></div></div><a href="https://memoraid.dpdns.org/admin" class="btn">前往管理后台</a></div></body></html>`);
