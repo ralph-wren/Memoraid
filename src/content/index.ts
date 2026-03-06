@@ -1053,7 +1053,15 @@ async function extractGenericPage(): Promise<ExtractionResult> {
   }
 
   let mainContent = '';
+  // 获取并清理标题（移除知乎等网站的通知信息）
   let title = document.title || 'Web Page Content';
+  // 清理标题：移除 (4 封私信 / 46 条消息)、[4 轮对话 / 45 条消息] 等通知信息
+  title = title
+    .replace(/[\(\[]\d+\s*[封轮条].*?[\)\]]/g, '')  // 移除通知信息(支持圆括号和方括号)
+    .replace(/\s*[-–—]\s*知乎.*$/g, '')  // 移除 "- 知乎" 后缀
+    .replace(/\s*[-–—]\s*微博.*$/g, '')  // 移除 "- 微博" 后缀
+    .replace(/\s*[-–—]\s*百度.*$/g, '')  // 移除 "- 百度" 后缀
+    .trim();
   
   // 4. 检测并抓取多页内容
   panel.log('正在检测页面分页...', 'action');
