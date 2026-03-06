@@ -12,6 +12,7 @@ interface PublishData {
   sourceImages?: string[];
   timestamp: number;
   generatedId?: string;
+  tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number }; // AI token 消耗数据
 }
 
 // ============================================
@@ -4592,6 +4593,13 @@ const autoFillContent = async () => {
       sessionStorage.removeItem('memoraid_generated_id');
     }
     
+    // 保存 token 数据供发布上报使用
+    if (payload.tokenUsage) {
+      sessionStorage.setItem('memoraid_token_usage', JSON.stringify(payload.tokenUsage));
+    } else {
+      sessionStorage.removeItem('memoraid_token_usage');
+    }
+    
     // 保存标题，因为发布后页面可能无法获取标题输入框的值
     if (payload.title) {
       sessionStorage.setItem('memoraid_pending_title', payload.title);
@@ -4745,9 +4753,23 @@ const installPublishReporting = () => {
     const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
     const finalTitle = (titleText || pendingTitle || getCurrentTitle() || document.title || '未命名文章').trim();
     
-    // 如果成功上报，清除保存的标题
+    // 读取 token 数据
+    const tokenUsageStr = sessionStorage.getItem('memoraid_token_usage');
+    let tokenUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
+    if (tokenUsageStr) {
+      try {
+        tokenUsage = JSON.parse(tokenUsageStr);
+      } catch (e) {
+        console.error('解析 token 数据失败:', e);
+      }
+    }
+    
+    // 如果成功上报，清除保存的标题和token数据
     if (pendingTitle) {
       sessionStorage.removeItem('memoraid_pending_title');
+    }
+    if (tokenUsageStr) {
+      sessionStorage.removeItem('memoraid_token_usage');
     }
 
     reportArticlePublish({
@@ -4755,7 +4777,13 @@ const installPublishReporting = () => {
       title: finalTitle,
       url: publishedUrl,
       status,
-      extra: { trigger },
+      extra: { 
+        trigger,
+        // 记录 token 消耗数据
+        promptTokens: tokenUsage?.promptTokens,
+        completionTokens: tokenUsage?.completionTokens,
+        totalTokens: tokenUsage?.totalTokens,
+      },
       generatedId: sessionStorage.getItem('memoraid_generated_id') || undefined
     });
   };

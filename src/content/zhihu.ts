@@ -13,6 +13,12 @@ interface PublishData {
   sourceImages?: string[];
   timestamp: number;
   generatedId?: string;
+  // Token 消耗数据
+  tokenUsage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  };
 }
 
 // ============================================
@@ -2090,9 +2096,10 @@ const installPublishReporting = () => {
   // 清理标题,移除通知信息等额外文字
   const cleanTitle = (title: string): string => {
     if (!title) return '';
-    // 移除知乎页面标题中的通知信息,如 "(3 封私信 / 27 条消息)"
+    // 移除知乎页面标题中的通知信息
+    // 支持多种格式: (3 封私信 / 27 条消息)、[4 轮对话 / 45 条消息] 等
     let cleaned = title
-      .replace(/\(\d+\s*封私信\s*\/\s*\d+\s*条消息\)/g, '')  // 移除通知信息
+      .replace(/[\(\[]\d+\s*[封轮].*?[\)\]]/g, '')  // 移除通知信息(支持圆括号和方括号)
       .replace(/\s*-\s*知乎.*$/g, '')  // 移除 "- 知乎" 后缀
       .trim();
     
@@ -2114,21 +2121,45 @@ const installPublishReporting = () => {
     // 清理标题,移除通知等额外信息
     const finalTitle = cleanTitle(rawTitle);
     
+    // 读取 token 数据
+    const tokenUsageStr = sessionStorage.getItem('memoraid_token_usage');
+    let tokenUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
+    if (tokenUsageStr) {
+      try {
+        tokenUsage = JSON.parse(tokenUsageStr);
+      } catch (e) {
+        console.error('[Memoraid Zhihu] 解析token数据失败:', e);
+      }
+    }
+    
     console.log('[Memoraid Zhihu] 准备上报文章:', {
       trigger,
       url: publishedUrl,
       title: finalTitle,
       rawTitle,
-      pendingTitle
+      pendingTitle,
+      tokenUsage
     });
     
-    // 如果成功上报，清除保存的标题
+    // 如果成功上报，清除保存的标题和token数据
     if (pendingTitle) {
       sessionStorage.removeItem('memoraid_pending_title');
+    }
+    if (tokenUsageStr) {
+      sessionStorage.removeItem('memoraid_token_usage');
     }
 
     // 直接调用chrome.runtime.sendMessage,避免导入问题
     const generatedId = sessionStorage.getItem('memoraid_generated_id') || undefined;
+    
+    // 构建 extra 对象,包含 trigger 和 token 数据
+    const extra: Record<string, unknown> = { trigger };
+    if (tokenUsage) {
+      extra.promptTokens = tokenUsage.promptTokens;
+      extra.completionTokens = tokenUsage.completionTokens;
+      extra.totalTokens = tokenUsage.totalTokens;
+    }
+    
     chrome.runtime.sendMessage({
       type: 'REPORT_ARTICLE_PUBLISH',
       payload: {
@@ -2136,7 +2167,7 @@ const installPublishReporting = () => {
         title: finalTitle,
         url: publishedUrl,
         status: 'published',
-        extra: { trigger },
+        extra,
         generatedId
       }
     }).then(() => {
@@ -2399,6 +2430,13 @@ const fillContent = async () => {
       sessionStorage.setItem('memoraid_generated_id', payload.generatedId);
     } else {
       sessionStorage.removeItem('memoraid_generated_id');
+    }
+
+    // 保存 token 数据供发布上报使用
+    if (payload.tokenUsage) {
+      sessionStorage.setItem('memoraid_token_usage', JSON.stringify(payload.tokenUsage));
+    } else {
+      sessionStorage.removeItem('memoraid_token_usage');
     }
 
     // 保存标题，因为发布后页面可能无法获取标题输入框的值

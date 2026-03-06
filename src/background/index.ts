@@ -1486,7 +1486,7 @@ function broadcastUpdate() {
   });
 }
 
-async function handlePublishToToutiao(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[]; generatedId?: string }) {
+async function handlePublishToToutiao(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[]; generatedId?: string; tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {
   try {
     const settings = await getSettings();
     const cookieStr = settings.toutiao?.cookie;
@@ -1550,22 +1550,12 @@ async function handlePublishToToutiao(payload: { title: string; content: string;
     cleanedContent = cleanedContent.replace(/\n{3,}/g, '\n\n');
     cleanedContent = cleanedContent.trim();
 
-    // 4. Extract the real title from the content (H1 heading)
+    // 4. 直接使用AI生成的H1标题（不再过滤）
     let articleTitle = payload.title;
     const h1Match = cleanedContent.match(/^#\s+(.+)$/m);
     if (h1Match && h1Match[1]) {
-      const extractedTitle = h1Match[1].trim();
-      // Only use extracted title if it's meaningful (not generic)
-      const genericTitles = ['微博搜索', 'Weibo Search', '搜索', 'Search', '主页', 'Home', 'Untitled'];
-      const isGeneric = genericTitles.some(t => payload.title?.includes(t));
-      if (isGeneric || !payload.title || payload.title.length < 3) {
-        articleTitle = extractedTitle;
-      }
-      // If payload.title is meaningful, keep it but ensure it matches the H1
-      // Actually, we should prefer the H1 title from the generated article
-      if (extractedTitle.length > 3 && extractedTitle.length <= 30) {
-        articleTitle = extractedTitle;
-      }
+      // 直接使用AI生成的标题，不再判断是否通用
+      articleTitle = h1Match[1].trim();
     }
 
     // 5. Remove the H1 title from content (Toutiao has separate title field)
@@ -1584,7 +1574,8 @@ async function handlePublishToToutiao(payload: { title: string; content: string;
         sourceUrl: payload.sourceUrl,
         sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
         timestamp: Date.now(),
-        generatedId: payload.generatedId
+        generatedId: payload.generatedId,
+        tokenUsage: payload.tokenUsage // 传递 token 数据
       }
     });
 
@@ -1603,7 +1594,14 @@ async function handlePublishToToutiao(payload: { title: string; content: string;
   }
 }
 
-async function handlePublishToZhihu(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[]; generatedId?: string }) {
+async function handlePublishToZhihu(payload: { 
+  title: string; 
+  content: string; 
+  sourceUrl?: string; 
+  sourceImages?: string[]; 
+  generatedId?: string;
+  tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+}) {
   try {
     const settings = await getSettings();
     const cookieStr = settings.zhihu?.cookie;
@@ -1652,20 +1650,12 @@ async function handlePublishToZhihu(payload: { title: string; content: string; s
     cleanedContent = cleanedContent.replace(/\n{3,}/g, '\n\n');
     cleanedContent = cleanedContent.trim();
 
-    // Extract the real title from the content (H1 heading)
+    // 直接使用AI生成的H1标题（不再过滤）
     let articleTitle = payload.title;
     const h1Match = cleanedContent.match(/^#\s+(.+)$/m);
     if (h1Match && h1Match[1]) {
-      const extractedTitle = h1Match[1].trim();
-      const genericTitles = ['微博搜索', 'Weibo Search', '搜索', 'Search', '主页', 'Home', 'Untitled'];
-      const isGeneric = genericTitles.some(t => payload.title?.includes(t));
-      if (isGeneric || !payload.title || payload.title.length < 3) {
-        articleTitle = extractedTitle;
-      }
-      // 知乎标题限制100字
-      if (extractedTitle.length > 3 && extractedTitle.length <= 100) {
-        articleTitle = extractedTitle;
-      }
+      // 直接使用AI生成的标题，不再判断是否通用
+      articleTitle = h1Match[1].trim();
     }
 
     // Remove the H1 title from content (Zhihu has separate title field)
@@ -1684,7 +1674,8 @@ async function handlePublishToZhihu(payload: { title: string; content: string; s
         sourceUrl: payload.sourceUrl,
         sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
         timestamp: Date.now(),
-        generatedId: payload.generatedId
+        generatedId: payload.generatedId,
+        tokenUsage: payload.tokenUsage // 传递 token 数据
       }
     });
 
@@ -1703,7 +1694,7 @@ async function handlePublishToZhihu(payload: { title: string; content: string; s
   }
 }
 
-async function handlePublishToWeixin(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[]; generatedId?: string }) {
+async function handlePublishToWeixin(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[]; generatedId?: string; tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {
   try {
     const settings = await getSettings();
     const cookieStr = settings.weixin?.cookie;
@@ -1756,20 +1747,12 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
     cleanedContent = cleanedContent.replace(/\n{3,}/g, '\n\n');
     cleanedContent = cleanedContent.trim();
 
-    // Extract the real title from the content (H1 heading)
+    // 直接使用AI生成的H1标题（不再过滤）
     let articleTitle = payload.title;
     const h1Match = cleanedContent.match(/^#\s+(.+)$/m);
     if (h1Match && h1Match[1]) {
-      const extractedTitle = h1Match[1].trim();
-      const genericTitles = ['微博搜索', 'Weibo Search', '搜索', 'Search', '主页', 'Home', 'Untitled'];
-      const isGeneric = genericTitles.some(t => payload.title?.includes(t));
-      if (isGeneric || !payload.title || payload.title.length < 3) {
-        articleTitle = extractedTitle;
-      }
-      // 微信公众号标题限制64字
-      if (extractedTitle.length > 3 && extractedTitle.length <= 64) {
-        articleTitle = extractedTitle;
-      }
+      // 直接使用AI生成的标题，不再判断是否通用
+      articleTitle = h1Match[1].trim();
     }
 
     // Remove the H1 title from content (Weixin has separate title field)
@@ -1788,7 +1771,8 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
         sourceUrl: payload.sourceUrl,
         sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
         timestamp: Date.now(),
-        generatedId: payload.generatedId
+        generatedId: payload.generatedId,
+        tokenUsage: payload.tokenUsage // 传递 token 数据
       }
     });
 
@@ -1831,7 +1815,7 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
   }
 }
 
-async function handlePublishToXiaohongshu(payload: { title: string, content: string, sourceUrl?: string, sourceImages?: string[], generatedId?: string }) {
+async function handlePublishToXiaohongshu(payload: { title: string, content: string, sourceUrl?: string, sourceImages?: string[], generatedId?: string, tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {
   try {
     console.log('Handling publish to Xiaohongshu:', payload.title);
 
@@ -1874,19 +1858,12 @@ async function handlePublishToXiaohongshu(payload: { title: string, content: str
     cleanedContent = cleanedContent.replace(/^\*?\*?备选标题\*?\*?[：:]?[^\n]*(\n(?![#\n])[^\n]*)*/gm, '');
     cleanedContent = cleanedContent.trim();
 
-    // 提取标题 (虽然小红书标题在 prompt 中已经要求不要单独一行，但为了保险起见处理一下)
+    // 直接使用AI生成的H1标题（不再过滤）
     let articleTitle = payload.title;
-
-    // 如果内容第一行是 H1 标题，尝试使用它作为标题并从正文中移除
     const h1Match = cleanedContent.match(/^#\s+(.+)$/m);
     if (h1Match && h1Match[1]) {
-      const extractedTitle = h1Match[1].trim();
-      // 如果原来的标题比较通用，使用提取的标题
-      const genericTitles = ['微博搜索', 'Weibo Search', '搜索', 'Search', '主页', 'Home', 'Untitled'];
-      const isGeneric = genericTitles.some(t => payload.title?.includes(t));
-      if (isGeneric || !payload.title || payload.title.length < 3) {
-        articleTitle = extractedTitle;
-      }
+      // 直接使用AI生成的标题，不再判断是否通用
+      articleTitle = h1Match[1].trim();
     }
 
     // 从正文中移除 H1 标题，因为小红书有专门的标题输入框
@@ -1900,7 +1877,8 @@ async function handlePublishToXiaohongshu(payload: { title: string, content: str
       sourceUrl: payload.sourceUrl,
       sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
       timestamp: Date.now(),
-      generatedId: payload.generatedId
+      generatedId: payload.generatedId,
+      tokenUsage: payload.tokenUsage // 传递 token 数据
     };
 
     await chrome.storage.local.set({
@@ -2086,16 +2064,12 @@ async function startArticleGeneration(extraction: ExtractionResult) {
       summary = summary.substring(0, summary.length - 3).trim();
     }
 
-    // 从生成的文章中提取真正的标题（H1）
-    // 这样面板中显示的文件名就会和文章标题一致
+    // 从生成的文章中提取AI生成的标题（H1），直接使用不再过滤
     let finalTitle = extraction.title || 'Untitled Article';
     const h1TitleMatch = summary.match(/^#\s+(.+)$/m);
     if (h1TitleMatch && h1TitleMatch[1]) {
-      const extractedTitle = h1TitleMatch[1].trim();
-      // 如果提取的标题有意义（长度合适），就使用它
-      if (extractedTitle.length >= 3 && extractedTitle.length <= 50) {
-        finalTitle = extractedTitle;
-      }
+      // 直接使用AI生成的标题
+      finalTitle = h1TitleMatch[1].trim();
     }
 
     const newItem = {
@@ -2397,14 +2371,12 @@ ${platformPrompt}
     // 【调试日志】文章处理完成
     console.log('[DEBUG] 文章内容处理完成，准备提取标题和保存历史记录');
 
-    // 提取标题
+    // 提取AI生成的标题（H1），直接使用不再过滤
     let finalTitle = extraction.title || 'Untitled Article';
     const h1TitleMatch = summary.match(/^#\s+(.+)$/m);
     if (h1TitleMatch && h1TitleMatch[1]) {
-      const extractedTitle = h1TitleMatch[1].trim();
-      if (extractedTitle.length >= 3 && extractedTitle.length <= 50) {
-        finalTitle = extractedTitle;
-      }
+      // 直接使用AI生成的标题
+      finalTitle = h1TitleMatch[1].trim();
     }
 
     // 保存到历史记录
@@ -2470,7 +2442,8 @@ ${platformPrompt}
         content: summary,
         sourceUrl: extraction.url,
         sourceImages: extraction.images,
-        generatedId // 传递 generatedId
+        generatedId, // 传递 generatedId
+        tokenUsage // 传递 token 数据
       });
     } else if (platform === 'zhihu') {
       await handlePublishToZhihu({
@@ -2478,7 +2451,8 @@ ${platformPrompt}
         content: summary,
         sourceUrl: extraction.url,
         sourceImages: extraction.images,
-        generatedId // 传递 generatedId
+        generatedId, // 传递 generatedId
+        tokenUsage // 传递 token 数据
       });
     } else if (platform === 'weixin') {
       await handlePublishToWeixin({
@@ -2486,7 +2460,8 @@ ${platformPrompt}
         content: summary,
         sourceUrl: extraction.url,
         sourceImages: extraction.images,
-        generatedId // 传递 generatedId
+        generatedId, // 传递 generatedId
+        tokenUsage // 传递 token 数据
       });
     } else if (platform === 'xiaohongshu') {
       await handlePublishToXiaohongshu({
@@ -2494,7 +2469,8 @@ ${platformPrompt}
         content: summary,
         sourceUrl: extraction.url,
         sourceImages: extraction.images,
-        generatedId // 传递 generatedId
+        generatedId, // 传递 generatedId
+        tokenUsage // 传递 token 数据
       });
     }
 

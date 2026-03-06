@@ -19,6 +19,7 @@ interface PublishData {
     declaration?: string;
     timestamp: number;
     generatedId?: string;
+    tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number }; // AI token 消耗数据
 }
 
 // ============================================
@@ -1242,8 +1243,23 @@ const clickPublish = async (): Promise<boolean> => {
         const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
         const finalTitle = pendingTitle || '小红书文章';
         
+        // 读取 token 数据
+        const tokenUsageStr = sessionStorage.getItem('memoraid_token_usage');
+        let tokenUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
+        if (tokenUsageStr) {
+            try {
+                tokenUsage = JSON.parse(tokenUsageStr);
+            } catch (e) {
+                console.error('解析 token 数据失败:', e);
+            }
+        }
+        
+        // 如果成功上报，清除保存的标题和token数据
         if (pendingTitle) {
             sessionStorage.removeItem('memoraid_pending_title');
+        }
+        if (tokenUsageStr) {
+            sessionStorage.removeItem('memoraid_token_usage');
         }
 
         await reportArticlePublish({
@@ -1252,7 +1268,11 @@ const clickPublish = async (): Promise<boolean> => {
             url: window.location.href,
             status: 'published',  // 添加status字段,标记为已发布
             extra: {
-                sourceUrl: pendingSourceUrl
+                sourceUrl: pendingSourceUrl,
+                // 记录 token 消耗数据
+                promptTokens: tokenUsage?.promptTokens,
+                completionTokens: tokenUsage?.completionTokens,
+                totalTokens: tokenUsage?.totalTokens,
             },
             generatedId: sessionStorage.getItem('memoraid_generated_id') || undefined
         });
@@ -1301,6 +1321,13 @@ const autoFillContent = async (): Promise<void> => {
             sessionStorage.setItem('memoraid_generated_id', pending.generatedId);
         } else {
             sessionStorage.removeItem('memoraid_generated_id');
+        }
+
+        // 保存 token 数据供发布上报使用
+        if (pending.tokenUsage) {
+            sessionStorage.setItem('memoraid_token_usage', JSON.stringify(pending.tokenUsage));
+        } else {
+            sessionStorage.removeItem('memoraid_token_usage');
         }
 
         // 保存标题
