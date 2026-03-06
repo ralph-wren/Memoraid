@@ -3,6 +3,18 @@ import { ImageHandler } from '../utils/imageHandler';
 import { DOMHelper } from '../utils/domHelper';
 import { UnifiedLogger } from '../utils/logger';
 
+// 【调试】立即执行的日志，确认 content script 是否被加载
+console.log('🚀 [Toutiao] Content script 文件已加载！', window.location.href);
+
+// 【调试】修改页面标题，确保能看到 script 被加载
+try {
+  const originalTitle = document.title;
+  document.title = '✅ Memoraid已加载 - ' + originalTitle;
+  console.log('🎯 [Toutiao] 页面标题已修改，确认 script 执行');
+} catch (e) {
+  console.error('❌ [Toutiao] 修改标题失败:', e);
+}
+
 // Toutiao Publish Content Script - 元素识别版
 // 完全通过 DOM 选择器操作，不依赖截图和 AI 对话
 
@@ -1670,15 +1682,35 @@ const debugPageElements = () => {
 // ============================================
 
 const fillContent = async () => {
+  // 【调试】使用 console.log 和 logger 双重日志
+  console.log('🔍 [Toutiao] fillContent 函数开始执行...');
+  console.log('[Toutiao] Content script 已加载，检查待发布数据...');
+  
+  // 使用 UI logger 确保用户能看到
+  logger.log('📋 检查待发布数据...', 'info');
+  
   try {
     const data = await chrome.storage.local.get('pending_toutiao_publish');
-    if (!data || !data.pending_toutiao_publish) return;
+    console.log('[Toutiao] Storage 数据:', data);
+    
+    if (!data || !data.pending_toutiao_publish) {
+      console.log('[Toutiao] 没有待发布数据，跳过填充');
+      return;
+    }
     
     const payload: PublishData = data.pending_toutiao_publish;
     if (Date.now() - payload.timestamp > 5 * 60 * 1000) {
+      console.log('[Toutiao] 数据已过期，清除');
       chrome.storage.local.remove('pending_toutiao_publish');
       return;
     }
+    
+    console.log('[Toutiao] 找到待发布数据:', {
+      title: payload.title,
+      timestamp: payload.timestamp,
+      age: Math.floor((Date.now() - payload.timestamp) / 1000) + 's'
+    });
+    
     pendingSourceImages = Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string') : [];
     pendingSourceUrl = payload.sourceUrl;
     
@@ -1838,6 +1870,9 @@ const installPublishReporting = () => {
     const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
     const finalTitle = (pendingTitle || getCurrentTitle() || document.title || '未命名文章').trim();
     
+    // 读取 generatedId (重要:用于关联AI生成的记录)
+    const generatedId = sessionStorage.getItem('memoraid_generated_id') || undefined;
+    
     // 读取 token 数据
     const tokenUsageStr = sessionStorage.getItem('memoraid_token_usage');
     let tokenUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
@@ -1849,7 +1884,16 @@ const installPublishReporting = () => {
       }
     }
     
+    console.log('[Toutiao] 准备上报文章:', {
+      trigger,
+      title: finalTitle,
+      url: publishedUrl,
+      generatedId,
+      hasTokenUsage: !!tokenUsage
+    });
+    
     // 如果成功上报，清除保存的标题和token数据
+    // 注意: 不清除 generatedId，因为可能需要多次上报
     if (pendingTitle) {
       sessionStorage.removeItem('memoraid_pending_title');
     }
@@ -1869,13 +1913,16 @@ const installPublishReporting = () => {
         completionTokens: tokenUsage?.completionTokens,
         totalTokens: tokenUsage?.totalTokens,
       },
-      generatedId: sessionStorage.getItem('memoraid_generated_id') || undefined
+      generatedId // 使用读取的 generatedId
     });
+    
+    console.log('[Toutiao] 文章上报成功');
   };
 
   const maybeReport = (trigger: string) => {
     if (!armed || hasReported) return;
     const publishedUrl = findPublishedUrl();
+    console.log('[Toutiao] maybeReport 检查:', { trigger, armed, hasReported, foundUrl: !!publishedUrl });
     if (publishedUrl) reportOnce(trigger, publishedUrl);
   };
 

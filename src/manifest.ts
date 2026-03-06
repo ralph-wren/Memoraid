@@ -18,7 +18,7 @@ export default defineManifest({
     '48': 'icon-48.png',
     '128': 'icon-128.png',
   },
-  permissions: ['storage', 'activeTab', 'cookies', 'identity', 'alarms'],
+  permissions: ['storage', 'activeTab', 'cookies', 'identity', 'alarms', 'scripting'],
   host_permissions: ['<all_urls>'],
   web_accessible_resources: [
     {
@@ -34,6 +34,7 @@ export default defineManifest({
     {
       matches: ['*://mp.toutiao.com/*'],
       js: ['src/content/toutiao.ts'],
+      run_at: 'document_end', // 确保在 DOM 加载完成后执行
     },
     {
       matches: ['*://zhuanlan.zhihu.com/*'],

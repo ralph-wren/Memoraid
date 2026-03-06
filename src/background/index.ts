@@ -1586,8 +1586,32 @@ async function handlePublishToToutiao(payload: { title: string; content: string;
 
     if (!tab.id) throw new Error('Failed to create tab');
 
-    // The content script (src/content/toutiao.ts) will handle the rest
+    // 【调试】等待页面加载完成后，手动检查 content script 是否被加载
     console.log('Opened Toutiao publish page, waiting for content script to fill...');
+    
+    // 等待页面加载
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    // 【调试】尝试向页面发送消息，检查 content script 是否响应
+    try {
+      console.log('[DEBUG] 尝试向头条页面发送 PING 消息...');
+      const response = await chrome.tabs.sendMessage(tab.id, { type: 'PING' });
+      console.log('[DEBUG] 头条页面响应:', response);
+    } catch (e) {
+      console.error('[DEBUG] 头条页面无响应，content script 可能未加载:', e);
+      
+      // 【临时方案】手动注入 content script
+      console.log('[DEBUG] 尝试手动注入 content script...');
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['assets/toutiao.ts-loader-DYsrzpIJ.js'] // 使用构建后的文件名
+        });
+        console.log('[DEBUG] 手动注入成功');
+      } catch (injectError) {
+        console.error('[DEBUG] 手动注入失败:', injectError);
+      }
+    }
 
   } catch (error) {
     console.error('Publish failed', error);

@@ -1243,6 +1243,9 @@ const clickPublish = async (): Promise<boolean> => {
         const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
         const finalTitle = pendingTitle || '小红书文章';
         
+        // 读取 generatedId (重要:用于关联AI生成的记录)
+        const generatedId = sessionStorage.getItem('memoraid_generated_id') || undefined;
+        
         // 读取 token 数据
         const tokenUsageStr = sessionStorage.getItem('memoraid_token_usage');
         let tokenUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
@@ -1254,7 +1257,15 @@ const clickPublish = async (): Promise<boolean> => {
             }
         }
         
+        console.log('[Xiaohongshu] 准备上报文章:', {
+            title: finalTitle,
+            url: window.location.href,
+            generatedId,
+            hasTokenUsage: !!tokenUsage
+        });
+        
         // 如果成功上报，清除保存的标题和token数据
+        // 注意: 不清除 generatedId，因为可能需要多次上报(例如更新状态)
         if (pendingTitle) {
             sessionStorage.removeItem('memoraid_pending_title');
         }
@@ -1274,8 +1285,10 @@ const clickPublish = async (): Promise<boolean> => {
                 completionTokens: tokenUsage?.completionTokens,
                 totalTokens: tokenUsage?.totalTokens,
             },
-            generatedId: sessionStorage.getItem('memoraid_generated_id') || undefined
+            generatedId // 使用读取的 generatedId
         });
+        
+        console.log('[Xiaohongshu] 文章上报成功');
     } catch (err) {
         console.error('上报发布失败:', err);
     }
@@ -1468,6 +1481,7 @@ const autoFillContent = async (): Promise<void> => {
 const installPublishReporting = () => {
     // 监听 URL 变化，检测是否发布成功
     let lastUrl = window.location.href;
+    let hasReported = false; // 防止重复上报
 
     const checkUrlChange = () => {
         const currentUrl = window.location.href;
@@ -1476,19 +1490,59 @@ const installPublishReporting = () => {
 
             // 检查是否跳转到发布成功页面
             // 小红书发布成功后会跳转到 ?published=true
-            if (currentUrl.includes('published=true')) {
+            if (currentUrl.includes('published=true') && !hasReported) {
+                hasReported = true;
                 logger.log('🎉 检测到发布成功！', 'success');
+
+                // 读取保存的数据
+                const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
+                const finalTitle = pendingTitle || '小红书文章';
+                const generatedId = sessionStorage.getItem('memoraid_generated_id') || undefined;
+                
+                // 读取 token 数据
+                const tokenUsageStr = sessionStorage.getItem('memoraid_token_usage');
+                let tokenUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined;
+                if (tokenUsageStr) {
+                    try {
+                        tokenUsage = JSON.parse(tokenUsageStr);
+                    } catch (e) {
+                        console.error('解析 token 数据失败:', e);
+                    }
+                }
+
+                console.log('[Xiaohongshu URL Monitor] 准备上报文章:', {
+                    title: finalTitle,
+                    url: currentUrl,
+                    generatedId,
+                    hasTokenUsage: !!tokenUsage
+                });
+
+                // 清除保存的数据
+                if (pendingTitle) {
+                    sessionStorage.removeItem('memoraid_pending_title');
+                }
+                if (tokenUsageStr) {
+                    sessionStorage.removeItem('memoraid_token_usage');
+                }
 
                 // 上报发布成功
                 reportArticlePublish({
                     platform: 'xiaohongshu',
-                    title: '小红书文章',  // 标题在这里不可用，使用默认值
+                    title: finalTitle,
                     url: currentUrl,
+                    status: 'published',
                     extra: {
-                        sourceUrl: pendingSourceUrl
-                    }
+                        sourceUrl: pendingSourceUrl,
+                        // 记录 token 消耗数据
+                        promptTokens: tokenUsage?.promptTokens,
+                        completionTokens: tokenUsage?.completionTokens,
+                        totalTokens: tokenUsage?.totalTokens,
+                    },
+                    generatedId
+                }).then(() => {
+                    console.log('[Xiaohongshu URL Monitor] 文章上报成功');
                 }).catch(err => {
-                    console.error('上报发布失败:', err);
+                    console.error('[Xiaohongshu URL Monitor] 上报发布失败:', err);
                 });
             }
         }
