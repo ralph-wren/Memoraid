@@ -8,10 +8,10 @@ body {
   overflow-y: auto;
 }
 
-/* 跑马灯动画 - 自动滚动通知 */
+/* 跑马灯动画 - 自动滚动通知，从中间开始 */
 @keyframes marquee {
   0% {
-    transform: translateX(100%);
+    transform: translateX(0);
   }
   100% {
     transform: translateX(-100%);
@@ -20,6 +20,8 @@ body {
 
 .animate-marquee {
   animation: marquee 15s linear infinite;
+  /* 添加延迟，让内容先显示在中间 */
+  animation-delay: 2s;
 }
 
 /* Fix for details/summary in prose */

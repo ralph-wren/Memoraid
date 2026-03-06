@@ -70,16 +70,12 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
   const [currentSourceImages, setCurrentSourceImages] = useState<string[]>([]); // Track source images
   const [isPreview, setIsPreview] = useState(true);
   const [t, setT] = useState<Translation>(getTranslation('zh-CN')); // 翻译
-  // 额度信息状态 - 设置默认值以便立即显示充值模块
+  // 额度信息状态 - 使用 undefined 表示未加载，null 表示加载失败，对象表示加载成功
   const [quota, setQuota] = useState<{
     total_remaining: number;
     free_remaining: number;
     paid_remaining: number;
-  } | null>({
-    total_remaining: 0,
-    free_remaining: 0,
-    paid_remaining: 0
-  });
+  } | null | undefined>(undefined);
 
   const [userClosedResult, setUserClosedResult] = useState(false);
   const userClosedResultRef = React.useRef(userClosedResult);
@@ -109,9 +105,21 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     };
     loadLanguage();
     
-    // 加载用户额度信息
+    // 加载用户额度信息 - 使用缓存机制
     const loadQuota = async () => {
       try {
+        // 先尝试从缓存读取
+        const cached = await chrome.storage.local.get(['quotaCache', 'quotaCacheTime']);
+        const now = Date.now();
+        const cacheExpiry = 5 * 60 * 1000; // 5分钟缓存有效期
+        
+        // 如果缓存存在且未过期，直接使用缓存
+        if (cached.quotaCache && cached.quotaCacheTime && (now - cached.quotaCacheTime < cacheExpiry)) {
+          setQuota(cached.quotaCache);
+          return;
+        }
+        
+        // 缓存不存在或已过期，从服务器获取
         const settings = await getSettings();
         const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
         const token = settings.sync?.token;
@@ -137,9 +145,19 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
         if (response.ok) {
           const data = await response.json();
           setQuota(data);
+          // 保存到缓存
+          await chrome.storage.local.set({
+            quotaCache: data,
+            quotaCacheTime: now
+          });
+        } else {
+          // 加载失败，设置为 null
+          setQuota(null);
         }
       } catch (error) {
         console.error('Failed to load quota:', error);
+        // 加载失败，设置为 null
+        setQuota(null);
       }
     };
     loadQuota();
@@ -715,6 +733,11 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
       // Publishing... 状态也应该保持 loading
       const isDone = statusText === 'Done!' || statusText === 'Refined!';
       setLoading(!isDone);
+      
+      // 如果任务完成，清除额度缓存，下次打开时会重新获取
+      if (isDone) {
+        chrome.storage.local.remove(['quotaCache', 'quotaCacheTime']);
+      }
     }
 
     setStatus(statusText || 'Ready');
@@ -1105,27 +1128,27 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
           <div className="w-full flex-1 flex flex-col min-h-0">
             <div className="text-center space-y-4 w-full flex flex-col items-center mb-8 shrink-0">
 
-              {/* 额度显示和充值按钮 - 固定蓝色主题 */}
-              {quota !== null && (
-                <div className="w-full px-4 mb-2">
-                  <div className="border rounded-lg px-4 py-3 text-sm flex items-center justify-between bg-blue-50 border-blue-200">
-                    <div className="flex flex-col items-start">
-                      <span className="font-medium text-blue-700">
-                        剩余额度: {quota.total_remaining} 次
-                      </span>
-                      <span className="text-xs text-gray-500 mt-1">
-                        免费: {quota.free_remaining} | 付费: {quota.paid_remaining}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => window.open('https://memoraid.dpdns.org/user', '_blank')}
-                      className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-4 py-2 rounded-lg text-xs font-medium hover:from-blue-600 hover:to-purple-700 transition shadow-sm"
-                    >
-                      充值
-                    </button>
+              {/* 额度显示和充值按钮 - 始终显示框架，内容为空直到加载完成 */}
+              <div className="w-full px-4 mb-2">
+                <div className="border rounded-lg px-4 py-3 text-sm flex items-center justify-between bg-blue-50 border-blue-200">
+                  <div className="flex flex-col items-start">
+                    <span className="font-medium text-blue-700">
+                      剩余额度: {quota && quota.total_remaining !== undefined ? `${quota.total_remaining} 次` : ''}
+                    </span>
+                    <span className="text-xs text-gray-500 mt-1">
+                      {quota && quota.free_remaining !== undefined && quota.paid_remaining !== undefined 
+                        ? `免费: ${quota.free_remaining} | 付费: ${quota.paid_remaining}`
+                        : ''}
+                    </span>
                   </div>
+                  <button
+                    onClick={() => window.open('https://memoraid.dpdns.org/user', '_blank')}
+                    className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-4 py-2 rounded-lg text-xs font-medium hover:from-blue-600 hover:to-purple-700 transition shadow-sm"
+                  >
+                    充值
+                  </button>
                 </div>
-              )}
+              </div>
 
               {errorMessage && (
                 <div className="w-full px-4 mb-2">
