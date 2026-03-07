@@ -87,7 +87,7 @@ chrome.cookies.onChanged.addListener(async (changeInfo) => {
   const domain = cookie.domain;
 
   // 判断是哪个平台的 cookie 变化
-  let platform: 'toutiao' | 'zhihu' | 'weixin' | null = null;
+  let platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu' | null = null;
 
   if (domain.includes('toutiao.com')) {
     platform = 'toutiao';
@@ -95,6 +95,8 @@ chrome.cookies.onChanged.addListener(async (changeInfo) => {
     platform = 'zhihu';
   } else if (domain.includes('qq.com')) {
     platform = 'weixin';
+  } else if (domain.includes('xiaohongshu.com')) {
+    platform = 'xiaohongshu';
   }
 
   if (!platform) return;
@@ -113,13 +115,13 @@ chrome.cookies.onChanged.addListener(async (changeInfo) => {
 });
 
 // 更新指定平台的 cookie
-async function updatePlatformCookie(platform: 'toutiao' | 'zhihu' | 'weixin') {
+async function updatePlatformCookie(platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu') {
   try {
     const settings = await getSettings();
     const now = Date.now() / 1000;
 
     let url: string;
-    let settingsKey: 'toutiao' | 'zhihu' | 'weixin';
+    let settingsKey: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu';
 
     switch (platform) {
       case 'toutiao':
@@ -133,6 +135,10 @@ async function updatePlatformCookie(platform: 'toutiao' | 'zhihu' | 'weixin') {
       case 'weixin':
         url = 'https://mp.weixin.qq.com/';
         settingsKey = 'weixin';
+        break;
+      case 'xiaohongshu':
+        url = 'https://creator.xiaohongshu.com/';
+        settingsKey = 'xiaohongshu';
         break;
     }
 
@@ -1853,6 +1859,7 @@ async function handlePublishToXiaohongshu(payload: { title: string, content: str
         const [name, value] = cookie.split('=');
         if (name && value) {
           try {
+            // 修复：使用正确的 sameSite 值
             await chrome.cookies.set({
               url: 'https://creator.xiaohongshu.com',
               domain: '.xiaohongshu.com',
@@ -1860,8 +1867,9 @@ async function handlePublishToXiaohongshu(payload: { title: string, content: str
               value,
               path: '/',
               secure: true,
-              sameSite: 'no_restriction'
+              sameSite: 'no_restriction' as chrome.cookies.SameSiteStatus // 使用类型断言
             });
+            console.log(`[Background] Set Xiaohongshu cookie: ${name}`);
           } catch (e) {
             console.error(`Failed to set Xiaohongshu cookie ${name}`, e);
           }
@@ -1928,17 +1936,20 @@ async function handlePublishToXiaohongshu(payload: { title: string, content: str
         tab = existingTabs[0];
       }
 
-      await chrome.tabs.update(tab.id!, { active: true, url: publishUrl });
-      // 给一点时间让 url 更新，然后刷新触发 content script
-      setTimeout(() => {
-        chrome.tabs.reload(tab.id!);
-      }, 500);
+      // 修复：先激活标签页，再更新 URL，避免 Cookie 丢失
+      await chrome.tabs.update(tab.id!, { active: true });
+      // 等待标签页激活
+      await new Promise(resolve => setTimeout(resolve, 300));
+      // 更新 URL
+      await chrome.tabs.update(tab.id!, { url: publishUrl });
+      console.log('[Background] Updated existing Xiaohongshu tab');
     } else {
       // 创建新标签页
       tab = await chrome.tabs.create({
         url: publishUrl,
         active: true
       });
+      console.log('[Background] Created new Xiaohongshu tab');
     }
 
     console.log('Opened Xiaohongshu publish page, waiting for content script...');

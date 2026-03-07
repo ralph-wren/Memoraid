@@ -1264,14 +1264,14 @@ const clickPublish = async (): Promise<boolean> => {
             hasTokenUsage: !!tokenUsage
         });
         
-        // 如果成功上报，清除保存的标题和token数据
-        // 注意: 不清除 generatedId，因为可能需要多次上报(例如更新状态)
-        if (pendingTitle) {
-            sessionStorage.removeItem('memoraid_pending_title');
-        }
-        if (tokenUsageStr) {
-            sessionStorage.removeItem('memoraid_token_usage');
-        }
+        // 修复：不在这里清除数据，让 URL 监听器在检测到 published=true 后再清除
+        // 这样可以确保标题和 token 数据在最终上报时仍然可用
+        // if (pendingTitle) {
+        //     sessionStorage.removeItem('memoraid_pending_title');
+        // }
+        // if (tokenUsageStr) {
+        //     sessionStorage.removeItem('memoraid_token_usage');
+        // }
 
         await reportArticlePublish({
             platform: 'xiaohongshu',
@@ -1454,9 +1454,31 @@ const autoFillContent = async (): Promise<void> => {
             await setContentTypeDeclaration(pending.declaration);
         }
 
-        // 完成填充
-        logger.log('✅ 自动填充完成！请手动检查并点击发布', 'success');
-        logger.log('💡 提示：你可以手动添加话题、地点、合集等信息', 'info');
+        if (isFlowCancelled) return;
+
+        // 步骤10: 检查是否开启自动发布
+        const settings = await chrome.storage.sync.get(['autoPublishAll', 'xiaohongshu']);
+        const autoPublish = settings.autoPublishAll === true
+            ? true
+            : settings.autoPublishAll === false
+            ? false
+            : settings.xiaohongshu?.autoPublish !== false; // 默认开启
+
+        if (autoPublish) {
+            logger.log('🔔 自动发布已开启，准备发布...', 'info');
+            await new Promise(r => setTimeout(r, 1000)); // 等待1秒确保页面稳定
+            
+            const publishSuccess = await clickPublish();
+            if (publishSuccess) {
+                logger.log('✅ 文章已自动发布！', 'success');
+            } else {
+                logger.log('❌ 自动发布失败，请手动点击发布按钮', 'error');
+            }
+        } else {
+            logger.log('✅ 自动填充完成！请手动检查并点击发布', 'success');
+            logger.log('💡 提示：你可以手动添加话题、地点、合集等信息', 'info');
+        }
+
         logger.hideStopButton();
 
         // 清除待发布数据
