@@ -2020,7 +2020,68 @@ const runSmartImageFlow = async (keyword?: string, autoPublish = false) => {
     }
     
     // ============================================
-    // 图片处理完成后，自动执行投稿至问题
+    // 图片处理完成后，触发 Markdown 解析（如果需要）
+    // ============================================
+    const editorForMarkdown = findElement(SELECTORS.editor);
+    if (editorForMarkdown && sessionStorage.getItem('memoraid_needs_markdown_parse') === 'true') {
+      logger.log('\n📝 开始触发 Markdown 解析...', 'info');
+      sessionStorage.removeItem('memoraid_needs_markdown_parse');
+      
+      // 全选内容触发 Markdown 检测
+      await selectAllAndTriggerMarkdownParse(editorForMarkdown);
+      await new Promise(r => setTimeout(r, 500));
+      
+      // 检测并点击"确认并解析"按钮
+      let found = false;
+      for (let i = 0; i < 20 && !found; i++) {
+        if (i > 0) {
+          await new Promise(r => setTimeout(r, 200));
+        }
+        
+        // 查找 Notification 中的"确认并解析"按钮
+        const notifications = document.querySelectorAll('[class*="Notification"]');
+        for (const notification of notifications) {
+          if (!isElementVisible(notification as HTMLElement)) continue;
+          const btns = notification.querySelectorAll('button');
+          for (const btn of btns) {
+            const text = (btn as HTMLElement).innerText?.trim();
+            if (text === '确认并解析') {
+              logger.log('🎯 找到"确认并解析"按钮，立即点击！', 'action');
+              simulateClick(btn as HTMLElement);
+              await new Promise(r => setTimeout(r, 1000));
+              logger.log('✅ Markdown 格式已解析', 'success');
+              found = true;
+              break;
+            }
+          }
+          if (found) break;
+        }
+        
+        // 也查找 Button--link 类型的按钮
+        if (!found) {
+          const linkButtons = document.querySelectorAll('button[class*="Button--link"]');
+          for (const btn of linkButtons) {
+            const text = (btn as HTMLElement).innerText?.trim();
+            if (text === '确认并解析' && isElementVisible(btn as HTMLElement)) {
+              logger.log('🎯 找到"确认并解析"按钮，立即点击！', 'action');
+              simulateClick(btn as HTMLElement);
+              await new Promise(r => setTimeout(r, 1000));
+              logger.log('✅ Markdown 格式已解析', 'success');
+              found = true;
+              break;
+            }
+          }
+        }
+      }
+      
+      if (!found) {
+        logger.log('⚠️ 未找到"确认并解析"按钮', 'warn');
+        await handleMarkdownParse();
+      }
+    }
+    
+    // ============================================
+    // 投稿至问题
     // ============================================
     if (!isFlowCancelled) {
       logger.log('\n📋 2秒后开始投稿至问题...', 'info');
@@ -2460,6 +2521,7 @@ const fillContent = async () => {
     let isFilling = false;
     let attempts = 0;
     const maxAttempts = 15;
+    let isMarkdownContent: boolean = false; // 添加类型标记变量
     
     const tryFill = async (): Promise<boolean> => {
       if (isFilling) return false;
@@ -2492,14 +2554,24 @@ const fillContent = async () => {
           
           if (hasPlaceholderOnly) {
             // 判断内容是否为 Markdown 格式
-            const isMarkdown = payload.content && (
+            const isMarkdown = !!(payload.content && (
               payload.content.includes('##') ||
               payload.content.includes('**') ||
               payload.content.includes('- ') ||
               payload.content.includes('1. ') ||
               payload.content.includes('```') ||
               payload.content.includes('> ')
-            );
+            ));
+            
+            // 保存到外部变量
+            isMarkdownContent = isMarkdown;
+            
+            // 如果是 Markdown，标记需要在图片处理后解析
+            if (isMarkdown) {
+              sessionStorage.setItem('memoraid_needs_markdown_parse', 'true');
+            } else {
+              sessionStorage.removeItem('memoraid_needs_markdown_parse');
+            }
             
             if (isMarkdown) {
               logger.log('📝 检测到 Markdown 格式内容', 'info');
@@ -2509,93 +2581,14 @@ const fillContent = async () => {
               document.execCommand('insertHTML', false, payload.htmlContent);
               logger.log('✅ 内容已填充 (HTML)', 'success');
             } else {
-              // 对于 Markdown 内容，尝试模拟真实的粘贴操作来触发知乎的 Markdown 检测
-              if (isMarkdown) {
-                logger.log('📋 使用粘贴方式填充 Markdown 内容...', 'info');
-                
-                // 方法1: 尝试使用 ClipboardEvent 模拟粘贴
-                try {
-                  const clipboardData = new DataTransfer();
-                  clipboardData.setData('text/plain', payload.content);
-                  const pasteEvent = new ClipboardEvent('paste', {
-                    bubbles: true,
-                    cancelable: true,
-                    clipboardData: clipboardData
-                  });
-                  editorEl.dispatchEvent(pasteEvent);
-                  logger.log('✅ 内容已通过粘贴事件填充', 'success');
-                } catch (e) {
-                  // 如果粘贴事件失败，回退到 insertText
-                  logger.log('粘贴事件失败，使用 insertText 方式', 'info');
-                  document.execCommand('insertText', false, payload.content);
-                  logger.log('✅ 内容已填充 (文本)', 'success');
-                }
-              } else {
-                document.execCommand('insertText', false, payload.content);
-                logger.log('✅ 内容已填充 (文本)', 'success');
-              };
+              // 对于 Markdown 内容，先填充纯文本，不触发解析
+              // 等图片处理完成后再触发 Markdown 解析
+              document.execCommand('insertText', false, payload.content);
+              logger.log('✅ 内容已填充 (文本)', 'success');
               
-              // 如果是 Markdown 格式，立即检测并点击"确认并解析"按钮
-              // 注意：知乎会在粘贴后显示一个 Notification 提示，几秒后会自动消失
-              // 所以需要立即检测并点击，不能等待！
+              // 不在这里触发 Markdown 解析，等图片处理完成后再解析
               if (isMarkdown) {
-                logger.log('⏳ 立即检测 Markdown 解析提示...', 'info');
-                // 不等待，立即开始检测
-                // 使用一个快速循环来检测按钮
-                let found = false;
-                for (let i = 0; i < 20 && !found; i++) {
-                  // 每 200ms 检测一次，共 4 秒
-                  if (i > 0) {
-                    await new Promise(r => setTimeout(r, 200));
-                  }
-                  
-                  // 查找 Notification 中的"确认并解析"按钮
-                  const notifications = document.querySelectorAll('[class*="Notification"]');
-                  for (const notification of notifications) {
-                    if (!isElementVisible(notification as HTMLElement)) continue;
-                    const btns = notification.querySelectorAll('button');
-                    for (const btn of btns) {
-                      const text = (btn as HTMLElement).innerText?.trim();
-                      if (text === '确认并解析') {
-                        logger.log('🎯 找到"确认并解析"按钮，立即点击！', 'action');
-                        simulateClick(btn as HTMLElement);
-                        await new Promise(r => setTimeout(r, 1000));
-                        logger.log('✅ Markdown 格式已解析', 'success');
-                        found = true;
-                        break;
-                      }
-                    }
-                    if (found) break;
-                  }
-                  
-                  // 也查找 Button--link 类型的按钮
-                  if (!found) {
-                    const linkButtons = document.querySelectorAll('button[class*="Button--link"]');
-                    for (const btn of linkButtons) {
-                      const text = (btn as HTMLElement).innerText?.trim();
-                      if (text === '确认并解析' && isElementVisible(btn as HTMLElement)) {
-                        logger.log('🎯 找到"确认并解析"按钮，立即点击！', 'action');
-                        simulateClick(btn as HTMLElement);
-                        await new Promise(r => setTimeout(r, 1000));
-                        logger.log('✅ Markdown 格式已解析', 'success');
-                        found = true;
-                        break;
-                      }
-                    }
-                  }
-                  
-                  if (!found && i < 19) {
-                    logger.log(`检测中... (${i + 1}/20)`, 'info');
-                  }
-                }
-                
-                if (!found) {
-                  logger.log('⚠️ 未找到"确认并解析"按钮，尝试全选触发...', 'warn');
-                  await selectAllAndTriggerMarkdownParse(editorEl);
-                  await new Promise(r => setTimeout(r, 500));
-                  // 再次快速检测
-                  await handleMarkdownParse();
-                }
+                logger.log('ℹ️ Markdown 解析将在图片处理后进行', 'info');
               }
             }
           } else {
@@ -2603,6 +2596,7 @@ const fillContent = async () => {
           }
           
           chrome.storage.local.remove('pending_zhihu_publish');
+          
           return true;
         }
         return false;
@@ -2620,10 +2614,15 @@ const fillContent = async () => {
         if (!success) {
           logger.log('❌ 自动填充失败：未找到编辑器', 'error');
         } else {
-          // 等待 Markdown 解析完成后再开始图片处理
-          // 增加等待时间，确保 Markdown 解析流程完全结束
-          logger.log('⏳ 3秒后开始智能图片处理...', 'info');
-          setTimeout(() => runSmartImageFlow(undefined, autoPublish), 3000);
+          // 关键修复：对于 Markdown 内容，先处理图片占位符，再触发解析
+          // 这样可以避免占位符被解析成链接后无法找到
+          if (isMarkdownContent) {
+            logger.log('⏳ 1秒后开始智能图片处理（Markdown 解析前）...', 'info');
+            setTimeout(() => runSmartImageFlow(undefined, autoPublish), 1000);
+          } else {
+            logger.log('⏳ 3秒后开始智能图片处理...', 'info');
+            setTimeout(() => runSmartImageFlow(undefined, autoPublish), 3000);
+          }
         }
       }
     }, 1000);
