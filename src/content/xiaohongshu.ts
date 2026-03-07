@@ -1279,7 +1279,8 @@ const clickPublish = async (): Promise<boolean> => {
 
     logger.log('✅ 文章已发布！', 'success');
 
-    // 上报发布成功
+    // 立即上报发布状态（让用户看到状态更新）
+    // 注意：不清除 sessionStorage 数据，让 URL 监听器在最终上报后再清除
     try {
         const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
         const finalTitle = pendingTitle || '小红书文章';
@@ -1305,15 +1306,9 @@ const clickPublish = async (): Promise<boolean> => {
             hasTokenUsage: !!tokenUsage
         });
         
-        // 修复：不在这里清除数据，让 URL 监听器在检测到 published=true 后再清除
+        // 关键：不在这里清除数据，让 URL 监听器在检测到 published=true 后再清除
         // 这样可以确保标题和 token 数据在最终上报时仍然可用
-        // if (pendingTitle) {
-        //     sessionStorage.removeItem('memoraid_pending_title');
-        // }
-        // if (tokenUsageStr) {
-        //     sessionStorage.removeItem('memoraid_token_usage');
-        // }
-
+        
         await reportArticlePublish({
             platform: 'xiaohongshu',
             title: finalTitle,
