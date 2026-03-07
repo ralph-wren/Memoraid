@@ -1845,9 +1845,24 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
   }
 }
 
-async function handlePublishToXiaohongshu(payload: { title: string, content: string, sourceUrl?: string, sourceImages?: string[], generatedId?: string, tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {
+async function handlePublishToXiaohongshu(payload: { 
+  title: string, 
+  content: string, 
+  sourceUrl?: string, 
+  sourceImages?: string[], 
+  generatedId?: string, 
+  tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } 
+}) {
   try {
     console.log('Handling publish to Xiaohongshu:', payload.title);
+
+    // 从文章内容中提取话题标签（只提取文章末尾的话题行）
+    // 匹配文章末尾的话题行，例如：#话题1 #话题2 #话题3
+    const topicsLineMatch = payload.content.match(/\n\s*((?:#[^\s#]+\s*)+)\s*$/);
+    const topics = topicsLineMatch 
+      ? topicsLineMatch[1].match(/#[^\s#]+/g)?.slice(0, 5) || []
+      : [];
+    console.log('[Background] Extracted topics from content:', topics);
 
     // 1. 设置 Cookie (如果需要)
     const settings = await getSettings();
@@ -1901,6 +1916,10 @@ async function handlePublishToXiaohongshu(payload: { title: string, content: str
     // 从正文中移除 H1 标题，因为小红书有专门的标题输入框
     cleanedContent = cleanedContent.replace(/^#\s+.+\n+/, '');
 
+    // 从正文中移除话题标签（因为会通过 topics 字段单独处理）
+    // 匹配文章末尾的话题行，例如：#话题1 #话题2 #话题3
+    cleanedContent = cleanedContent.replace(/\n*(?:#[^\s#]+\s*)+\s*$/, '').trim();
+
     // 3. 将数据保存到 Storage，供 Content Script 读取
     // 注意：pending_xiaohongshu_publish
     const publishData = {
@@ -1908,6 +1927,7 @@ async function handlePublishToXiaohongshu(payload: { title: string, content: str
       content: cleanedContent,
       sourceUrl: payload.sourceUrl,
       sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
+      topics: topics.length > 0 ? topics : undefined, // 添加话题字段
       timestamp: Date.now(),
       generatedId: payload.generatedId,
       tokenUsage: payload.tokenUsage // 传递 token 数据

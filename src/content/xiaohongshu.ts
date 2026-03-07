@@ -1083,6 +1083,7 @@ const setOriginalityDeclaration = async (): Promise<boolean> => {
  * 添加话题
  * @param topics 话题数组，例如 ['#天气', '#生活']
  */
+// 添加话题功能 - 在正文编辑器中直接输入话题并选择建议
 const addTopics = async (topics: string[]): Promise<boolean> => {
     if (!topics || topics.length === 0) {
         logger.log('无话题需要添加，跳过', 'info');
@@ -1091,145 +1092,128 @@ const addTopics = async (topics: string[]): Promise<boolean> => {
 
     const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-    const waitForVisible = async (selectors: string[], timeoutMs = 8000): Promise<HTMLElement | null> => {
-        const start = Date.now();
-        while (Date.now() - start < timeoutMs) {
-            if (isFlowCancelled) return null;
-            const el = findElement(selectors);
-            if (el && isElementVisible(el)) return el;
-            await sleep(250);
-        }
-        return null;
-    };
-
     logger.log(`准备添加 ${topics.length} 个话题: ${topics.join(', ')}`, 'info');
 
-    for (const topic of topics) {
+    // 1. 查找正文编辑器
+    const editor = findElement(SELECTORS.editor);
+    if (!editor) {
+        logger.log('未找到正文编辑器，无法添加话题', 'error');
+        return false;
+    }
+
+    for (let i = 0; i < topics.length; i++) {
         if (isFlowCancelled) return false;
 
-        // 1) 优先点击“活动话题”里的「添加话题」（更符合发布设置）
-        let usedActivityEntry = false;
-        const activityLabel = Array.from(document.querySelectorAll('div'))
-            .find(el => (el.textContent || '').trim() === '活动话题');
-        if (activityLabel && activityLabel.parentElement) {
-            const addSpan = Array.from(activityLabel.parentElement.querySelectorAll('span'))
-                .find(el => (el.textContent || '').trim() === '添加话题') as HTMLElement | undefined;
-            if (addSpan && isElementVisible(addSpan)) {
-                logger.log('点击“活动话题”里的「添加话题」', 'action');
-                simulateClick(addSpan);
-                await sleep(500);
-                usedActivityEntry = true;
-            }
-        }
-
-        // 2) 如果没有活动话题入口，则回退点击编辑器工具栏“话题”按钮
-        if (!usedActivityEntry) {
-            const addTopicBtn = await waitForVisible(SELECTORS.addTopicButton, 6000);
-            if (!addTopicBtn) {
-                logger.log('未找到"话题"按钮（可能不在发布设置页）', 'warn');
-                return false;
-            }
-            logger.log('点击"话题"按钮', 'action');
-            simulateClick(addTopicBtn);
-            await sleep(500);
-        }
-
-        // 3) 找输入框（优先弹层/下拉里的 input，再回退到 contenteditable）
+        const topic = topics[i];
         const keyword = topic.startsWith('#') ? topic : `#${topic}`;
 
-        let input: HTMLElement | null = null;
-        for (let j = 0; j < 20; j++) {
-            if (isFlowCancelled) return false;
+        logger.log(`添加话题 ${i + 1}/${topics.length}: ${keyword}`, 'action');
 
-            // 弹层/下拉里的 input
-            const layerInput = Array.from(document.querySelectorAll('.d-popover input, .d-dropdown input, .d-modal input, .d-drawer input, input[placeholder*="话题"], input[placeholder*="搜索"]'))
-                .find(el => isElementVisible(el as HTMLElement)) as HTMLElement | undefined;
-            if (layerInput) {
-                input = layerInput as HTMLElement;
-                break;
-            }
+        // 2. 聚焦编辑器并移动光标到末尾
+        simulateClick(editor);
+        editor.focus();
+        await sleep(200);
 
-            // 兜底：可见的 contenteditable
-            const editables = Array.from(document.querySelectorAll('[contenteditable="true"], [contenteditable]')) as HTMLElement[];
-            input = editables
-                .filter(el => isElementVisible(el))
-                .find(el => {
-                    const t = (el.textContent || '').trim();
-                    return t === '' || t === '#' || t.includes('#') || (el.getAttribute('placeholder') || '').includes('话题');
-                }) || null;
-
-            if (input && isElementVisible(input)) break;
-            await sleep(250);
-        }
-
-        if (!input) {
-            logger.log('未找到话题输入框，尝试直接在正文中插入话题', 'warn');
-            const editor = findElement(SELECTORS.editor);
-            if (editor) {
-                simulateClick(editor);
-                editor.focus();
-                await sleep(120);
-                document.execCommand('insertText', false, keyword);
-                document.execCommand('insertParagraph', false);
-            }
-            continue;
-        }
-
-        logger.log(`输入话题关键词: ${keyword}`, 'action');
-        simulateClick(input);
-        input.focus();
-        await sleep(120);
-
-        // 清空
         try {
             const selection = window.getSelection();
             if (selection) {
-                selection.removeAllRanges();
                 const range = document.createRange();
-                range.selectNodeContents(input);
-                selection.addRange(range);
-                document.execCommand('delete', false);
+                range.selectNodeContents(editor);
+                range.collapse(false); // 移动到末尾
                 selection.removeAllRanges();
+                selection.addRange(range);
             }
-        } catch {}
+        } catch (e) {
+            logger.log('移动光标失败，继续尝试', 'warn');
+        }
 
-        // 输入
-        document.execCommand('insertText', false, keyword);
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        await sleep(800);
+        // 3. 输入话题（在新行输入）
+        const textToInsert = i === 0 ? `\n\n${keyword}` : `\n${keyword}`;
+        document.execCommand('insertText', false, textToInsert);
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(800); // 等待话题菜单出现
 
-        // 3) 选择下拉建议（如果有）
-        const pickSuggestion = (): boolean => {
-            const containers: Element[] = [];
-            const byId = document.querySelector('#creator-editor-topic-container');
-            if (byId) containers.push(byId);
+        // 4. 查找话题下拉菜单
+        let menu: HTMLElement | null = null;
+        for (let attempt = 0; attempt < 10; attempt++) {
+            if (isFlowCancelled) return false;
 
-            // 兜底：找所有可见的浮层/下拉
-            containers.push(...Array.from(document.querySelectorAll('.d-popover, .d-dropdown, .suggestion, [class*="suggest"], [class*="dropdown"], [class*="popover"]')));
+            // 优先使用 ID 选择器
+            const menuById = document.querySelector('#creator-editor-topic-container') as HTMLElement;
+            if (menuById && isElementVisible(menuById)) {
+                menu = menuById;
+                break;
+            }
 
-            for (const c of containers) {
-                const items = Array.from(c.querySelectorAll('*')) as HTMLElement[];
-                const exact = items.find(el => isElementVisible(el) && (el.textContent || '').trim() === keyword);
-                const fuzzy = items.find(el => isElementVisible(el) && (el.textContent || '').includes(keyword));
-                const target = exact || fuzzy;
-                if (target) {
-                    simulateClick(target);
-                    return true;
+            // 兜底：查找其他可能的菜单
+            const menuSelectors = [
+                '.topic-suggestion-list',
+                '[class*="topic-container"]',
+                '[class*="suggestion"]',
+                '.d-dropdown-menu'
+            ];
+
+            for (const sel of menuSelectors) {
+                const el = document.querySelector(sel) as HTMLElement;
+                if (el && isElementVisible(el) && el.textContent?.includes('#')) {
+                    menu = el;
+                    break;
                 }
             }
-            return false;
-        };
 
-        if (!pickSuggestion()) {
-            // 没有建议就回车确认
-            input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-            await sleep(300);
-        } else {
-            await sleep(300);
+            if (menu) break;
+            await sleep(200);
         }
+
+        if (!menu) {
+            logger.log('未找到话题下拉菜单，话题可能已直接插入', 'warn');
+            continue;
+        }
+
+        logger.log('找到话题下拉菜单，准备选择第一个建议', 'info');
+
+        // 5. 查找菜单项并点击第一个
+        const itemSelectors = [
+            '[class*="item"]',
+            '.topic-item',
+            '.suggestion-item',
+            '[role="menuitem"]',
+            '[role="option"]',
+            'li',
+            'div'
+        ];
+
+        let items: HTMLElement[] = [];
+        for (const sel of itemSelectors) {
+            const elements = Array.from(menu.querySelectorAll(sel)) as HTMLElement[];
+            const visibleItems = elements.filter(el =>
+                isElementVisible(el) &&
+                el.textContent?.includes('#') &&
+                el !== menu // 排除菜单容器本身
+            );
+            if (visibleItems.length > 0) {
+                items = visibleItems;
+                logger.log(`找到 ${items.length} 个话题建议项`, 'info');
+                break;
+            }
+        }
+
+        if (items.length === 0) {
+            logger.log('未找到话题建议项，话题可能已直接插入', 'warn');
+            continue;
+        }
+
+        // 6. 点击第一个菜单项
+        const firstItem = items[0];
+        logger.log(`选择第一个建议: ${firstItem.textContent?.trim().substring(0, 50)}`, 'action');
+
+        simulateClick(firstItem);
+        await sleep(500);
+
+        logger.log(`✅ 话题 ${keyword} 已添加`, 'success');
     }
 
-    logger.log('✅ 话题添加流程完成', 'success');
+    logger.log('✅ ✅ 所有话题添加完成', 'success');
     return true;
 };
 
