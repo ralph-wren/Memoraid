@@ -142,9 +142,10 @@ const SELECTORS = {
     // 原创声明勾选框（弹窗内的“我已阅读并同意…”）
     // 备注：你截图的弹窗里，“声明原创”按钮会先 disabled，必须先勾选这一条同意项。
     originalityConsentCheckbox: [
-        // 通过文本定位同意项所在行
-        ':has-text("我已阅读并同意")',
-        ':contains("我已阅读并同意")',
+        // 修复：应该查找整个 checkbox 容器（可点击的）
+        '.d-checkbox.d-clickable',
+        '.d-checkbox',
+        // 注意：不能使用 :has-text() 和 :contains()，这些是 Playwright 特有的选择器，querySelector 不支持
         // 通过 role / input 兜底
         '[role="checkbox"]',
         'input[type="checkbox"]',
@@ -230,6 +231,26 @@ const SELECTORS = {
 const findElement = (selectors: string[]): HTMLElement | null => DOMHelper.findElement(selectors);
 const isElementVisible = (el: HTMLElement): boolean => DOMHelper.isElementVisible(el);
 const simulateClick = (element: HTMLElement) => DOMHelper.simulateClick(element);
+
+/**
+ * 通过文本内容查找元素（替代 Playwright 的 :has-text() 和 :contains()）
+ * @param root 搜索范围（默认为 document）
+ * @param tagName 标签名（如 'button', 'div'）
+ * @param text 要查找的文本
+ * @param exact 是否精确匹配（默认 false，即包含匹配）
+ * @returns 找到的第一个可见元素，如果没找到则返回 null
+ */
+const findElementByText = (root: ParentNode, tagName: string, text: string, exact: boolean = false): HTMLElement | null => {
+    const elements = Array.from(root.querySelectorAll(tagName)) as HTMLElement[];
+    for (const el of elements) {
+        if (!isElementVisible(el)) continue;
+        const elText = el.textContent || '';
+        if (exact ? elText.trim() === text : elText.includes(text)) {
+            return el;
+        }
+    }
+    return null;
+};
 
 // 以下工具函数预留给未来的图片处理功能使用
 // const simulateInput = (element: HTMLElement, value: string) => DOMHelper.simulateInput(element, value);
@@ -875,50 +896,77 @@ const setOriginalityDeclaration = async (): Promise<boolean> => {
     // 小红书这里是受控组件，必须看按钮是否从 disabled 变为可点。
     // （保留注释作为经验）
 
-    // 1) 点击「去声明」入口
-    // 先按「原创声明」标题精准定位，再回退到选择器匹配
-    const findOriginalityEntry = (): HTMLElement | null => {
-        const title = Array.from(document.querySelectorAll('div'))
-            .find(el => (el.textContent || '').trim() === '原创声明');
-        if (title && title.parentElement) {
-            const wrapper = title.parentElement.querySelector('.wrapper.red') as HTMLElement | null;
-            const btnText = title.parentElement.querySelector('.btn-text.red') as HTMLElement | null;
-            return wrapper || btnText || title.parentElement;
-        }
-        return findIn(document, SELECTORS.originalityEntry);
-    };
-
-    let entry: HTMLElement | null = null;
-    const entryStart = Date.now();
-    while (Date.now() - entryStart < 8000) {
-        entry = findOriginalityEntry();
-        if (entry && isElementVisible(entry)) break;
-        await sleep(250);
+    // 0) 先点击原创声明开关（如果存在）
+    // 根据 Playwright 录制：await page.locator('.d-switch-simulator').first().click();
+    // 修复：需要先打开原创声明开关，才能看到"去声明"按钮
+    // 关键发现：点击开关后，弹窗可能直接打开，不需要再点击"去声明"按钮
+    logger.log('查找原创声明开关...', 'info');
+    const switchEl = document.querySelector('.d-switch-simulator') as HTMLElement | null;
+    if (switchEl && isElementVisible(switchEl)) {
+        // 查找开关的父容器（通常是 .d-switch-top）
+        const switchContainer = switchEl.parentElement;
+        logger.log('点击原创声明开关', 'action');
+        await clickReliable(switchContainer || switchEl);
+        await sleep(1000); // 等待开关动画和弹窗/按钮出现
     }
 
-    if (!entry) {
-        logger.log('未找到"原创声明"入口（可能已设置/不支持/未进入设置页）', 'warn');
-        return false;
-    }
-
-    if (isFlowCancelled) return false;
-
-    logger.log('点击"去声明"', 'action');
-    await clickReliable(entry);
-
-    // 2) 等待弹窗/抽屉出现
-    await sleep(600);
+    // 1) 检查弹窗是否已打开（点击开关后可能直接打开弹窗）
     let scope: ParentNode = document;
-    const dialogStart = Date.now();
-    while (Date.now() - dialogStart < 8000) {
-        if (isFlowCancelled) return false;
-        const dialogCandidates = Array.from(document.querySelectorAll('.d-modal, .d-drawer, .d-drawer-content, [role="dialog"], .originalContainer'));
-        const dialog = dialogCandidates.find(el => isElementVisible(el as HTMLElement)) as HTMLElement | undefined;
-        if (dialog) {
-            scope = dialog;
-            break;
+    await sleep(500);
+    const dialogCandidates = Array.from(document.querySelectorAll('.d-modal, .d-drawer, .d-drawer-content, [role="dialog"], .originalContainer'));
+    let dialog = dialogCandidates.find(el => isElementVisible(el as HTMLElement)) as HTMLElement | undefined;
+
+    if (dialog) {
+        // 弹窗已打开，跳过"去声明"按钮查找
+        logger.log('弹窗已打开，跳过"去声明"按钮', 'info');
+        scope = dialog;
+    } else {
+        // 弹窗未打开，查找并点击"去声明"按钮
+        logger.log('弹窗未打开，查找"去声明"按钮...', 'info');
+
+        // 先按「原创声明」标题精准定位，再回退到选择器匹配
+        const findOriginalityEntry = (): HTMLElement | null => {
+            const title = Array.from(document.querySelectorAll('div'))
+                .find(el => (el.textContent || '').trim() === '原创声明');
+            if (title && title.parentElement) {
+                const wrapper = title.parentElement.querySelector('.wrapper.red') as HTMLElement | null;
+                const btnText = title.parentElement.querySelector('.btn-text.red') as HTMLElement | null;
+                return wrapper || btnText || title.parentElement;
+            }
+            return findIn(document, SELECTORS.originalityEntry);
+        };
+
+        let entry: HTMLElement | null = null;
+        const entryStart = Date.now();
+        while (Date.now() - entryStart < 8000) {
+            entry = findOriginalityEntry();
+            if (entry && isElementVisible(entry)) break;
+            await sleep(250);
         }
-        await sleep(250);
+
+        if (!entry) {
+            logger.log('未找到"原创声明"入口（可能已设置/不支持/未进入设置页）', 'warn');
+            return false;
+        }
+
+        if (isFlowCancelled) return false;
+
+        logger.log('点击"去声明"', 'action');
+        await clickReliable(entry);
+
+        // 2) 等待弹窗/抽屉出现
+        await sleep(600);
+        const dialogStart = Date.now();
+        while (Date.now() - dialogStart < 8000) {
+            if (isFlowCancelled) return false;
+            const dialogCandidates = Array.from(document.querySelectorAll('.d-modal, .d-drawer, .d-drawer-content, [role="dialog"], .originalContainer'));
+            dialog = dialogCandidates.find(el => isElementVisible(el as HTMLElement)) as HTMLElement | undefined;
+            if (dialog) {
+                scope = dialog;
+                break;
+            }
+            await sleep(250);
+        }
     }
 
     // 3) 勾选同意项（“我已阅读并同意《原创声明须知》…”）
@@ -962,15 +1010,24 @@ const setOriginalityDeclaration = async (): Promise<boolean> => {
     };
 
     const clickableRow = getClickableConsentRow();
-    await clickReliable(clickableRow);
-    await sleep(200);
+    // 直接使用简单的 click()，不要使用 clickReliable
+    // 因为 PointerEvent 等额外事件会干扰小红书框架的状态更新
+    clickableRow.click();
+    // 增加等待时间，确保 UI 状态更新
+    await sleep(500);
 
     // 找“声明原创”按钮并等待它变为可点击（这是最可靠的成功判据）
-    const confirmBtn = await waitForIn(scope, [
-        'button:has-text("声明原创")',
-        'button:contains("声明原创")',
-        ...SELECTORS.declareOriginalButton,
-    ], 8000);
+    let confirmBtn: HTMLElement | null = null;
+    const btnStart = Date.now();
+    while (Date.now() - btnStart < 8000) {
+        if (isFlowCancelled) return false;
+        confirmBtn = findElementByText(scope, 'button', '声明原创');
+        if (!confirmBtn) {
+            confirmBtn = findIn(scope, SELECTORS.declareOriginalButton);
+        }
+        if (confirmBtn) break;
+        await sleep(250);
+    }
 
     if (!confirmBtn) {
         logger.log('⚠️ 未找到"声明原创"按钮，跳过', 'warn');
