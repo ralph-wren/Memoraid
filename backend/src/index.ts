@@ -5483,6 +5483,11 @@ export default {
             const tabEl = document.getElementById('tab-' + tabId);
             if (tabEl) tabEl.style.display = 'block';
             
+            // 修复：切换到仪表盘时加载数据趋势图表
+            if (tabId === 'dashboard') {
+                loadDashboardCharts();
+            }
+            
             if (tabId === 'orders' && !window.ordersLoaded) {
                 fetchOrders(true);
                 window.ordersLoaded = true;
