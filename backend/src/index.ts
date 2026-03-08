@@ -3685,6 +3685,7 @@ export default {
           FROM articles a 
           JOIN accounts ac ON a.account_id = ac.id 
           JOIN platforms p ON ac.platform_id = p.id 
+          WHERE p.name != 'test'
           GROUP BY p.name
         `).all();
 
@@ -3858,6 +3859,84 @@ export default {
           labels: dateLabels,
           values,
           type
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+      }
+    }
+
+    // 7.0.0.1.1 GET /api/admin/platform-trends - 获取各平台每日文章数量趋势（多条折线）
+    if (url.pathname === '/api/admin/platform-trends' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+        }
+        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+        if (!admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+        }
+
+        const days = Math.min(parseInt(url.searchParams.get('days') || '30'), 90);
+
+        // 计算UTC+8的今天起始时间戳
+        const now = Math.floor(Date.now() / 1000);
+        const utc8Offset = 8 * 60 * 60;
+        const todayStart = now - ((now + utc8Offset) % 86400);
+        const startTs = todayStart - (days - 1) * 86400;
+
+        // 生成日期标签数组
+        const dateLabels: string[] = [];
+        for (let i = 0; i < days; i++) {
+          const ts = startTs + i * 86400 + utc8Offset;
+          const d = new Date(ts * 1000);
+          dateLabels.push(`${d.getMonth() + 1}/${d.getDate()}`);
+        }
+
+        // 查询各平台每日文章数（排除test平台）
+        // 需要通过 articles -> accounts -> platforms 三表关联
+        const rows = await env.DB.prepare(`
+          SELECT 
+            p.name as platform_name,
+            p.display_name,
+            ((a.publish_time + ${utc8Offset}) / 86400) as day_key,
+            COUNT(*) as cnt
+          FROM articles a
+          JOIN accounts ac ON a.account_id = ac.id
+          JOIN platforms p ON ac.platform_id = p.id
+          WHERE a.publish_time >= ? AND p.name != 'test'
+          GROUP BY p.name, p.display_name, day_key
+          ORDER BY p.name, day_key
+        `).bind(startTs).all();
+
+        // 按平台组织数据
+        const platformData: Record<string, { name: string; displayName: string; values: number[] }> = {};
+        
+        for (const r of rows.results as any[]) {
+          const ts = r.day_key * 86400;
+          const d = new Date(ts * 1000);
+          const label = `${d.getMonth() + 1}/${d.getDate()}`;
+          
+          if (!platformData[r.platform_name]) {
+            platformData[r.platform_name] = {
+              name: r.platform_name,
+              displayName: r.display_name,
+              values: new Array(days).fill(0)
+            };
+          }
+          
+          const dayIndex = dateLabels.indexOf(label);
+          if (dayIndex >= 0) {
+            platformData[r.platform_name].values[dayIndex] = r.cnt;
+          }
+        }
+
+        // 转换为数组格式
+        const platforms = Object.values(platformData);
+
+        return new Response(JSON.stringify({
+          labels: dateLabels,
+          platforms
         }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
@@ -4364,6 +4443,26 @@ export default {
                 <div class="card">
                     <div class="platform-list" id="platformStats"></div>
                 </div>
+                
+                <!-- 平台文章数量趋势图 -->
+                <div class="card" style="padding:20px;margin-top:16px;position:relative">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                        <h3 style="font-size:0.95rem;color:var(--text-secondary);margin:0">📈 各平台每日文章数量</h3>
+                        <!-- 时间范围切换按钮 -->
+                        <div style="display:flex;gap:6px">
+                            <button class="btn-sm btn-outline" onclick="switchPlatformChartRange(7)" id="platformRangeBtn7">近7天</button>
+                            <button class="btn-sm btn-outline active" onclick="switchPlatformChartRange(30)" id="platformRangeBtn30" style="background:var(--accent);color:#fff">近30天</button>
+                            <button class="btn-sm btn-outline" onclick="switchPlatformChartRange(90)" id="platformRangeBtn90">近90天</button>
+                        </div>
+                    </div>
+                    <div style="position:relative;width:100%;height:320px">
+                        <canvas id="platformTrendsChart" style="width:100%;height:100%"></canvas>
+                        <!-- Tooltip提示框 -->
+                        <div id="platformTooltip" style="position:absolute;display:none;background:rgba(0,0,0,0.85);color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;pointer-events:none;z-index:1000;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.2)"></div>
+                    </div>
+                    <!-- 图例 -->
+                    <div id="platformLegend" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;justify-content:center"></div>
+                </div>
             </div>
 
             <!-- 历史趋势图表区域：活跃用户 + 生成文章 并列 -->
@@ -4377,7 +4476,8 @@ export default {
                         <button class="btn-sm btn-outline" onclick="switchChartRange(90)" id="rangeBtn90">近90天</button>
                     </div>
                 </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+                <!-- 第一行：活跃用户 + 生成文章 -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px">
                     <!-- 活跃用户折线图 -->
                     <div class="card" style="padding:20px">
                         <h3 style="font-size:0.95rem;color:var(--text-secondary);margin-bottom:12px">👥 每日活跃用户</h3>
@@ -4390,6 +4490,23 @@ export default {
                         <h3 style="font-size:0.95rem;color:var(--text-secondary);margin-bottom:12px">📝 每日生成文章</h3>
                         <div style="position:relative;width:100%;height:240px">
                             <canvas id="dashArticlesChart" style="width:100%;height:100%"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <!-- 第二行：新增用户 + 充值金额 -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+                    <!-- 新增用户折线图 -->
+                    <div class="card" style="padding:20px">
+                        <h3 style="font-size:0.95rem;color:var(--text-secondary);margin-bottom:12px">🆕 每日新增用户</h3>
+                        <div style="position:relative;width:100%;height:240px">
+                            <canvas id="dashNewUsersChart" style="width:100%;height:100%"></canvas>
+                        </div>
+                    </div>
+                    <!-- 充值金额折线图 -->
+                    <div class="card" style="padding:20px">
+                        <h3 style="font-size:0.95rem;color:var(--text-secondary);margin-bottom:12px">💰 每日充值金额</h3>
+                        <div style="position:relative;width:100%;height:240px">
+                            <canvas id="dashRechargeChart" style="width:100%;height:100%"></canvas>
                         </div>
                     </div>
                 </div>
@@ -5049,21 +5166,28 @@ export default {
             loadDashboardCharts();
         }
 
-        // 加载仪表盘两个图表数据
+        // 加载仪表盘图表数据（4个图表：活跃用户、生成文章、新增用户、充值金额）
         async function loadDashboardCharts() {
             const token = localStorage.getItem('memoraid_admin_token');
             const days = currentChartRange;
             try {
-                // 并行请求两个趋势数据
-                const [activeRes, articlesRes] = await Promise.all([
+                // 并行请求四个趋势数据
+                const [activeRes, articlesRes, newUsersRes, rechargeRes] = await Promise.all([
                     fetch('/api/admin/trends?type=activeUsers&days=' + days, { headers: { 'Authorization': 'Bearer ' + token } }),
-                    fetch('/api/admin/trends?type=newArticles&days=' + days, { headers: { 'Authorization': 'Bearer ' + token } })
+                    fetch('/api/admin/trends?type=newArticles&days=' + days, { headers: { 'Authorization': 'Bearer ' + token } }),
+                    fetch('/api/admin/trends?type=newUsers&days=' + days, { headers: { 'Authorization': 'Bearer ' + token } }),
+                    fetch('/api/admin/trends?type=rechargeAmount&days=' + days, { headers: { 'Authorization': 'Bearer ' + token } })
                 ]);
                 const activeData = await activeRes.json();
                 const articlesData = await articlesRes.json();
-                // 复用已有的 drawTrendChart 绘图逻辑，传入不同 canvas id
-                drawDashChart('dashActiveChart', activeData.labels, activeData.values, '#10b981');
-                drawDashChart('dashArticlesChart', articlesData.labels, articlesData.values, '#fbbf24');
+                const newUsersData = await newUsersRes.json();
+                const rechargeData = await rechargeRes.json();
+                
+                // 绘制四个图表，使用不同颜色
+                drawDashChart('dashActiveChart', activeData.labels, activeData.values, '#10b981'); // 绿色 - 活跃用户
+                drawDashChart('dashArticlesChart', articlesData.labels, articlesData.values, '#fbbf24'); // 黄色 - 生成文章
+                drawDashChart('dashNewUsersChart', newUsersData.labels, newUsersData.values, '#3b82f6'); // 蓝色 - 新增用户
+                drawDashChart('dashRechargeChart', rechargeData.labels, rechargeData.values, '#8b5cf6'); // 紫色 - 充值金额
             } catch (e) {
                 console.error('仪表盘图表加载失败:', e);
             }
@@ -5160,6 +5284,306 @@ export default {
             ctx.font = '11px Inter, sans-serif';
             ctx.textAlign = 'right';
             ctx.fillText('合计: ' + sum, W - padR, 10);
+        }
+
+        // ========== 平台文章数量趋势图 ==========
+        let currentPlatformChartRange = 30; // 默认30天
+
+        // 平台颜色映射（为每个平台分配不同颜色）
+        const platformColors = {
+            'weixin': '#07C160',      // 微信绿
+            'toutiao': '#ED4040',     // 头条红
+            'zhihu': '#0084FF',       // 知乎蓝
+            'xiaohongshu': '#FF2442', // 小红书红
+            'default': '#6b7280'      // 默认灰色
+        };
+
+        // 切换平台图表时间范围
+        function switchPlatformChartRange(days) {
+            currentPlatformChartRange = days;
+            // 更新按钮样式
+            [7, 30, 90].forEach(d => {
+                const btn = document.getElementById('platformRangeBtn' + d);
+                if (d === days) {
+                    btn.style.background = 'var(--accent)';
+                    btn.style.color = '#fff';
+                } else {
+                    btn.style.background = '';
+                    btn.style.color = '';
+                }
+            });
+            loadPlatformTrendsChart();
+        }
+
+        // 加载平台趋势图数据
+        async function loadPlatformTrendsChart() {
+            const token = localStorage.getItem('memoraid_admin_token');
+            const days = currentPlatformChartRange;
+            try {
+                const res = await fetch('/api/admin/platform-trends?days=' + days, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!res.ok) throw new Error('加载失败');
+                const data = await res.json();
+                console.log('平台趋势数据:', data); // 调试日志
+                
+                // 如果没有数据，显示提示信息
+                if (!data.platforms || data.platforms.length === 0) {
+                    const canvas = document.getElementById('platformTrendsChart');
+                    if (canvas) {
+                        const ctx = canvas.getContext('2d');
+                        const rect = canvas.parentElement.getBoundingClientRect();
+                        canvas.width = rect.width;
+                        canvas.height = rect.height;
+                        ctx.clearRect(0, 0, rect.width, rect.height);
+                        ctx.fillStyle = '#94a3b8';
+                        ctx.font = '14px Inter, sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('暂无平台数据', rect.width / 2, rect.height / 2);
+                    }
+                    document.getElementById('platformLegend').innerHTML = '<div style="text-align:center;color:#94a3b8;font-size:0.875rem">暂无数据</div>';
+                    return;
+                }
+                
+                drawPlatformTrendsChart(data.labels, data.platforms);
+            } catch (e) {
+                console.error('平台趋势图加载失败:', e);
+                // 显示错误信息
+                const canvas = document.getElementById('platformTrendsChart');
+                if (canvas) {
+                    const ctx = canvas.getContext('2d');
+                    const rect = canvas.parentElement.getBoundingClientRect();
+                    canvas.width = rect.width;
+                    canvas.height = rect.height;
+                    ctx.clearRect(0, 0, rect.width, rect.height);
+                    ctx.fillStyle = '#ef4444';
+                    ctx.font = '14px Inter, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('加载失败: ' + e.message, rect.width / 2, rect.height / 2);
+                }
+            }
+        }
+
+        // 绘制平台趋势图（多条折线）
+        function drawPlatformTrendsChart(labels, platforms) {
+            const canvas = document.getElementById('platformTrendsChart');
+            if (!canvas) return;
+            
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+            const W = rect.width, H = rect.height;
+            ctx.clearRect(0, 0, W, H);
+
+            const padL = 50, padR = 20, padT = 20, padB = 40;
+            const chartW = W - padL - padR;
+            const chartH = H - padT - padB;
+            
+            // 计算所有平台的最大值
+            let maxVal = 1;
+            platforms.forEach(p => {
+                const pMax = Math.max(...p.values);
+                if (pMax > maxVal) maxVal = pMax;
+            });
+            
+            const stepX = chartW / (labels.length - 1 || 1);
+
+            // Y轴网格线和标签
+            ctx.strokeStyle = '#e5e7eb';
+            ctx.lineWidth = 0.5;
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '11px Inter, sans-serif';
+            ctx.textAlign = 'right';
+            const ySteps = 5;
+            for (let i = 0; i <= ySteps; i++) {
+                const y = padT + chartH - (i / ySteps) * chartH;
+                ctx.fillText(Math.round(maxVal * i / ySteps).toString(), padL - 8, y + 4);
+                ctx.beginPath();
+                ctx.moveTo(padL, y);
+                ctx.lineTo(W - padR, y);
+                ctx.stroke();
+            }
+
+            // 存储数据点位置，用于鼠标悬浮检测
+            const dataPoints = [];
+
+            // 绘制每个平台的折线
+            platforms.forEach(platform => {
+                const color = platformColors[platform.name] || platformColors.default;
+                
+                // 折线
+                ctx.beginPath();
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2.5;
+                ctx.lineJoin = 'round';
+                
+                for (let i = 0; i < platform.values.length; i++) {
+                    const x = padL + i * stepX;
+                    const y = padT + chartH - (platform.values[i] / maxVal) * chartH;
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+                
+                // 数据点
+                for (let i = 0; i < platform.values.length; i++) {
+                    if (platform.values[i] > 0) {
+                        const x = padL + i * stepX;
+                        const y = padT + chartH - (platform.values[i] / maxVal) * chartH;
+                        ctx.beginPath();
+                        ctx.arc(x, y, 3, 0, Math.PI * 2);
+                        ctx.fillStyle = color;
+                        ctx.fill();
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+                        
+                        // 保存数据点信息用于tooltip
+                        dataPoints.push({
+                            x, y,
+                            date: labels[i],
+                            platform: platform.displayName,
+                            value: platform.values[i],
+                            color
+                        });
+                    }
+                }
+            });
+
+            // X轴日期标签
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '10px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            const maxLabels = 10;
+            const interval = Math.ceil(labels.length / maxLabels);
+            for (let i = 0; i < labels.length; i++) {
+                if (i % interval === 0 || i === labels.length - 1) {
+                    ctx.fillText(labels[i], padL + i * stepX, H - 10);
+                }
+            }
+
+            // 更新图例
+            updatePlatformLegend(platforms);
+            
+            // 添加鼠标移动事件监听，显示tooltip
+            const tooltip = document.getElementById('platformTooltip');
+            if (!tooltip) return;
+            
+            // 移除旧的事件监听器（如果存在）
+            const oldHandler = canvas._mousemoveHandler;
+            if (oldHandler) {
+                canvas.removeEventListener('mousemove', oldHandler);
+                canvas.removeEventListener('mouseleave', canvas._mouseleaveHandler);
+            }
+            
+            // 鼠标移动事件
+            const mousemoveHandler = (e) => {
+                const canvasRect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - canvasRect.left;
+                const mouseY = e.clientY - canvasRect.top;
+                
+                // 判断鼠标在哪个日期范围内（按X轴位置）
+                let dateIndex = -1;
+                let minDistX = stepX / 2; // 半个步长作为阈值
+                
+                for (let i = 0; i < labels.length; i++) {
+                    const x = padL + i * stepX;
+                    const distX = Math.abs(mouseX - x);
+                    if (distX < minDistX) {
+                        minDistX = distX;
+                        dateIndex = i;
+                    }
+                }
+                
+                // 如果找到了日期，显示该日期所有平台的数据
+                if (dateIndex >= 0 && mouseX >= padL && mouseX <= W - padR && mouseY >= padT && mouseY <= padT + chartH) {
+                    const date = labels[dateIndex];
+                    
+                    // 收集该日期所有平台的数据（只显示有数据的平台）
+                    const platformsData = platforms
+                        .filter(p => p.values[dateIndex] > 0)
+                        .map(p => ({
+                            name: p.displayName,
+                            value: p.values[dateIndex],
+                            color: platformColors[p.name] || platformColors.default
+                        }))
+                        .sort((a, b) => b.value - a.value); // 按数量降序排列
+                    
+                    if (platformsData.length > 0) {
+                        // 显示tooltip
+                        tooltip.innerHTML = \`
+                            <div style="font-weight:600;margin-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:4px">\${date}</div>
+                            \${platformsData.map(p => \`
+                                <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+                                    <div style="width:8px;height:8px;border-radius:50%;background:\${p.color};flex-shrink:0"></div>
+                                    <span style="flex:1">\${p.name}</span>
+                                    <strong>\${p.value}篇</strong>
+                                </div>
+                            \`).join('')}
+                        \`;
+                        tooltip.style.display = 'block';
+                        
+                        // 计算tooltip位置
+                        const tooltipX = padL + dateIndex * stepX + 15;
+                        const tooltipY = mouseY - 10;
+                        
+                        tooltip.style.left = tooltipX + 'px';
+                        tooltip.style.top = tooltipY + 'px';
+                        
+                        // 如果tooltip超出右边界，显示在左侧
+                        setTimeout(() => {
+                            if (tooltipX + tooltip.offsetWidth > W) {
+                                tooltip.style.left = (padL + dateIndex * stepX - tooltip.offsetWidth - 15) + 'px';
+                            }
+                            // 如果tooltip超出上边界，向下移动
+                            if (tooltipY < 0) {
+                                tooltip.style.top = '10px';
+                            }
+                            // 如果tooltip超出下边界，向上移动
+                            if (tooltipY + tooltip.offsetHeight > H) {
+                                tooltip.style.top = (H - tooltip.offsetHeight - 10) + 'px';
+                            }
+                        }, 0);
+                    } else {
+                        tooltip.style.display = 'none';
+                    }
+                } else {
+                    tooltip.style.display = 'none';
+                }
+            };
+            
+            // 鼠标离开事件
+            const mouseleaveHandler = () => {
+                tooltip.style.display = 'none';
+            };
+            
+            canvas.addEventListener('mousemove', mousemoveHandler);
+            canvas.addEventListener('mouseleave', mouseleaveHandler);
+            
+            // 保存事件处理器引用，用于下次清理
+            canvas._mousemoveHandler = mousemoveHandler;
+            canvas._mouseleaveHandler = mouseleaveHandler;
+        }
+
+        // 更新平台图例
+        function updatePlatformLegend(platforms) {
+            const legendDiv = document.getElementById('platformLegend');
+            if (!legendDiv) return;
+            
+            legendDiv.innerHTML = platforms.map(p => {
+                const color = platformColors[p.name] || platformColors.default;
+                const total = p.values.reduce((a, b) => a + b, 0);
+                return \`
+                    <div style="display:flex;align-items:center;gap:6px;font-size:0.85rem">
+                        <div style="width:12px;height:12px;border-radius:2px;background:\${color}"></div>
+                        <span style="color:var(--text-secondary)">\${p.displayName}</span>
+                        <span style="color:var(--text-muted);font-size:0.8rem">(\${total}篇)</span>
+                    </div>
+                \`;
+            }).join('');
         }
 
         // ========== 趋势图功能（模态框） ==========
@@ -5483,9 +5907,10 @@ export default {
             const tabEl = document.getElementById('tab-' + tabId);
             if (tabEl) tabEl.style.display = 'block';
             
-            // 修复：切换到仪表盘时加载数据趋势图表
+            // 修复：切换到仪表盘时加载数据趋势图表和平台趋势图
             if (tabId === 'dashboard') {
                 loadDashboardCharts();
+                loadPlatformTrendsChart();
             }
             
             if (tabId === 'orders' && !window.ordersLoaded) {
@@ -6083,8 +6508,9 @@ export default {
             await fetchStats();
             await fetchUsers(true);
             await fetchArticles(true);
-            // 加载仪表盘趋势图表
+            // 加载仪表盘趋势图表和平台趋势图
             loadDashboardCharts();
+            loadPlatformTrendsChart();
             
             // Setup routing
             const hash = window.location.hash.slice(1) || 'dashboard';
