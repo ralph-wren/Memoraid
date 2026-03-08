@@ -4457,8 +4457,8 @@ export default {
                     </div>
                     <div style="position:relative;width:100%;height:320px">
                         <canvas id="platformTrendsChart" style="width:100%;height:100%"></canvas>
-                        <!-- Tooltip提示框 -->
-                        <div id="platformTooltip" style="position:absolute;display:none;background:rgba(0,0,0,0.85);color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;pointer-events:none;z-index:1000;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.2)"></div>
+                        <!-- Tooltip提示框 - 添加过渡动画 -->
+                        <div id="platformTooltip" style="position:absolute;display:none;background:rgba(0,0,0,0.85);color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;pointer-events:none;z-index:1000;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.2);transition:opacity 0.15s ease,transform 0.15s ease;opacity:0"></div>
                     </div>
                     <!-- 图例 -->
                     <div id="platformLegend" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;justify-content:center"></div>
@@ -5294,7 +5294,7 @@ export default {
             'weixin': '#07C160',      // 微信绿
             'toutiao': '#ED4040',     // 头条红
             'zhihu': '#0084FF',       // 知乎蓝
-            'xiaohongshu': '#FF2442', // 小红书红
+            'xiaohongshu': '#FF6B9D', // 小红书粉红（改为更亮的粉色，与头条红区分）
             'default': '#6b7280'      // 默认灰色
         };
 
@@ -5479,6 +5479,10 @@ export default {
                 canvas.removeEventListener('mouseleave', canvas._mouseleaveHandler);
             }
             
+            // 记录当前显示的日期索引，避免重复更新
+            let currentDateIndex = -1;
+            let tooltipTimeout = null;
+            
             // 鼠标移动事件
             const mousemoveHandler = (e) => {
                 const canvasRect = canvas.getBoundingClientRect();
@@ -5498,8 +5502,23 @@ export default {
                     }
                 }
                 
-                // 如果找到了日期，显示该日期所有平台的数据
-                if (dateIndex >= 0 && mouseX >= padL && mouseX <= W - padR && mouseY >= padT && mouseY <= padT + chartH) {
+                // 检查是否在图表区域内
+                const inChartArea = mouseX >= padL && mouseX <= W - padR && mouseY >= padT && mouseY <= padT + chartH;
+                
+                // 如果日期没有改变，不更新tooltip（避免闪烁）
+                if (dateIndex === currentDateIndex && inChartArea) {
+                    return;
+                }
+                
+                // 清除之前的延迟
+                if (tooltipTimeout) {
+                    clearTimeout(tooltipTimeout);
+                    tooltipTimeout = null;
+                }
+                
+                // 如果找到了日期且在图表区域内，显示该日期所有平台的数据
+                if (dateIndex >= 0 && inChartArea) {
+                    currentDateIndex = dateIndex;
                     const date = labels[dateIndex];
                     
                     // 收集该日期所有平台的数据（只显示有数据的平台）
@@ -5513,7 +5532,7 @@ export default {
                         .sort((a, b) => b.value - a.value); // 按数量降序排列
                     
                     if (platformsData.length > 0) {
-                        // 显示tooltip
+                        // 更新tooltip内容
                         tooltip.innerHTML = \`
                             <div style="font-weight:600;margin-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:4px">\${date}</div>
                             \${platformsData.map(p => \`
@@ -5524,7 +5543,13 @@ export default {
                                 </div>
                             \`).join('')}
                         \`;
+                        
+                        // 显示tooltip（带淡入效果）
                         tooltip.style.display = 'block';
+                        // 使用requestAnimationFrame确保display生效后再设置opacity
+                        requestAnimationFrame(() => {
+                            tooltip.style.opacity = '1';
+                        });
                         
                         // 计算tooltip位置
                         const tooltipX = padL + dateIndex * stepX + 15;
@@ -5533,31 +5558,44 @@ export default {
                         tooltip.style.left = tooltipX + 'px';
                         tooltip.style.top = tooltipY + 'px';
                         
-                        // 如果tooltip超出右边界，显示在左侧
+                        // 延迟检查边界，等待tooltip渲染完成
                         setTimeout(() => {
                             if (tooltipX + tooltip.offsetWidth > W) {
                                 tooltip.style.left = (padL + dateIndex * stepX - tooltip.offsetWidth - 15) + 'px';
                             }
-                            // 如果tooltip超出上边界，向下移动
                             if (tooltipY < 0) {
                                 tooltip.style.top = '10px';
                             }
-                            // 如果tooltip超出下边界，向上移动
                             if (tooltipY + tooltip.offsetHeight > H) {
                                 tooltip.style.top = (H - tooltip.offsetHeight - 10) + 'px';
                             }
                         }, 0);
                     } else {
-                        tooltip.style.display = 'none';
+                        currentDateIndex = -1;
+                        tooltip.style.opacity = '0';
+                        tooltipTimeout = setTimeout(() => {
+                            tooltip.style.display = 'none';
+                        }, 150); // 等待淡出动画完成
                     }
                 } else {
-                    tooltip.style.display = 'none';
+                    currentDateIndex = -1;
+                    tooltip.style.opacity = '0';
+                    tooltipTimeout = setTimeout(() => {
+                        tooltip.style.display = 'none';
+                    }, 150); // 等待淡出动画完成
                 }
             };
             
             // 鼠标离开事件
             const mouseleaveHandler = () => {
-                tooltip.style.display = 'none';
+                currentDateIndex = -1;
+                tooltip.style.opacity = '0';
+                if (tooltipTimeout) {
+                    clearTimeout(tooltipTimeout);
+                }
+                tooltipTimeout = setTimeout(() => {
+                    tooltip.style.display = 'none';
+                }, 150); // 等待淡出动画完成
             };
             
             canvas.addEventListener('mousemove', mousemoveHandler);
@@ -6324,10 +6362,7 @@ export default {
         
         // 更新反馈状态
         async function updateFeedbackStatus(feedbackId, status) {
-            if (!confirm(\`确定要将此反馈标记为"\${status === 'resolved' ? '已解决' : '已忽略'}"吗？\`)) {
-                return;
-            }
-            
+            // 移除确认弹窗，直接执行
             try {
                 const token = localStorage.getItem('memoraid_admin_token');
                 const res = await fetch(\`/api/admin/feedback/\${feedbackId}/status\`, {
@@ -6341,10 +6376,12 @@ export default {
                 
                 if (!res.ok) throw new Error('更新失败');
                 
-                alert('状态更新成功');
+                // 移除alert，直接刷新列表
                 fetchFeedback();
             } catch (e) {
-                alert('更新失败: ' + e.message);
+                console.error('更新失败:', e);
+                // 移除alert，静默失败
+                fetchFeedback();
             }
         }
         
@@ -6374,8 +6411,8 @@ export default {
         async function submitReply(feedbackId) {
             const replyContent = document.getElementById('replyContent').value.trim();
             
+            // 移除alert，改为在按钮上显示状态
             if (!replyContent) {
-                alert('请输入回复内容');
                 return;
             }
             
@@ -6395,11 +6432,12 @@ export default {
                 
                 if (!res.ok) throw new Error('提交失败');
                 
-                alert('回复成功');
+                // 移除alert，直接关闭弹窗并刷新
                 document.querySelector('[style*="position:fixed"]').remove();
                 fetchFeedback();
             } catch (e) {
-                alert('提交失败: ' + e.message);
+                console.error('提交失败:', e);
+                // 移除alert，静默失败
             }
         }
 
