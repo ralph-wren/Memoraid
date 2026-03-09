@@ -666,7 +666,33 @@ const generateAIImage = async (prompt: string, setRatio: boolean = true): Promis
   
   await new Promise(r => setTimeout(r, 300));
   
-  // 点击"重新创作"或"开始创作"按钮
+  // 关键优化：在点击"创作"按钮之前，先检查是否有推荐图片
+  // 如果有推荐图片，直接使用，无需等待AI生成
+  logger.log('检查是否有推荐图片...', 'info');
+  
+  // 等待推荐图片加载（增加等待时间到2.5秒）
+  await new Promise(r => setTimeout(r, 2500));
+  
+  // 查找"已在图片库中找到以下图片"区域
+  let hasRecommendImages = false;
+  const allTexts = document.querySelectorAll('*');
+  for (const el of allTexts) {
+    const text = (el as HTMLElement).textContent;
+    if (text && text.includes('已在图片库中找到以下图片')) {
+      logger.log('✅ 发现推荐图片区域，无需等待AI生成', 'success');
+      hasRecommendImages = true;
+      break;
+    }
+  }
+  
+  // 如果有推荐图片，直接返回成功，不点击"创作"按钮
+  if (hasRecommendImages) {
+    logger.log('跳过AI生成，将直接使用推荐图片', 'info');
+    return true;
+  }
+  
+  // 如果没有推荐图片，继续原有逻辑：点击"创作"按钮等待AI生成
+  logger.log('未发现推荐图片，开始AI生成流程', 'info');
   logger.log('查找创作按钮...', 'info');
   
   let createBtn: HTMLElement | null = null;
@@ -854,6 +880,123 @@ const insertAIImage = async (): Promise<boolean> => {
       logger.log('通过 ai_image_dialog 类找到弹窗', 'info');
     }
   }
+  
+  // 新增：优先查找推荐图片区域（"已在图片库中找到以下图片"）
+  // 这些是微信推荐的图片，不需要等待AI生成
+  if (activeDialog) {
+    logger.log('查找推荐图片区域...', 'info');
+    
+    // 增加等待时间，确保推荐图片加载完成
+    await new Promise(r => setTimeout(r, 1500));
+    
+    // 查找"已在图片库中找到以下图片"区域
+    let recommendSection: Element | null = null;
+    const allTexts = activeDialog.querySelectorAll('*');
+    for (const el of allTexts) {
+      const text = (el as HTMLElement).textContent;
+      if (text && text.includes('已在图片库中找到以下图片')) {
+        logger.log('找到推荐图片区域标题', 'info');
+        recommendSection = el.parentElement || el.nextElementSibling;
+        break;
+      }
+    }
+    
+    // 如果找到推荐区域，查找其中的图片
+    if (recommendSection) {
+      const recommendImages = Array.from(recommendSection.querySelectorAll('img')).filter(img => {
+        const rect = img.getBoundingClientRect();
+        const parent = img.parentElement;
+        // 推荐图片的特征：parent 为 'image-wrapper'，尺寸约 132x132
+        return rect.width > 50 && rect.height > 50 && parent?.className?.includes('image-wrapper');
+      });
+      
+      logger.log(`推荐区域找到 ${recommendImages.length} 张可用图片`, 'info');
+      
+      if (recommendImages.length > 0) {
+        // 选择第一张推荐图片
+        const firstRecommendImage = recommendImages[0];
+        logger.log('使用推荐的第一张图片（无需等待AI生成）', 'success');
+        
+        // 查找图片的可点击容器
+        const imageContainer = firstRecommendImage.closest('div[class*="item"], li, .image-item, [class*="image"]');
+        if (imageContainer) {
+          logger.log('点击推荐图片容器', 'action');
+          (imageContainer as HTMLElement).scrollIntoView({ behavior: 'instant', block: 'center' });
+          await new Promise(r => setTimeout(r, 300));
+          
+          // 修复：使用原生click()避免重复触发
+          (imageContainer as HTMLElement).click();
+          await new Promise(r => setTimeout(r, 800));
+          
+          // 查找并点击确定按钮
+          logger.log('查找确定按钮...', 'info');
+          const buttons = activeDialog.querySelectorAll('button');
+          for (const btn of buttons) {
+            const text = (btn as HTMLElement).textContent?.trim();
+            const btnStyle = window.getComputedStyle(btn as HTMLElement);
+            if (btnStyle.display !== 'none' && (text === '确定' || text === '确认' || text === '插入')) {
+              logger.log(`点击"${text}"按钮`, 'action');
+              // 修复：使用原生click()避免重复触发
+              (btn as HTMLElement).click();
+              await new Promise(r => setTimeout(r, 1000));
+              logger.log('推荐图片已插入', 'success');
+              return true;
+            }
+          }
+          
+          // 如果在弹窗内没找到，尝试全局查找
+          const allButtons = document.querySelectorAll('button');
+          for (const btn of allButtons) {
+            const text = (btn as HTMLElement).textContent?.trim();
+            const btnStyle = window.getComputedStyle(btn as HTMLElement);
+            if (btnStyle.display !== 'none' && (text === '确定' || text === '确认' || text === '插入')) {
+              logger.log(`全局找到"${text}"按钮`, 'action');
+              // 修复：使用原生click()避免重复触发
+              (btn as HTMLElement).click();
+              await new Promise(r => setTimeout(r, 1000));
+              logger.log('推荐图片已插入', 'success');
+              return true;
+            }
+          }
+          
+          // 如果还是没找到确定按钮，也返回true，避免继续执行AI生成图片的插入逻辑
+          logger.log('⚠️ 未找到确定按钮，但推荐图片已点击，跳过后续逻辑', 'warn');
+          return true;
+        } else {
+          // 直接点击图片
+          logger.log('直接点击推荐图片', 'action');
+          firstRecommendImage.scrollIntoView({ behavior: 'instant', block: 'center' });
+          await new Promise(r => setTimeout(r, 300));
+          // 修复：使用原生click()避免重复触发
+          firstRecommendImage.click();
+          await new Promise(r => setTimeout(r, 800));
+          
+          // 查找确定按钮（同上）
+          const buttons = activeDialog.querySelectorAll('button');
+          for (const btn of buttons) {
+            const text = (btn as HTMLElement).textContent?.trim();
+            const btnStyle = window.getComputedStyle(btn as HTMLElement);
+            if (btnStyle.display !== 'none' && (text === '确定' || text === '确认' || text === '插入')) {
+              // 修复：使用原生click()避免重复触发
+              (btn as HTMLElement).click();
+              await new Promise(r => setTimeout(r, 1000));
+              logger.log('推荐图片已插入', 'success');
+              return true;
+            }
+          }
+          
+          // 如果没找到确定按钮，也返回true，避免继续执行
+          logger.log('⚠️ 未找到确定按钮，但推荐图片已点击，跳过后续逻辑', 'warn');
+          return true;
+        }
+      }
+    } else {
+      logger.log('未找到推荐图片区域，将使用AI生成的图片', 'info');
+    }
+  }
+  
+  // 如果没有推荐图片，继续原有的逻辑（使用AI生成的图片）
+  logger.log('查找AI生成的图片...', 'info');
   
   // 在弹窗内查找图片列表
   if (activeDialog) {
@@ -3633,7 +3776,8 @@ const clickWeixinImageAdaptive = async (img: HTMLImageElement): Promise<boolean>
   if (!img) return false;
   if (!isElementVisible(img)) return false;
 
-  simulateClick(img);
+  // 使用原生click()避免触发额外的事件（修复重复插入问题）
+  img.click();
   await new Promise(r => setTimeout(r, 250));
 
   const rect = img.getBoundingClientRect();
