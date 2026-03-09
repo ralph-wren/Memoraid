@@ -2046,27 +2046,8 @@ const setCoverFromContent = async (options?: { preferredIndex?: number }): Promi
   // 根据调试结果，弹出菜单 pop-opr__group-select-cover 在点击后会显示
   logger.log('点击封面区域触发菜单...', 'action');
   
-  const rect = coverArea.getBoundingClientRect();
-  const centerX = rect.left + rect.width / 2;
-  const centerY = rect.top + rect.height / 2;
-  
-  const eventOptions = {
-    bubbles: true,
-    cancelable: true,
-    view: window,
-    clientX: centerX,
-    clientY: centerY
-  };
-  
-  // 先触发悬浮事件
-  coverArea.dispatchEvent(new MouseEvent('mouseenter', eventOptions));
-  coverArea.dispatchEvent(new MouseEvent('mouseover', eventOptions));
-  await new Promise(r => setTimeout(r, 300));
-  
-  // 再触发点击事件
-  coverArea.dispatchEvent(new MouseEvent('mousedown', eventOptions));
-  coverArea.dispatchEvent(new MouseEvent('mouseup', eventOptions));
-  coverArea.dispatchEvent(new MouseEvent('click', eventOptions));
+  // 修复：使用原生click()触发菜单
+  coverArea.click();
   
   // 等待弹出菜单出现
   await new Promise(r => setTimeout(r, 800));
@@ -2116,8 +2097,8 @@ const setCoverFromContent = async (options?: { preferredIndex?: number }): Promi
   if (!selectFromContentLink) {
     logger.log('第一次未找到，再次点击封面区域...', 'info');
     
-    // 再次点击
-    simulateClick(coverArea);
+    // 再次点击（修复：使用原生click()）
+    coverArea.click();
     await new Promise(r => setTimeout(r, 1000));
     
     // 再次查找
@@ -2169,8 +2150,8 @@ const setCoverFromContent = async (options?: { preferredIndex?: number }): Promi
   selectFromContentLink.scrollIntoView({ behavior: 'instant', block: 'center' });
   await new Promise(r => setTimeout(r, 200));
   
-  // 点击链接
-  simulateClick(selectFromContentLink);
+  // 点击链接（修复：使用原生click()）
+  selectFromContentLink.click();
   await new Promise(r => setTimeout(r, 1500));
   
   // 选择第一张图片
@@ -2250,8 +2231,8 @@ const setCoverFromContent = async (options?: { preferredIndex?: number }): Promi
         };
 
         if (!checkSelected()) {
-             // 如果没选中，尝试 simulateClick
-             simulateClick(target);
+             // 如果没选中，尝试原生click再次点击（修复：避免使用simulateClick）
+             target.click();
              await new Promise(r => setTimeout(r, 800));
         } else {
              await new Promise(r => setTimeout(r, 600));
@@ -2264,11 +2245,12 @@ const setCoverFromContent = async (options?: { preferredIndex?: number }): Promi
           // 尝试点击内部的图标或 input
           const innerIcon = target.querySelector('.icon_card_selected_global, .weui-desktop-icon-checkbox, input[type="checkbox"], input[type="radio"]') as HTMLElement;
           if (innerIcon) {
-              simulateClick(innerIcon);
+              // 修复：使用原生click()
+              innerIcon.click();
               await new Promise(r => setTimeout(r, 500));
           } else {
-              // 再次点击容器
-              simulateClick(target);
+              // 再次点击容器（修复：使用原生click()）
+              target.click();
               await new Promise(r => setTimeout(r, 500));
           }
         }
@@ -2326,7 +2308,8 @@ const setCoverFromContent = async (options?: { preferredIndex?: number }): Promi
     // 标记按钮为已点击
     btn.setAttribute('data-memoraid-clicked', 'true');
     
-    simulateClick(btn);
+    // 修复：使用原生click()避免重复触发
+    btn.click();
     return true;
   };
 
@@ -2347,7 +2330,8 @@ const setCoverFromContent = async (options?: { preferredIndex?: number }): Promi
       const style = window.getComputedStyle(tracker);
       if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
         logger.log('点击裁剪区域', 'action');
-        simulateClick(tracker);
+        // 修复：使用原生click()避免重复触发
+        tracker.click();
         await new Promise(r => setTimeout(r, 500));
         break;
       }
@@ -2363,7 +2347,8 @@ const setCoverFromContent = async (options?: { preferredIndex?: number }): Promi
     const finalConfirmBtn = findElementByText('确认', ['button']);
     if (finalConfirmBtn && isElementVisible(finalConfirmBtn)) {
       logger.log('点击最终确认', 'action');
-      simulateClick(finalConfirmBtn);
+      // 修复：使用原生click()避免重复触发
+      finalConfirmBtn.click();
       await new Promise(r => setTimeout(r, 1000));
     }
   }
