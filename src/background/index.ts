@@ -1807,7 +1807,8 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
     });
 
     // 打开或激活微信公众号页面
-    const mpUrl = 'https://mp.weixin.qq.com/';
+    // 编辑器页面URL（直接进入新建文章页面，避免content script点击按钮打开新页面）
+    const editorUrl = 'https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&isNew=1&type=10&createType=0&token=&lang=zh_CN';
 
     // 优先查找编辑器页面
     const editorTabs = await chrome.tabs.query({ url: '*://mp.weixin.qq.com/*appmsg_edit*' });
@@ -1823,14 +1824,14 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
       // 重新加载页面以触发 content script
       await chrome.tabs.reload(tab.id!);
     } else if (allTabs.length > 0) {
-      // 如果已有其他微信页面（如首页），复用第一个
+      // 如果已有其他微信页面（如首页），直接导航到编辑器页面
+      // 这样可以避免content script检测到首页后点击"文章"按钮打开新页面
       tab = allTabs[0];
-      await chrome.tabs.update(tab.id!, { active: true });
-      await chrome.tabs.reload(tab.id!);
+      await chrome.tabs.update(tab.id!, { active: true, url: editorUrl });
     } else {
-      // 否则创建新标签页
+      // 否则创建新标签页，直接打开编辑器页面
       tab = await chrome.tabs.create({
-        url: mpUrl,
+        url: editorUrl,
         active: true
       });
     }

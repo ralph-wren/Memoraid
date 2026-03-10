@@ -3023,6 +3023,43 @@ const selectPlaceholderInEditor = (placeholderText: string): boolean => {
 };
 
 /**
+ * 删除编辑器中的占位符文本
+ * @param placeholderText 占位符文本（如 "[图片: xxx]"）
+ * @returns 是否成功删除
+ */
+const deletePlaceholderText = (placeholderText: string): boolean => {
+  const editor = findElement(SELECTORS.editor);
+  if (!editor) return false;
+  
+  // 使用 TreeWalker 遍历所有文本节点
+  const walker = document.createTreeWalker(
+    editor,
+    NodeFilter.SHOW_TEXT,
+    null
+  );
+  
+  let node: Text | null;
+  while ((node = walker.nextNode() as Text | null)) {
+    const text = node.textContent || '';
+    const index = text.indexOf(placeholderText);
+    
+    if (index !== -1) {
+      // 找到了占位符，删除它
+      const range = document.createRange();
+      range.setStart(node, index);
+      range.setEnd(node, index + placeholderText.length);
+      range.deleteContents();
+      
+      logger.log(`✅ 已删除占位符: ${placeholderText}`, 'success');
+      return true;
+    }
+  }
+  
+  logger.log(`未找到需要删除的占位符: ${placeholderText}`, 'warn');
+  return false;
+};
+
+/**
  * 关闭 AI 配图弹窗
  */
 const closeAIImageDialog = async (): Promise<boolean> => {
@@ -3117,6 +3154,11 @@ const generateAndInsertImageForPlaceholder = async (
   
   // 步骤6: 等待图片插入完成，弹窗会自动关闭
   await new Promise(r => setTimeout(r, 1000));
+  
+  // 步骤7: 删除占位符文本，避免重复处理和显示问题
+  if (!deletePlaceholderText(placeholder.text)) {
+    logger.log('⚠️ 无法删除占位符文本，可能已被自动删除', 'warn');
+  }
   
   logger.log(`占位符 "${placeholder.keyword}" 处理完成`, 'success');
   return true;
