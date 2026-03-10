@@ -3568,17 +3568,22 @@ export default {
         const order = url.searchParams.get('order') || 'desc';
         const paidOnly = url.searchParams.get('paid_only') === '1'; // 是否仅看付费用户
         const keyword = url.searchParams.get('keyword') || ''; // 搜索关键词
-        // 当前时间戳，用于计算3日/7日文章数
+        // 当前时间戳，用于计算3日/7日文章数和当日新增用户
         const now = Math.floor(Date.now() / 1000);
+        // 计算今天0点的时间戳（用于判断是否为当日新增用户）
+        const todayStart = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
         
         let query = `
           SELECT u.id, u.email, u.provider, u.created_at, MAX(a.publish_time) as last_active,
           q.paid_quota_remaining,
-          (SELECT COUNT(*) FROM ai_usage_logs WHERE user_id = u.id OR anonymous_id = u.id) as ai_usage,
+          -- 只统计文章生成次数（从 ai_usage_logs 中筛选 model = 'article-generation' 的记录）
+          (SELECT COUNT(*) FROM ai_usage_logs WHERE (user_id = u.id OR anonymous_id = u.id) AND model = 'article-generation') as ai_usage,
           -- 最近3天生成文章数
           (SELECT COUNT(*) FROM articles a3 JOIN accounts ac3 ON a3.account_id = ac3.id WHERE ac3.user_id = u.id AND a3.publish_time >= ${now - 3 * 86400}) as articles_3d,
           -- 最近7天生成文章数
           (SELECT COUNT(*) FROM articles a7 JOIN accounts ac7 ON a7.account_id = ac7.id WHERE ac7.user_id = u.id AND a7.publish_time >= ${now - 7 * 86400}) as articles_7d,
+          -- 总文章数
+          (SELECT COUNT(*) FROM articles a_all JOIN accounts ac_all ON a_all.account_id = ac_all.id WHERE ac_all.user_id = u.id) as total_articles,
           -- 累计消耗token数量（从articles表的extra_info字段中提取totalTokens并求和）
           (SELECT COALESCE(SUM(
             CAST(json_extract(a_token.extra_info, '$.totalTokens') AS INTEGER)
@@ -3588,7 +3593,9 @@ export default {
           WHERE ac_token.user_id = u.id 
           AND json_extract(a_token.extra_info, '$.totalTokens') IS NOT NULL) as total_tokens,
           -- 是否有已支付的充值记录（用于付费用户标识）
-          (SELECT COUNT(*) FROM payment_orders po WHERE po.user_id = u.id AND po.status IN ('paid', 'approved')) as paid_count
+          (SELECT COUNT(*) FROM payment_orders po WHERE po.user_id = u.id AND po.status IN ('paid', 'approved')) as paid_count,
+          -- 是否为当日新增用户（注册时间 >= 今天0点）
+          CASE WHEN u.created_at >= ${todayStart} THEN 1 ELSE 0 END as is_new_today
           FROM users u
           LEFT JOIN user_quotas q ON u.id = q.user_id
           LEFT JOIN accounts ac ON u.id = ac.user_id
@@ -4535,13 +4542,13 @@ export default {
                                     <tr>
                                         <th>用户</th>
                                         <th>来源</th>
-                                        <th>免费额度</th>
+                                        <th title="文章生成使用次数">免费额度</th>
                                         <th class="sortable" id="sort-paid_quota" onclick="toggleSort('paid_quota')">付费额度</th>
                                         <!-- 新增：3日/7日文章数，支持排序 -->
-                                        <th class="sortable" id="sort-articles_3d" onclick="toggleSort('articles_3d')">3日文章</th>
-                                        <th class="sortable" id="sort-articles_7d" onclick="toggleSort('articles_7d')">7日文章</th>
+                                        <th class="sortable" id="sort-articles_3d" onclick="toggleSort('articles_3d')" title="最近3天生成的文章数量">3日文章</th>
+                                        <th class="sortable" id="sort-articles_7d" onclick="toggleSort('articles_7d')" title="最近7天生成的文章数量">7日文章</th>
                                         <!-- 新增：消耗TOKEN，支持排序 -->
-                                        <th class="sortable" id="sort-total_tokens" onclick="toggleSort('total_tokens')">消耗TOKEN</th>
+                                        <th class="sortable" id="sort-total_tokens" onclick="toggleSort('total_tokens')" title="累计消耗的AI Token数量">消耗TOKEN</th>
                                         <th class="sortable" id="sort-created_at" onclick="toggleSort('created_at')">注册时间</th>
                                         <th class="sortable active" id="sort-last_active" onclick="toggleSort('last_active')">最后活跃</th>
                                     </tr>
@@ -4995,6 +5002,9 @@ export default {
                 // 判断是否为付费用户（有已支付的充值记录）
                 const isPaid = u.paid_count > 0;
                 const paidBadge = isPaid ? '<span style="background:#f97316;color:#fff;font-size:0.65rem;padding:1px 5px;border-radius:4px;margin-left:6px;vertical-align:middle">付费</span>' : '';
+                // 判断是否为当日新增用户
+                const isNewToday = u.is_new_today === 1;
+                const newBadge = isNewToday ? '<span style="background:#10b981;color:#fff;font-size:0.65rem;padding:1px 5px;border-radius:4px;margin-left:6px;vertical-align:middle">新</span>' : '';
                 // 格式化token数量（大于1000时显示为K）
                 const formatTokens = (tokens) => {
                     if (!tokens || tokens === 0) return '0';
@@ -5007,11 +5017,11 @@ export default {
                     <td onclick="goToUserArticles('\${u.email}')" title="点击查看此用户的所有文章">
                         <div class="user-cell">
                             <div class="avatar" style="\${isPaid ? 'background:linear-gradient(135deg,#f97316,#fbbf24)' : ''}">\${u.email[0].toUpperCase()}</div>
-                            <div class="user-email" style="color:var(--accent-secondary)">\${u.email}\${paidBadge}</div>
+                            <div class="user-email" style="color:var(--accent-secondary)">\${u.email}\${paidBadge}\${newBadge}</div>
                         </div>
                     </td>
                     <td>\${u.provider}</td>
-                    <td><span class="status-pill \${(u.ai_usage >= limit) ? 'error' : 'success'}">\${u.ai_usage || 0}/\${limit}</span></td>
+                    <td title="已生成 \${u.total_articles || 0} 篇文章"><span class="status-pill \${(u.ai_usage >= limit) ? 'error' : 'success'}">\${u.ai_usage || 0}/\${limit}</span></td>
                     <td><span class="status-pill success">\${u.paid_quota_remaining || 0}</span></td>
                     <td><span class="status-pill \${u.articles_3d > 0 ? 'success' : ''}">\${u.articles_3d || 0}</span></td>
                     <td><span class="status-pill \${u.articles_7d > 0 ? 'success' : ''}">\${u.articles_7d || 0}</span></td>

@@ -1,4 +1,21 @@
 {
+  "name": "memoraid-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-09-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "memoraid-db",
+      "database_id": "71207763-85f4-4ebf-92b7-e2da33dd1f21"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "pothos-images"
+    }
+  ],
   "analytics_engine_datasets": [
     { "binding": "Memoraid", "dataset": "Memoraid" }
   ],
@@ -10,11 +27,6 @@
       "head_sampling_rate": 1,
       "persist": true,
       "invocation_logs": true
-    },
-    "traces": {
-      "enabled": true,
-      "persist": true,
-      "head_sampling_rate": 1
     }
   }
 }
