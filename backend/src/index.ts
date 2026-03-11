@@ -3567,11 +3567,17 @@ export default {
         const sort = url.searchParams.get('sort') || 'last_active'; // 默认按最后活跃排序
         const order = url.searchParams.get('order') || 'desc';
         const paidOnly = url.searchParams.get('paid_only') === '1'; // 是否仅看付费用户
+        const newOnly = url.searchParams.get('new_only') === '1'; // 是否仅看新用户（当日注册）
         const keyword = url.searchParams.get('keyword') || ''; // 搜索关键词
         // 当前时间戳，用于计算3日/7日文章数和当日新增用户
         const now = Math.floor(Date.now() / 1000);
-        // 计算今天0点的时间戳（用于判断是否为当日新增用户）
-        const todayStart = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+        // 计算今天0点的时间戳（使用中国时区 UTC+8）
+        const nowDate = new Date();
+        // 获取UTC时间并加8小时转换为中国时间
+        const chinaOffset = 8 * 60 * 60; // 8小时的秒数
+        const chinaTime = now + chinaOffset;
+        // 计算中国时区今天0点的UTC时间戳
+        const todayStart = Math.floor(chinaTime / 86400) * 86400 - chinaOffset;
         
         let query = `
           SELECT u.id, u.email, u.provider, u.created_at, MAX(a.publish_time) as last_active,
@@ -3609,9 +3615,21 @@ export default {
 
         query += ` GROUP BY u.id`;
 
+        // 筛选条件：使用 HAVING 子句
+        const havingConditions = [];
+        
         // 仅看付费用户：过滤有充值记录的
         if (paidOnly) {
-          query += ` HAVING paid_count > 0`;
+          havingConditions.push('paid_count > 0');
+        }
+        
+        // 仅看新用户：过滤当日注册的用户
+        if (newOnly) {
+          havingConditions.push('is_new_today = 1');
+        }
+        
+        if (havingConditions.length > 0) {
+          query += ` HAVING ` + havingConditions.join(' AND ');
         }
         
         let sortField = 'last_active';
@@ -3636,9 +3654,9 @@ export default {
 
         const results = await env.DB.prepare(query).bind(limit, offset).all();
 
-        // 总数：需要考虑搜索条件和付费筛选
+        // 总数：需要考虑搜索条件、付费筛选和新用户筛选
         let totalQuery = 'SELECT COUNT(*) as total FROM users u';
-        if (keyword.trim() || paidOnly) {
+        if (keyword.trim() || paidOnly || newOnly) {
           totalQuery = 'SELECT COUNT(*) as total FROM users u';
           const conditions = [];
           
@@ -3650,6 +3668,11 @@ export default {
           // 付费用户筛选
           if (paidOnly) {
             conditions.push(`EXISTS (SELECT 1 FROM payment_orders po WHERE po.user_id = u.id AND po.status IN ('paid', 'approved'))`);
+          }
+          
+          // 新用户筛选（当日注册）
+          if (newOnly) {
+            conditions.push(`u.created_at >= ${todayStart}`);
           }
           
           if (conditions.length > 0) {
@@ -4534,6 +4557,7 @@ export default {
                             onkeyup="handleUserSearch(event)"
                         />
                         <button id="paidFilterBtn" class="btn-sm btn-outline" onclick="togglePaidFilter()" style="font-size:0.8rem">💰 仅看付费用户</button>
+                        <button id="newFilterBtn" class="btn-sm btn-outline" onclick="toggleNewFilter()" style="font-size:0.8rem">🆕 仅看新用户</button>
                     </div>
                     <div class="card">
                         <div class="table-wrapper">
@@ -4831,6 +4855,7 @@ export default {
         let userSort = 'last_active';  // 默认按最后活跃时间排序
         let userSortOrder = 'desc';
         let userPaidOnly = false; // 是否仅看付费用户
+        let userNewOnly = false; // 是否仅看新用户（当日注册）
         let userSearchKeyword = ''; // 搜索关键词
         
         async function fetchStats() {
@@ -4873,6 +4898,7 @@ export default {
                     sort: userSort,
                     order: userSortOrder,
                     paid_only: userPaidOnly ? '1' : '0',
+                    new_only: userNewOnly ? '1' : '0', // 添加新用户筛选参数
                     keyword: userSearchKeyword // 添加搜索关键词参数
                 });
 
@@ -5101,6 +5127,22 @@ export default {
                 btn.style.background = '';
                 btn.style.color = '';
                 btn.textContent = '💰 仅看付费用户';
+            }
+            fetchUsers(true);
+        }
+
+        // 切换新用户筛选（当日注册）
+        function toggleNewFilter() {
+            userNewOnly = !userNewOnly;
+            const btn = document.getElementById('newFilterBtn');
+            if (userNewOnly) {
+                btn.style.background = 'var(--accent)';
+                btn.style.color = '#fff';
+                btn.textContent = '🆕 仅看新用户 ✓';
+            } else {
+                btn.style.background = '';
+                btn.style.color = '';
+                btn.textContent = '🆕 仅看新用户';
             }
             fetchUsers(true);
         }
