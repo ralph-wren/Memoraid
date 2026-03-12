@@ -8748,17 +8748,36 @@ export default {
         const freeLimit = isAnonymous ? 5 : 20;
         
         // 获取已使用的免费次数（统计所有AI使用）
-        const usageCount = await env.DB.prepare(
-          'SELECT COUNT(*) as count FROM ai_usage_logs WHERE user_id = ?'
-        ).bind(userId).first('count') as number || 0;
+        // 容错处理：如果表不存在，返回0
+        let usageCount = 0;
+        try {
+          usageCount = await env.DB.prepare(
+            'SELECT COUNT(*) as count FROM ai_usage_logs WHERE user_id = ?'
+          ).bind(userId).first('count') as number || 0;
+        } catch (e) {
+          console.error('ai_usage_logs表查询失败:', e);
+          usageCount = 0;
+        }
         
         // 获取付费额度
-        let quota = await env.DB.prepare('SELECT * FROM user_quotas WHERE user_id = ?').bind(userId).first();
-        
-        if (!quota) {
-            // 初始化额度
-            await env.DB.prepare('INSERT OR IGNORE INTO user_quotas (user_id) VALUES (?)').bind(userId).run();
-            quota = await env.DB.prepare('SELECT * FROM user_quotas WHERE user_id = ?').bind(userId).first();
+        // 容错处理：如果表不存在，返回默认值
+        let quota = null;
+        try {
+          quota = await env.DB.prepare('SELECT * FROM user_quotas WHERE user_id = ?').bind(userId).first();
+          
+          if (!quota) {
+            // 尝试初始化额度
+            try {
+              await env.DB.prepare('INSERT OR IGNORE INTO user_quotas (user_id) VALUES (?)').bind(userId).run();
+              quota = await env.DB.prepare('SELECT * FROM user_quotas WHERE user_id = ?').bind(userId).first();
+            } catch (insertError) {
+              console.error('初始化user_quotas失败:', insertError);
+            }
+          }
+        } catch (e) {
+          console.error('user_quotas表查询失败:', e);
+          // 表不存在时返回默认值
+          quota = null;
         }
         
         const paidQuota = quota?.paid_quota_remaining || 0;
@@ -8777,6 +8796,7 @@ export default {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       } catch (e: any) {
+        console.error('获取用户额度失败:', e);
         return new Response(JSON.stringify({ error: e.message }), {
           status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });

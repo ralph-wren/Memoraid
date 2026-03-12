@@ -1207,7 +1207,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                           登录账号即可获赠更多免费额度，继续创作精彩内容！
                         </p>
                         <button
-                          onClick={() => window.open('https://memoraid.dpdns.org/user', '_blank')}
+                          onClick={() => onOpenSettings()}
                           className="bg-gradient-to-r from-orange-500 to-yellow-500 text-white px-3 py-1.5 rounded text-xs font-medium hover:from-orange-600 hover:to-yellow-600 transition shadow-sm"
                         >
                           立即登录领取
