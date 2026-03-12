@@ -15,6 +15,7 @@ interface PublishData {
     htmlContent?: string;
     sourceUrl?: string;
     sourceImages?: string[];
+    intro?: string;  // 笔记简介(50-80字)
     topics?: string[];
     declaration?: string;
     timestamp: number;
@@ -1080,26 +1081,63 @@ const setOriginalityDeclaration = async (): Promise<boolean> => {
 };
 
 /**
- * 添加话题
+ * 添加简介和话题
+ * @param intro 简介文本(可选)
  * @param topics 话题数组，例如 ['#天气', '#生活']
  */
-// 添加话题功能 - 在正文编辑器中直接输入话题并选择建议
-const addTopics = async (topics: string[]): Promise<boolean> => {
-    if (!topics || topics.length === 0) {
-        logger.log('无话题需要添加，跳过', 'info');
+// 添加简介和话题功能 - 在正文编辑器中先输入简介,再输入话题并选择建议
+const addIntroAndTopics = async (intro: string | undefined, topics: string[]): Promise<boolean> => {
+    // 如果既没有简介也没有话题,直接返回
+    if (!intro && (!topics || topics.length === 0)) {
+        logger.log('无简介和话题需要添加，跳过', 'info');
         return true;
     }
 
     const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-    logger.log(`准备添加 ${topics.length} 个话题: ${topics.join(', ')}`, 'info');
-
     // 1. 查找正文编辑器
     const editor = findElement(SELECTORS.editor);
     if (!editor) {
-        logger.log('未找到正文编辑器，无法添加话题', 'error');
+        logger.log('未找到正文编辑器，无法添加简介和话题', 'error');
         return false;
     }
+
+    // 2. 聚焦编辑器并移动光标到末尾
+    simulateClick(editor);
+    editor.focus();
+    await sleep(200);
+
+    try {
+        const selection = window.getSelection();
+        if (selection) {
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            range.collapse(false); // 移动到末尾
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+    } catch (e) {
+        logger.log('移动光标失败，继续尝试', 'warn');
+    }
+
+    // 3. 先添加简介(如果有)
+    if (intro && intro.trim()) {
+        logger.log('添加简介内容', 'action');
+        // 在正文末尾添加两个换行,然后添加简介
+        const introText = `\n\n${intro.trim()}`;
+        document.execCommand('insertText', false, introText);
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(500);
+        logger.log('✅ 简介已添加', 'success');
+    }
+
+    // 4. 添加话题(如果有)
+    if (!topics || topics.length === 0) {
+        logger.log('无话题需要添加', 'info');
+        return true;
+    }
+
+    logger.log(`准备添加 ${topics.length} 个话题: ${topics.join(', ')}`, 'info');
 
     for (let i = 0; i < topics.length; i++) {
         if (isFlowCancelled) return false;
@@ -1109,7 +1147,7 @@ const addTopics = async (topics: string[]): Promise<boolean> => {
 
         logger.log(`添加话题 ${i + 1}/${topics.length}: ${keyword}`, 'action');
 
-        // 2. 聚焦编辑器并移动光标到末尾
+        // 5. 重新聚焦编辑器并移动光标到末尾
         simulateClick(editor);
         editor.focus();
         await sleep(200);
@@ -1127,13 +1165,15 @@ const addTopics = async (topics: string[]): Promise<boolean> => {
             logger.log('移动光标失败，继续尝试', 'warn');
         }
 
-        // 3. 输入话题（在新行输入）
-        const textToInsert = i === 0 ? `\n\n${keyword}` : `\n${keyword}`;
+        // 6. 输入话题（在新行输入）
+        // 如果是第一个话题且没有简介,需要添加两个换行
+        // 如果有简介或不是第一个话题,只需要一个换行
+        const textToInsert = (i === 0 && !intro) ? `\n\n${keyword}` : `\n${keyword}`;
         document.execCommand('insertText', false, textToInsert);
         editor.dispatchEvent(new Event('input', { bubbles: true }));
         await sleep(800); // 等待话题菜单出现
 
-        // 4. 查找话题下拉菜单
+        // 7. 查找话题下拉菜单
         let menu: HTMLElement | null = null;
         for (let attempt = 0; attempt < 10; attempt++) {
             if (isFlowCancelled) return false;
@@ -1172,7 +1212,7 @@ const addTopics = async (topics: string[]): Promise<boolean> => {
 
         logger.log('找到话题下拉菜单，准备选择第一个建议', 'info');
 
-        // 5. 查找菜单项并点击第一个
+        // 8. 查找菜单项并点击第一个
         const itemSelectors = [
             '[class*="item"]',
             '.topic-item',
@@ -1203,7 +1243,7 @@ const addTopics = async (topics: string[]): Promise<boolean> => {
             continue;
         }
 
-        // 6. 点击第一个菜单项
+        // 9. 点击第一个菜单项
         const firstItem = items[0];
         logger.log(`选择第一个建议: ${firstItem.textContent?.trim().substring(0, 50)}`, 'action');
 
@@ -1213,8 +1253,18 @@ const addTopics = async (topics: string[]): Promise<boolean> => {
         logger.log(`✅ 话题 ${keyword} 已添加`, 'success');
     }
 
-    logger.log('✅ ✅ 所有话题添加完成', 'success');
+    logger.log('✅ ✅ 简介和话题添加完成', 'success');
     return true;
+};
+
+/**
+ * 添加话题（保留旧函数以兼容）
+ * @param topics 话题数组，例如 ['#天气', '#生活']
+ */
+// 添加话题功能 - 在正文编辑器中直接输入话题并选择建议
+const addTopics = async (topics: string[]): Promise<boolean> => {
+    // 调用新函数,不传入简介
+    return addIntroAndTopics(undefined, topics);
 };
 
 /**
@@ -1478,10 +1528,9 @@ const autoFillContent = async (): Promise<void> => {
 
         if (isFlowCancelled) return;
 
-        // 步骤8: 添加话题
-        if (pending.topics && pending.topics.length > 0) {
-            await addTopics(pending.topics);
-        }
+        // 步骤8: 添加简介和话题
+        // 注意: 简介和话题在同一个输入框中,先输入简介,再输入话题
+        await addIntroAndTopics(pending.intro, pending.topics || []);
 
         if (isFlowCancelled) return;
 

@@ -1917,6 +1917,32 @@ async function handlePublishToXiaohongshu(payload: {
     // 从正文中移除 H1 标题，因为小红书有专门的标题输入框
     cleanedContent = cleanedContent.replace(/^#\s+.+\n+/, '');
 
+    // 提取简介（使用[简介]标记）
+    // 格式: [简介]简介内容
+    let intro: string | undefined;
+    const introMatch = cleanedContent.match(/\[简介\](.+?)(?:\n|$)/);
+    if (introMatch && introMatch[1]) {
+      intro = introMatch[1].trim();
+      // 限制长度在100字以内
+      if (intro.length > 100) {
+        intro = intro.substring(0, 100);
+      }
+      console.log('[Background] Extracted intro:', intro);
+      // 从正文中移除简介标记
+      cleanedContent = cleanedContent.replace(/\[简介\].+?(?:\n|$)/, '').trim();
+    } else {
+      // 如果没有找到[简介]标记,尝试从第一段提取
+      const firstParagraphMatch = cleanedContent.match(/^([^\n]+(?:\n[^\n]+)*?)(?:\n\n|$)/);
+      if (firstParagraphMatch) {
+        const firstParagraph = firstParagraphMatch[1].trim();
+        // 如果第一段长度在30-150字之间，作为简介
+        if (firstParagraph.length >= 30 && firstParagraph.length <= 150) {
+          intro = firstParagraph.substring(0, 100); // 限制最多100字
+          console.log('[Background] Extracted intro from first paragraph:', intro);
+        }
+      }
+    }
+
     // 从正文中移除话题标签（因为会通过 topics 字段单独处理）
     // 匹配文章末尾的话题行，例如：#话题1 #话题2 #话题3
     cleanedContent = cleanedContent.replace(/\n*(?:#[^\s#]+\s*)+\s*$/, '').trim();
@@ -1928,6 +1954,7 @@ async function handlePublishToXiaohongshu(payload: {
       content: cleanedContent,
       sourceUrl: payload.sourceUrl,
       sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
+      intro: intro, // 添加简介字段
       topics: topics.length > 0 ? topics : undefined, // 添加话题字段
       timestamp: Date.now(),
       generatedId: payload.generatedId,
