@@ -97,19 +97,36 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     viewRef.current = view;
   }, [view]);
 
+  // 用户登录状态
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+
   // 加载用户额度信息 - 使用缓存机制
-  const loadQuota = async (forceRefresh = false) => {
+  const loadQuota = React.useCallback(async (forceRefresh = false) => {
     try {
+      // 检查 chrome.storage 是否可用
+      if (!chrome?.storage?.local) {
+        console.error('chrome.storage.local is not available');
+        setQuota(null);
+        return;
+      }
+
       // 如果不是强制刷新，先尝试从缓存读取
       if (!forceRefresh) {
-        const cached = await chrome.storage.local.get(['quotaCache', 'quotaCacheTime']);
-        const now = Date.now();
-        const cacheExpiry = 5 * 60 * 1000; // 5分钟缓存有效期
-        
-        // 如果缓存存在且未过期，直接使用缓存
-        if (cached.quotaCache && cached.quotaCacheTime && (now - cached.quotaCacheTime < cacheExpiry)) {
-          setQuota(cached.quotaCache);
-          return;
+        try {
+          const cached = await chrome.storage.local.get(['quotaCache', 'quotaCacheTime']);
+          const now = Date.now();
+          const cacheExpiry = 5 * 60 * 1000; // 5分钟缓存有效期
+          
+          // 如果缓存存在且未过期，直接使用缓存
+          if (cached.quotaCache && cached.quotaCacheTime && (now - cached.quotaCacheTime < cacheExpiry)) {
+            setQuota(cached.quotaCache);
+            // 清除可能存在的错误信息
+            setErrorMessage(null);
+            return;
+          }
+        } catch (cacheError) {
+          console.warn('Failed to read cache:', cacheError);
+          // 缓存读取失败，继续从服务器获取
         }
       }
       
@@ -139,14 +156,22 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
       if (response.ok) {
         const data = await response.json();
         setQuota(data);
+        // 成功加载额度，清除错误信息
+        setErrorMessage(null);
         // 保存到缓存
-        const now = Date.now();
-        await chrome.storage.local.set({
-          quotaCache: data,
-          quotaCacheTime: now
-        });
+        try {
+          const now = Date.now();
+          await chrome.storage.local.set({
+            quotaCache: data,
+            quotaCacheTime: now
+          });
+        } catch (cacheError) {
+          console.warn('Failed to save cache:', cacheError);
+          // 缓存保存失败不影响功能
+        }
       } else {
         // 加载失败，设置为 null
+        console.error('Failed to load quota: HTTP', response.status);
         setQuota(null);
       }
     } catch (error) {
@@ -154,10 +179,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
       // 加载失败，设置为 null
       setQuota(null);
     }
-  };
-
-  // 用户登录状态
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+  }, []);
 
   // 加载语言设置和额度信息
   useEffect(() => {
@@ -169,9 +191,9 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     };
     loadLanguage();
     
-    // 首次加载额度信息
-    loadQuota();
-  }, []);
+    // 首次加载额度信息（强制刷新，不使用缓存）
+    loadQuota(true);
+  }, [loadQuota]);
 
   // History State
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
@@ -700,16 +722,21 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     }
 
     if (task.error) {
-      // 过滤掉 bfcache 相关的错误，这些是页面导航时的正常行为，不需要显示给用户
+      // 过滤掉 bfcache 相关的错误和一些常见的无害错误
       const errorStr = String(task.error).toLowerCase();
       const isBfcacheError = errorStr.includes('back/forward cache') ||
         errorStr.includes('bfcache') ||
         errorStr.includes('message channel is closed') ||
         errorStr.includes('extension port is moved');
+      
+      // 过滤掉 React 内部错误（通常是由于组件卸载导致的）
+      const isReactInternalError = errorStr.includes('cannot read properties of undefined') ||
+        errorStr.includes('cannot read property') ||
+        errorStr.includes('is not a function');
 
-      if (isBfcacheError) {
-        // 静默忽略 bfcache 错误，只在控制台记录
-        console.log('[Memoraid] Ignoring bfcache-related error:', task.error);
+      if (isBfcacheError || isReactInternalError) {
+        // 静默忽略这些错误，只在控制台记录
+        console.log('[Memoraid] Ignoring harmless error:', task.error);
         return;
       }
 
@@ -1145,12 +1172,16 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                 <div className="border rounded-lg px-4 py-3 text-sm flex items-center justify-between bg-blue-50 border-blue-200">
                   <div className="flex flex-col items-start">
                     <span className="font-medium text-blue-700">
-                      剩余额度: {quota && quota.total_remaining !== undefined ? `${quota.total_remaining} 次` : ''}
+                      剩余额度: {
+                        quota === undefined ? '加载中...' : 
+                        quota === null ? '加载失败' :
+                        quota.total_remaining !== undefined ? `${quota.total_remaining} 次` : '0 次'
+                      }
                     </span>
                     <span className="text-xs text-gray-500 mt-1">
                       {quota && quota.free_remaining !== undefined && quota.paid_remaining !== undefined 
                         ? `免费: ${quota.free_remaining} | 付费: ${quota.paid_remaining}`
-                        : ''}
+                        : quota === undefined ? '正在获取额度信息...' : ''}
                     </span>
                   </div>
                   <button
@@ -1191,7 +1222,14 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                 <div className="w-full px-4 mb-2">
                   <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm flex items-start gap-2 text-left">
                     <X className="w-4 h-4 mt-0.5 shrink-0" />
-                    <span className="break-words">{errorMessage}</span>
+                    <span className="break-words flex-1">{errorMessage}</span>
+                    <button 
+                      onClick={() => setErrorMessage(null)}
+                      className="text-red-400 hover:text-red-600 transition shrink-0"
+                      title="关闭"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
               )}

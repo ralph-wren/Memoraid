@@ -8728,17 +8728,26 @@ export default {
     // 7.6 GET /api/user/quota - 获取用户额度
     if (url.pathname === '/api/user/quota' && request.method === 'GET') {
       try {
-        const userId = getUserIdFromRequest(request);
+        // 优先从 Authorization 获取用户ID，如果没有则从 X-Anonymous-ID 获取
+        let userId = getUserIdFromRequest(request);
+        if (!userId) {
+          // 尝试从匿名ID获取
+          const anonymousId = request.headers.get('X-Anonymous-ID');
+          if (anonymousId) {
+            userId = anonymousId;
+          }
+        }
+        
         if (!userId) {
           return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
         // 获取用户信息
         const user = await env.DB.prepare('SELECT provider FROM users WHERE id = ?').bind(userId).first();
-        const isAnonymous = user?.provider === 'anonymous';
+        const isAnonymous = user?.provider === 'anonymous' || !user;
         const freeLimit = isAnonymous ? 5 : 20;
         
-        // 获取已使用的免费次数
+        // 获取已使用的免费次数（统计所有AI使用）
         const usageCount = await env.DB.prepare(
           'SELECT COUNT(*) as count FROM ai_usage_logs WHERE user_id = ?'
         ).bind(userId).first('count') as number || 0;
