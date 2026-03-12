@@ -9,18 +9,18 @@
 7. 更改完代码一定要执行npm run build确认不报错
 8. 我是初学者，代码尽量加注释，尤其每次改动要加注释说明下
 9. 代码仓库地址 https://github.com/ralph-wren/memoraid
-10. 
-11. 所有内容部署到cloudflare page
-12. 本地已经安装和cloudflare的d1，r1数据库的交互命令
-13. 任务完成后检查下是否符合要求
-14. 使用 npx playwright codegen --channel=chrome --user-data-dir="C:\Users\ralph\AppData\Local\Chrome-Automation" https://mp.weixin.qq.com/ 这种命令打开浏览器查看相关页面操作
-15. 需要时参考docs\REMOTE_DEBUG.md的调试步骤进行远程调试，需要我在浏览器生成验证码发给你进行调试
-16. 生成所有临时文件、测试文件都统一放在跟目录的test目录下，用完删除
-17. 每次执行npm run release前，更新一下版本信息
-18. 需要遵守.cursor目录下的规则
-19. 通过 bash -lc "CI=1 npx wrangler r2 object put pothos-images/memoraid/feature-extract.png --file ../store-assets/feature-extract.png --content-type image/png --remote" 的方式可以上传图片到
-20. 生成的说明文档统一放到docs目录,文件名称格式{日期如202601241230}-{功能，几个字}-{具体解决的问题}.md，每生成一篇文章，都要通过omni-recall skills同步一次记忆到远程数据库
+10. 所有内容部署到cloudflare page
+11. 本地已经安装和cloudflare的d1，r1数据库的交互命令
+12. 任务完成后检查下是否符合要求
+13. 使用 npx playwright codegen --channel=chrome --user-data-dir="C:\Users\ralph\AppData\Local\Chrome-Automation" https://mp.weixin.qq.com/ 这种命令打开浏览器查看相关页面操作
+14. 需要时参考docs\REMOTE_DEBUG.md的调试步骤进行远程调试，需要我在浏览器生成验证码发给你进行调试
+15. 生成所有临时文件、测试文件都统一放在跟目录的test目录下，用完删除
+16. 每次执行npm run release前，更新一下版本信息
+17. 需要遵守.cursor目录下的规则
+18. 通过 bash -lc "CI=1 npx wrangler r2 object put pothos-images/memoraid/feature-extract.png --file ../store-assets/feature-extract.png --content-type image/png --remote" 的方式可以上传图片到cloudflare r2
+19. 生成的说明文档统一放到docs目录,文件名称格式{日期如202601241230}-{功能，几个字}-{具体解决的问题}.md
+20. 每生成一篇文章，都要通过omni-recall skills同步一次记忆到远程数据库,如果skills没有安装，通过`npx skills add ralph-wren/omni-recall`命令进行安装，全局安装不要放在项目下面
 21. 测试文件、临时文件统一放到test目录
 22. 创建远程数据库表之前先查看有哪些表，别创建相似的表了，不要重复建表
-23. skills安装地址在~/.agent/skills或~/.kiro/skills
+23. skills安装地址在~/.agent/skills或~/.kiro/skills或~/.claude/skills
 24. 如果涉及网页操作的代码你不确定或者写不好，可以写一些验证代码我粘贴在控制台测试，能正确执行了你再生成、完善代码

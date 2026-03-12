@@ -97,18 +97,11 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     viewRef.current = view;
   }, [view]);
 
-  // 加载语言设置和额度信息
-  useEffect(() => {
-    const loadLanguage = async () => {
-      const settings = await getSettings();
-      setT(getTranslation(settings.language || 'zh-CN'));
-    };
-    loadLanguage();
-    
-    // 加载用户额度信息 - 使用缓存机制
-    const loadQuota = async () => {
-      try {
-        // 先尝试从缓存读取
+  // 加载用户额度信息 - 使用缓存机制
+  const loadQuota = async (forceRefresh = false) => {
+    try {
+      // 如果不是强制刷新，先尝试从缓存读取
+      if (!forceRefresh) {
         const cached = await chrome.storage.local.get(['quotaCache', 'quotaCacheTime']);
         const now = Date.now();
         const cacheExpiry = 5 * 60 * 1000; // 5分钟缓存有效期
@@ -118,48 +111,65 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
           setQuota(cached.quotaCache);
           return;
         }
-        
-        // 缓存不存在或已过期，从服务器获取
-        const settings = await getSettings();
-        const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
-        const token = settings.sync?.token;
-        const anonymousId = settings.anonymousId;
-        
-        // 构建请求头
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json'
-        };
-        
-        // 优先使用 token，如果没有则使用匿名 ID
-        if (token) {
-          headers['Authorization'] = `Bearer ${token}`;
-        } else if (anonymousId) {
-          headers['X-Anonymous-ID'] = anonymousId;
-        }
-        
-        const response = await fetch(`${backendUrl}/api/user/quota`, {
-          method: 'GET',
-          headers
+      }
+      
+      // 缓存不存在、已过期或强制刷新，从服务器获取
+      const settings = await getSettings();
+      const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+      const token = settings.sync?.token;
+      const anonymousId = settings.anonymousId;
+      
+      // 构建请求头
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      
+      // 优先使用 token，如果没有则使用匿名 ID
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      } else if (anonymousId) {
+        headers['X-Anonymous-ID'] = anonymousId;
+      }
+      
+      const response = await fetch(`${backendUrl}/api/user/quota`, {
+        method: 'GET',
+        headers
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setQuota(data);
+        // 保存到缓存
+        const now = Date.now();
+        await chrome.storage.local.set({
+          quotaCache: data,
+          quotaCacheTime: now
         });
-        
-        if (response.ok) {
-          const data = await response.json();
-          setQuota(data);
-          // 保存到缓存
-          await chrome.storage.local.set({
-            quotaCache: data,
-            quotaCacheTime: now
-          });
-        } else {
-          // 加载失败，设置为 null
-          setQuota(null);
-        }
-      } catch (error) {
-        console.error('Failed to load quota:', error);
+      } else {
         // 加载失败，设置为 null
         setQuota(null);
       }
+    } catch (error) {
+      console.error('Failed to load quota:', error);
+      // 加载失败，设置为 null
+      setQuota(null);
+    }
+  };
+
+  // 用户登录状态
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+
+  // 加载语言设置和额度信息
+  useEffect(() => {
+    const loadLanguage = async () => {
+      const settings = await getSettings();
+      setT(getTranslation(settings.language || 'zh-CN'));
+      // 检查用户是否已登录（有token表示已登录）
+      setIsLoggedIn(!!settings.sync?.token);
     };
+    loadLanguage();
+    
+    // 首次加载额度信息
     loadQuota();
   }, []);
 
@@ -734,9 +744,11 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
       const isDone = statusText === 'Done!' || statusText === 'Refined!';
       setLoading(!isDone);
       
-      // 如果任务完成，清除额度缓存，下次打开时会重新获取
+      // 如果任务完成，清除额度缓存并重新加载额度信息
       if (isDone) {
         chrome.storage.local.remove(['quotaCache', 'quotaCacheTime']);
+        // 重新加载额度信息（强制刷新）
+        loadQuota(true);
       }
     }
 
@@ -1149,6 +1161,31 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                   </button>
                 </div>
               </div>
+
+              {/* 未登录用户额度用完提示 */}
+              {!isLoggedIn && quota && quota.free_remaining === 0 && quota.paid_remaining === 0 && (
+                <div className="w-full px-4 mb-2">
+                  <div className="bg-gradient-to-r from-orange-50 to-yellow-50 border border-orange-200 rounded-lg px-4 py-3 text-sm">
+                    <div className="flex items-start gap-2">
+                      <span className="text-orange-500 text-lg">🎁</span>
+                      <div className="flex-1">
+                        <p className="font-medium text-orange-800 mb-1">
+                          免费额度已用完
+                        </p>
+                        <p className="text-xs text-orange-700 mb-2">
+                          登录账号即可获赠更多免费额度，继续创作精彩内容！
+                        </p>
+                        <button
+                          onClick={() => window.open('https://memoraid.dpdns.org/user', '_blank')}
+                          className="bg-gradient-to-r from-orange-500 to-yellow-500 text-white px-3 py-1.5 rounded text-xs font-medium hover:from-orange-600 hover:to-yellow-600 transition shadow-sm"
+                        >
+                          立即登录领取
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {errorMessage && (
                 <div className="w-full px-4 mb-2">
