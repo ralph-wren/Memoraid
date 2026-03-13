@@ -2799,19 +2799,20 @@ export default {
             // 3. Log Usage (Only if successful)
             try {
                 if (trackingType === 'user') {
-                    // 记录 AI 使用日志
-                    await env.DB.prepare(
-                        'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
-                    ).bind(userId, body.model).run();
-                    
-                    // 如果使用了付费额度，扣除付费额度
+                    // 如果使用了付费额度，只扣除付费额度，不记录 ai_usage_logs
                     if (hasPaidQuota) {
                         await env.DB.prepare(
                             'UPDATE user_quotas SET paid_quota_remaining = paid_quota_remaining - 1 WHERE user_id = ?'
                         ).bind(userId).run();
                         console.log(`[AI Chat] 已扣除用户 ${userId} 的付费额度 1 次`);
+                    } else {
+                        // 没有付费额度，记录免费额度使用
+                        await env.DB.prepare(
+                            'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
+                        ).bind(userId, body.model).run();
                     }
                 } else {
+                    // 匿名用户，记录免费额度使用
                     await env.DB.prepare(
                         'INSERT INTO ai_usage_logs (anonymous_id, model) VALUES (?, ?)'
                     ).bind(anonymousId, body.model).run();
