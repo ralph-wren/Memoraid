@@ -2797,19 +2797,20 @@ export default {
 
         if (aiResponse.ok) {
             // 3. Log Usage (Only if successful)
+            // 【修复】AI聊天不扣除额度，只记录使用日志
+            // 额度扣除统一在 /api/articles/report 端点处理
             try {
                 if (trackingType === 'user') {
-                    // 如果使用了付费额度，只扣除付费额度，不记录 ai_usage_logs
-                    if (hasPaidQuota) {
-                        await env.DB.prepare(
-                            'UPDATE user_quotas SET paid_quota_remaining = paid_quota_remaining - 1 WHERE user_id = ?'
-                        ).bind(userId).run();
-                        console.log(`[AI Chat] 已扣除用户 ${userId} 的付费额度 1 次`);
-                    } else {
+                    // 只记录免费额度使用日志，不扣除付费额度
+                    // 付费额度的扣除在文章报告时统一处理
+                    if (!hasPaidQuota) {
                         // 没有付费额度，记录免费额度使用
                         await env.DB.prepare(
                             'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
                         ).bind(userId, body.model).run();
+                        console.log(`[AI Chat] 已记录用户 ${userId} 的免费额度使用`);
+                    } else {
+                        console.log(`[AI Chat] 用户 ${userId} 使用付费额度，不在此处扣除（将在文章报告时扣除）`);
                     }
                 } else {
                     // 匿名用户，记录免费额度使用
@@ -3029,17 +3030,17 @@ export default {
         }
 
         // 3. Process Articles
-        let newArticlesCount = 0; // 记录新增文章数量
+        let newArticlesCount = 0; // 记录新增文章数量（只统计 status='generated' 的新文章）
         for (const article of articles) {
             const { id: articleId, title, summary, cover, url: articleUrl, publishTime, status, extra } = article;
             
             // 检查文章是否已存在
             const existingArticle = await env.DB.prepare(
-                'SELECT id FROM articles WHERE account_id = ? AND article_id = ?'
+                'SELECT id, status FROM articles WHERE account_id = ? AND article_id = ?'
             ).bind(accountDbId, articleId).first();
             
             // 【调试日志】记录文章处理情况
-            console.log(`[Article Report] 处理文章: articleId=${articleId}, accountDbId=${accountDbId}, exists=${!!existingArticle}, status=${status}`);
+            console.log(`[Article Report] 处理文章: articleId=${articleId}, accountDbId=${accountDbId}, exists=${!!existingArticle}, existingStatus=${existingArticle?.status}, newStatus=${status}`);
             
             await env.DB.prepare(
                 `INSERT INTO articles (account_id, article_id, title, content_summary, cover_image, article_url, publish_time, status, extra_info, updated_at)
@@ -3066,12 +3067,15 @@ export default {
                 Math.floor(Date.now() / 1000)
             ).run();
             
-            // 只有新文章才计数（用于扣除额度）
-            if (!existingArticle) {
+            // 【修复】只对 status='generated' 的新文章扣除额度
+            // 这样即使去重失败，'published' 状态的文章也不会重复扣除
+            if (!existingArticle && status === 'generated') {
                 newArticlesCount++;
-                console.log(`[Article Report] 新文章，将扣除额度: articleId=${articleId}`);
-            } else {
+                console.log(`[Article Report] 新生成的文章，将扣除额度: articleId=${articleId}`);
+            } else if (existingArticle) {
                 console.log(`[Article Report] 已存在文章，不扣除额度: articleId=${articleId}`);
+            } else if (status !== 'generated') {
+                console.log(`[Article Report] 非生成状态(${status})，不扣除额度: articleId=${articleId}`);
             }
         }
 
