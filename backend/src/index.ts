@@ -3038,6 +3038,9 @@ export default {
                 'SELECT id FROM articles WHERE account_id = ? AND article_id = ?'
             ).bind(accountDbId, articleId).first();
             
+            // 【调试日志】记录文章处理情况
+            console.log(`[Article Report] 处理文章: articleId=${articleId}, accountDbId=${accountDbId}, exists=${!!existingArticle}, status=${status}`);
+            
             await env.DB.prepare(
                 `INSERT INTO articles (account_id, article_id, title, content_summary, cover_image, article_url, publish_time, status, extra_info, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -3066,17 +3069,24 @@ export default {
             // 只有新文章才计数（用于扣除额度）
             if (!existingArticle) {
                 newArticlesCount++;
+                console.log(`[Article Report] 新文章，将扣除额度: articleId=${articleId}`);
+            } else {
+                console.log(`[Article Report] 已存在文章，不扣除额度: articleId=${articleId}`);
             }
         }
 
         // 【新增】扣除额度 - 只为新文章扣除
         if (newArticlesCount > 0) {
+            console.log(`[Article Report] 准备扣除额度: newArticlesCount=${newArticlesCount}, paidQuota=${paidQuota}, userId=${userId}`);
+            
             // 优先扣除付费额度，再扣除免费额度
             if (paidQuota > 0) {
                 const deductFromPaid = Math.min(paidQuota, newArticlesCount);
                 await env.DB.prepare(
                     'UPDATE user_quotas SET paid_quota_remaining = paid_quota_remaining - ? WHERE user_id = ?'
                 ).bind(deductFromPaid, userId).run();
+                
+                console.log(`[Article Report] 已扣除付费额度: ${deductFromPaid} 次`);
                 
                 const remainingToDeduct = newArticlesCount - deductFromPaid;
                 if (remainingToDeduct > 0) {
@@ -3086,6 +3096,7 @@ export default {
                             'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
                         ).bind(userId, 'article-generation').run();
                     }
+                    console.log(`[Article Report] 已扣除免费额度: ${remainingToDeduct} 次`);
                 }
             } else {
                 // 全部从免费额度扣除
@@ -3094,7 +3105,10 @@ export default {
                         'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
                     ).bind(userId, 'article-generation').run();
                 }
+                console.log(`[Article Report] 已扣除免费额度: ${newArticlesCount} 次`);
             }
+        } else {
+            console.log(`[Article Report] 无新文章，不扣除额度`);
         }
 
         // 【新增】记录Analytics数据点 - 文章发布统计
