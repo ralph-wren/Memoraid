@@ -2331,8 +2331,8 @@ ${platformPrompt}
       // 只有公众号需要封面和摘要
       platformReminder = `\n\n⚠️ 重要提醒：${platformName}平台的图片提示词需要15-50字的详细场景描述，用于AI生成配图。文章最后必须包含[封面: xxx]和[摘要: xxx]。`;
     } else if (platform === 'xiaohongshu') {
-      // 小红书不需要封面和摘要，但需要Emoji和话题
-      platformReminder = `\n\n⚠️ 重要提醒（CRITICAL）：小红书平台必须使用【纯文本格式】！严禁使用Markdown标题、加粗或HTML标签。必须大量使用Emoji，分段要短，结尾必须包含至少5个话题标签。`;
+      // 小红书：纯文本格式，严禁使用Emoji
+      platformReminder = `\n\n⚠️ 重要提醒（CRITICAL）：小红书平台必须使用【纯文本格式】！严禁使用Markdown标题、加粗或HTML标签。严禁使用任何Emoji表情包，用自然的语言表达情绪。分段要短，结尾必须包含至少5个话题标签。`;
     }
 
     const initialMessages = [
