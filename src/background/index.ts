@@ -1918,18 +1918,26 @@ async function handlePublishToXiaohongshu(payload: {
     cleanedContent = cleanedContent.replace(/^#\s+.+\n+/, '');
 
     // 提取简介（使用[简介]标记）
-    // 格式: [简介]简介内容
+    // 格式: [简介]简介内容 或 [简介]\n简介内容
     let intro: string | undefined;
-    const introMatch = cleanedContent.match(/\[简介\](.+?)(?:\n|$)/);
+    
+    // 调试：打印简介提取前的内容
+    console.log('[Background] Content before intro extraction (first 200 chars):', cleanedContent.substring(0, 200));
+    
+    // 修改正则：允许[简介]后面有换行符
+    const introMatch = cleanedContent.match(/\[简介\]\s*\n?(.+?)(?:\n\n|$)/s);
     if (introMatch && introMatch[1]) {
       intro = introMatch[1].trim();
+      console.log('[Background] Raw intro from match:', intro);
+      
       // 限制长度在100字以内
       if (intro.length > 100) {
         intro = intro.substring(0, 100);
       }
       console.log('[Background] Extracted intro:', intro);
-      // 从正文中移除简介标记
-      cleanedContent = cleanedContent.replace(/\[简介\].+?(?:\n|$)/, '').trim();
+      // 从正文中移除简介标记（包括可能的换行）
+      // 匹配 [简介] + 可选空白 + 可选换行 + 简介内容 + 换行
+      cleanedContent = cleanedContent.replace(/\[简介\]\s*\n?[^\n]*\n*/g, '').trim();
     } else {
       // 如果没有找到[简介]标记,尝试从第一段提取
       const firstParagraphMatch = cleanedContent.match(/^([^\n]+(?:\n[^\n]+)*?)(?:\n\n|$)/);
@@ -1942,6 +1950,17 @@ async function handlePublishToXiaohongshu(payload: {
         }
       }
     }
+
+    // 移除可能存在的各种中间提示标记（AI有时会自己添加）
+    // 包括："正文:"、"正文开始"、"内容:"、"以下是正文" 等
+    cleanedContent = cleanedContent.replace(/^正文[:：]\s*\n*/gm, '').trim();
+    cleanedContent = cleanedContent.replace(/^正文开始[。！!]*\s*\n*/gm, '').trim();
+    cleanedContent = cleanedContent.replace(/^内容[:：]\s*\n*/gm, '').trim();
+    cleanedContent = cleanedContent.replace(/^以下是正文[:：]?\s*\n*/gm, '').trim();
+    
+    // 移除文章末尾可能出现的无关文字（如 "loading你看看咋回事"）
+    // 这些通常是AI生成过程中的调试信息或错误输出
+    cleanedContent = cleanedContent.replace(/\n*loading.{0,20}$/gi, '').trim();
 
     // 从正文中移除话题标签（因为会通过 topics 字段单独处理）
     // 匹配文章末尾的话题行，例如：#话题1 #话题2 #话题3
@@ -2254,7 +2273,9 @@ async function startArticleGenerationAndPublish(extraction: ExtractionResult, pl
     
     abortController = new AbortController();
 
-    const platformName = platform === 'toutiao' ? '头条' : platform === 'zhihu' ? '知乎' : '公众号';
+    const platformName = platform === 'toutiao' ? '头条' : 
+                         platform === 'zhihu' ? '知乎' : 
+                         platform === 'xiaohongshu' ? '小红书' : '公众号';
 
     // 初始化任务状态
     currentTask = {
@@ -2331,8 +2352,22 @@ ${platformPrompt}
       // 只有公众号需要封面和摘要
       platformReminder = `\n\n⚠️ 重要提醒：${platformName}平台的图片提示词需要15-50字的详细场景描述，用于AI生成配图。文章最后必须包含[封面: xxx]和[摘要: xxx]。`;
     } else if (platform === 'xiaohongshu') {
-      // 小红书：纯文本格式，严禁使用Emoji
-      platformReminder = `\n\n⚠️ 重要提醒（CRITICAL）：小红书平台必须使用【纯文本格式】！严禁使用Markdown标题、加粗或HTML标签。严禁使用任何Emoji表情包，用自然的语言表达情绪。分段要短，结尾必须包含至少5个话题标签。`;
+      // 小红书：纯文本格式，严禁使用Emoji、图片占位符、封面、摘要
+      platformReminder = `\n\n🚨🚨🚨 重要提醒（CRITICAL）：
+
+第一步：生成标题（用 # 标记）
+第二步：生成简介（用 [简介] 标记）← 不要跳过这一步！
+第三步：生成正文（纯文字）
+第四步：生成话题标签（用 # 标记）
+
+小红书平台必须使用【纯文本格式】！
+1. ❌ 严禁使用任何Emoji表情包
+2. ❌ 严禁使用图片占位符 [图片: xxx]（这是其他平台的规则，小红书不需要）
+3. ❌ 严禁使用封面提示词 [封面: xxx]（这是公众号专用，小红书不需要）
+4. ❌ 严禁使用摘要 [摘要: xxx]（这是公众号专用，小红书不需要）
+5. ❌ 话题标签后面严禁添加任何内容
+6. ✅ 必须包含：标题 + 简介 + 正文 + 话题标签（按这个顺序）
+7. ✅ 分段要短，用自然的语言表达情绪`;
     }
 
     const initialMessages = [

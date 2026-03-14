@@ -1087,6 +1087,8 @@ const setOriginalityDeclaration = async (): Promise<boolean> => {
  */
 // 添加简介和话题功能 - 在正文编辑器中先输入简介,再输入话题并选择建议
 const addIntroAndTopics = async (intro: string | undefined, topics: string[]): Promise<boolean> => {
+    console.log('[addIntroAndTopics] 开始执行 - intro:', intro, 'topics:', topics);
+    
     // 如果既没有简介也没有话题,直接返回
     if (!intro && (!topics || topics.length === 0)) {
         logger.log('无简介和话题需要添加，跳过', 'info');
@@ -1095,40 +1097,69 @@ const addIntroAndTopics = async (intro: string | undefined, topics: string[]): P
 
     const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-    // 1. 查找正文编辑器
+    // 1. 查找发布设置页的编辑器（不是正文编辑器）
+    // 注意：这个函数在点击"下一步"后调用，此时应该在发布设置页
+    // 发布设置页的编辑器用于输入简介和话题
+    logger.log('查找发布设置页的编辑器...', 'info');
     const editor = findElement(SELECTORS.editor);
     if (!editor) {
-        logger.log('未找到正文编辑器，无法添加简介和话题', 'error');
+        logger.log('未找到编辑器，无法添加简介和话题', 'error');
+        console.error('[addIntroAndTopics] 未找到编辑器');
         return false;
     }
+    
+    console.log('[addIntroAndTopics] 找到编辑器:', editor);
+    
+    // 检查编辑器是否为空（发布设置页的编辑器初始应该是空的）
+    const editorText = editor.innerText?.trim() || '';
+    console.log('[addIntroAndTopics] 编辑器当前内容长度:', editorText.length);
+    if (editorText.length > 100) {
+        logger.log('⚠️ 检测到编辑器中已有大量内容，可能仍在正文编辑页，等待页面切换...', 'warn');
+        await sleep(1000);
+    }
 
-    // 2. 聚焦编辑器并移动光标到末尾
+    // 2. 清空编辑器（发布设置页的编辑器可能有默认内容）
+    // 注意：不要清空正文编辑器的内容！
     simulateClick(editor);
     editor.focus();
     await sleep(200);
-
-    try {
-        const selection = window.getSelection();
-        if (selection) {
-            const range = document.createRange();
-            range.selectNodeContents(editor);
-            range.collapse(false); // 移动到末尾
-            selection.removeAllRanges();
-            selection.addRange(range);
+    
+    // 检查是否需要清空
+    const currentContent = editor.innerText?.trim() || '';
+    if (currentContent.length > 0) {
+        logger.log('清空编辑器中的默认内容', 'info');
+        try {
+            const selection = window.getSelection();
+            if (selection) {
+                const range = document.createRange();
+                range.selectNodeContents(editor);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                document.execCommand('delete', false);
+                await sleep(200);
+            }
+        } catch (e) {
+            logger.log('清空编辑器失败，继续尝试', 'warn');
         }
-    } catch (e) {
-        logger.log('移动光标失败，继续尝试', 'warn');
     }
 
     // 3. 先添加简介(如果有)
     if (intro && intro.trim()) {
         logger.log('添加简介内容', 'action');
-        // 在正文末尾添加两个换行,然后添加简介
-        const introText = `\n\n${intro.trim()}`;
+        logger.log(`简介内容: ${intro.substring(0, 50)}${intro.length > 50 ? '...' : ''}`, 'info');
+        // 直接输入简介内容
+        const introText = intro.trim();
         document.execCommand('insertText', false, introText);
         editor.dispatchEvent(new Event('input', { bubbles: true }));
         await sleep(500);
-        logger.log('✅ 简介已添加', 'success');
+        
+        // 验证简介是否填充成功
+        const editorContent = editor.innerText?.trim() || '';
+        if (editorContent.includes(intro.substring(0, 20))) {
+            logger.log('✅ 简介已成功填充到编辑器', 'success');
+        } else {
+            logger.log('⚠️ 简介填充可能失败，请检查', 'warn');
+        }
     }
 
     // 4. 添加话题(如果有)
@@ -1411,6 +1442,30 @@ const autoFillContent = async (): Promise<void> => {
         logger.log('🚀 开始自动填充...', 'info');
         logger.log(`标题: ${pending.title}`, 'info');
         logger.log(`内容长度: ${pending.content.length} 字`, 'info');
+        
+        // 调试信息：显示简介和正文状态
+        if (pending.intro) {
+            logger.log(`📝 简介: ${pending.intro.substring(0, 50)}${pending.intro.length > 50 ? '...' : ''}`, 'info');
+        } else {
+            logger.log('⚠️ 未检测到简介', 'warn');
+        }
+        
+        // 检查正文是否包含简介内容
+        if (pending.intro && pending.content.includes(pending.intro.substring(0, 30))) {
+            logger.log('❌ 警告：正文中仍包含简介内容！', 'error');
+        } else if (pending.intro) {
+            logger.log('✅ 正文已正确移除简介', 'success');
+        }
+        
+        // 检查正文是否包含[简介]标记
+        if (pending.content.includes('[简介]')) {
+            logger.log('❌ 警告：正文中仍包含[简介]标记！', 'error');
+        }
+        
+        // 检查正文是否包含"正文:"等标记
+        if (pending.content.match(/^正文[:：开始]/m)) {
+            logger.log('❌ 警告：正文中仍包含"正文:"等标记！', 'error');
+        }
 
         // 保存数据供后续使用
         pendingSourceUrl = pending.sourceUrl;
@@ -1523,13 +1578,19 @@ const autoFillContent = async (): Promise<void> => {
 
         if (isFlowCancelled) return;
 
+        // 等待页面完全加载
+        logger.log('等待发布设置页面加载...', 'info');
+        await new Promise(r => setTimeout(r, 2000));
+
         // 步骤7: 设置原创声明
+        logger.log('开始设置原创声明...', 'info');
         await setOriginalityDeclaration();
 
         if (isFlowCancelled) return;
 
         // 步骤8: 添加简介和话题
         // 注意: 简介和话题在同一个输入框中,先输入简介,再输入话题
+        logger.log(`准备添加简介和话题 - 简介: ${pending.intro ? '有' : '无'}, 话题数: ${pending.topics?.length || 0}`, 'info');
         await addIntroAndTopics(pending.intro, pending.topics || []);
 
         if (isFlowCancelled) return;
