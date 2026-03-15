@@ -8981,7 +8981,7 @@ export default {
           'SELECT * FROM scheduled_tasks WHERE user_id = ? ORDER BY created_at DESC'
         ).bind(userId).all();
 
-        // 将数据库字段转换为前端需要的格式（添加 articleCount 和 customPrompt）
+        // 将数据库字段转换为前端需要的格式（添加 articleCount、customPrompt 和 executionTimes）
         const formattedTasks = tasks.results.map((task: any) => ({
           id: task.id,
           enabled: task.enabled === 1,
@@ -8989,6 +8989,7 @@ export default {
           scheduleType: task.schedule_type,
           hour: task.hour,
           minute: task.minute,
+          executionTimes: task.execution_times ? JSON.parse(task.execution_times) : undefined, // 多个执行时间点
           weekdays: task.weekdays ? JSON.parse(task.weekdays) : undefined,
           intervalMinutes: task.interval_minutes,
           newsSourceType: task.news_source_type,
@@ -9035,14 +9036,14 @@ export default {
         const body = await request.json() as any;
         const now = Date.now();
 
-        // 插入新任务（添加 article_count 和 custom_prompt 字段）
+        // 插入新任务（添加 article_count、custom_prompt 和 execution_times 字段）
         await env.DB.prepare(
           `INSERT INTO scheduled_tasks (
             id, user_id, enabled, name, schedule_type, hour, minute, 
             weekdays, interval_minutes, news_source_type, news_source_url, 
             tophub_node_id, categories, platforms, article_count, custom_prompt,
-            created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            execution_times, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           body.id,
           userId,
@@ -9060,6 +9061,7 @@ export default {
           JSON.stringify(body.platforms),
           body.articleCount || 1, // 默认 1 篇
           body.customPrompt || null, // 自定义提示词
+          body.executionTimes ? JSON.stringify(body.executionTimes) : null, // 多个执行时间点
           now,
           now
         ).run();
@@ -9118,7 +9120,7 @@ export default {
             enabled = ?, name = ?, schedule_type = ?, hour = ?, minute = ?,
             weekdays = ?, interval_minutes = ?, news_source_type = ?, 
             news_source_url = ?, tophub_node_id = ?, categories = ?, 
-            platforms = ?, article_count = ?, custom_prompt = ?, updated_at = ?
+            platforms = ?, article_count = ?, custom_prompt = ?, execution_times = ?, updated_at = ?
           WHERE id = ?`
         ).bind(
           body.enabled ? 1 : 0,
@@ -9135,6 +9137,7 @@ export default {
           JSON.stringify(body.platforms),
           body.articleCount || 1, // 默认 1 篇
           body.customPrompt || null, // 自定义提示词
+          body.executionTimes ? JSON.stringify(body.executionTimes) : null, // 多个执行时间点
           Date.now(),
           taskId
         ).run();

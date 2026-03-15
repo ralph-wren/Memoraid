@@ -103,7 +103,14 @@ export async function initScheduler() {
   // 监听 alarm 触发事件
   chrome.alarms.onAlarm.addListener(handleAlarm);
 
-  console.log('[Scheduler] 调度器已启动，每分钟检查一次任务');
+  // 验证 alarm 是否创建成功
+  const alarm = await chrome.alarms.get(CHECK_ALARM_NAME);
+  if (alarm) {
+    console.log('[Scheduler] ✅ 调度器已启动，每分钟检查一次任务');
+    console.log('[Scheduler] 下次触发时间:', new Date(alarm.scheduledTime).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }));
+  } else {
+    console.error('[Scheduler] ❌ Alarm 创建失败！');
+  }
 }
 
 /**
@@ -111,6 +118,8 @@ export async function initScheduler() {
  */
 async function handleAlarm(alarm: chrome.alarms.Alarm) {
   if (alarm.name !== CHECK_ALARM_NAME) return;
+
+  console.log('[Scheduler] ⏰ Alarm 触发，开始检查任务...');
 
   try {
     // 从后端 API 获取任务列表
@@ -126,6 +135,7 @@ async function handleAlarm(alarm: chrome.alarms.Alarm) {
       headers['X-Anonymous-ID'] = anonymousId;
     }
 
+    console.log('[Scheduler] 正在从后端获取任务列表...');
     const response = await fetch(`${backendUrl}/api/scheduled-tasks`, {
       headers,
     });
@@ -139,6 +149,8 @@ async function handleAlarm(alarm: chrome.alarms.Alarm) {
     const tasks = data.tasks || [];
     const enabledTasks = tasks.filter((t: ScheduledTask) => t.enabled);
 
+    console.log(`[Scheduler] 获取到 ${tasks.length} 个任务，其中 ${enabledTasks.length} 个已启用`);
+
     if (enabledTasks.length === 0) {
       console.log('[Scheduler] 未执行任务: 没有启用的任务');
       return;
@@ -147,13 +159,14 @@ async function handleAlarm(alarm: chrome.alarms.Alarm) {
     // 获取中国时区的当前时间（UTC+8）
     const now = new Date();
     const chinaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+    console.log(`[Scheduler] 当前中国时间: ${chinaTime.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} (${chinaTime.getHours()}:${chinaTime.getMinutes()})`);
 
     for (const task of enabledTasks) {
-      if (shouldRunTask(task, chinaTime)) {
-        console.log(`[Scheduler] 触发任务: ${task.name}`);
+      const shouldRun = shouldRunTask(task, chinaTime);
+      console.log(`[Scheduler] 任务 "${task.name}": ${shouldRun ? '✅ 满足执行条件' : '❌ 不满足执行条件'}`);
+      if (shouldRun) {
+        console.log(`[Scheduler] 🚀 触发任务: ${task.name}`);
         await executeTask(task);
-      } else {
-        console.log(`[Scheduler] 未执行任务: ${task.name} (不满足执行条件)`);
       }
     }
   } catch (error) {
@@ -171,19 +184,40 @@ function shouldRunTask(task: ScheduledTask, now: Date): boolean {
   const currentMinute = now.getMinutes();
   const currentDay = now.getDay(); // 0=周日, 1=周一...
 
+  // 获取执行时间列表（优先使用 executionTimes，否则使用 hour/minute）
+  const executionTimes = task.executionTimes && task.executionTimes.length > 0
+    ? task.executionTimes
+    : [{ hour: task.hour, minute: task.minute }];
+
+  console.log(`[Scheduler] 检查任务 "${task.name}": 类型=${task.scheduleType}, 执行时间=${executionTimes.map(t => `${t.hour}:${t.minute}`).join(', ')}, 当前时间=${currentHour}:${currentMinute}`);
+
   // 如果正在执行中，跳过
-  if (task.lastRunStatus === 'running') return false;
+  if (task.lastRunStatus === 'running') {
+    console.log(`[Scheduler] 任务 "${task.name}" 正在执行中，跳过`);
+    return false;
+  }
 
   if (task.scheduleType === 'interval') {
     // 间隔模式：检查距离上次执行是否超过间隔时间
     const intervalMs = (task.intervalMinutes || 60) * 60 * 1000;
     const lastRun = task.lastRunTime || 0;
-    return (now.getTime() - lastRun) >= intervalMs;
+    const timeSinceLastRun = now.getTime() - lastRun;
+    console.log(`[Scheduler] 间隔模式: 距上次执行 ${Math.floor(timeSinceLastRun / 60000)} 分钟，需要 ${task.intervalMinutes || 60} 分钟`);
+    return timeSinceLastRun >= intervalMs;
   }
 
-  // daily 或 weekly 模式：检查是否到了指定时间
-  // 只在指定的小时和分钟触发（允许 1 分钟误差）
-  const isTimeMatch = currentHour === task.hour && currentMinute === task.minute;
+  // daily 或 weekly 模式：检查是否到了任意一个指定时间
+  // 遍历所有执行时间点，只要有一个匹配就触发
+  let isTimeMatch = false;
+  for (const time of executionTimes) {
+    if (currentHour === time.hour && currentMinute === time.minute) {
+      isTimeMatch = true;
+      break;
+    }
+  }
+  
+  console.log(`[Scheduler] 时间匹配: ${isTimeMatch} (当前=${currentHour}:${currentMinute})`);
+  
   if (!isTimeMatch) return false;
 
   // 检查今天是否已经执行过（防止同一分钟内重复执行）
@@ -192,15 +226,21 @@ function shouldRunTask(task: ScheduledTask, now: Date): boolean {
     const isSameMinute = lastRunDate.getHours() === currentHour &&
       lastRunDate.getMinutes() === currentMinute &&
       lastRunDate.getDate() === now.getDate();
-    if (isSameMinute) return false;
+    if (isSameMinute) {
+      console.log(`[Scheduler] 任务 "${task.name}" 在当前分钟已执行过，跳过`);
+      return false;
+    }
   }
 
   if (task.scheduleType === 'weekly') {
     // 周模式：检查今天是否在指定的周几列表中
-    return (task.weekdays || []).includes(currentDay);
+    const isWeekdayMatch = (task.weekdays || []).includes(currentDay);
+    console.log(`[Scheduler] 周模式: 今天是周${currentDay}, 设定周几=${task.weekdays}, 匹配=${isWeekdayMatch}`);
+    return isWeekdayMatch;
   }
 
   // daily 模式：每天都执行
+  console.log(`[Scheduler] 每日模式: 满足执行条件`);
   return true;
 }
 
@@ -331,18 +371,6 @@ async function executeTask(task: ScheduledTask) {
     await closeAllTaskTabs(taskTabIds);
     await taskLog(task.id, 'success', `✅ 页面已全部关闭`);
 
-    // 发送成功通知（添加错误处理）
-    try {
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('public/icon-128.png'),
-        title: '定时任务完成',
-        message: `"${task.name}" 已执行完成，成功生成 ${successCount} 篇文章`,
-      });
-    } catch (notifError) {
-      console.error('[Scheduler] 发送通知失败:', notifError);
-    }
-
   } catch (error: any) {
     await taskLog(task.id, 'error', `❌ 任务失败: ${error?.message || String(error)}`);
     await updateTaskStatus(task.id, 'failed', error?.message || String(error));
@@ -351,18 +379,6 @@ async function executeTask(task: ScheduledTask) {
     await taskLog(task.id, 'info', `🧹 正在关闭任务打开的 ${taskTabIds.length} 个页面...`);
     await closeAllTaskTabs(taskTabIds);
     await taskLog(task.id, 'success', `✅ 页面已全部关闭`);
-
-    // 发送失败通知（添加错误处理）
-    try {
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('public/icon-128.png'),
-        title: '定时任务失败',
-        message: `"${task.name}" 执行失败: ${error.message || '未知错误'}`,
-      });
-    } catch (notifError) {
-      console.error('[Scheduler] 发送通知失败:', notifError);
-    }
   }
 }
 

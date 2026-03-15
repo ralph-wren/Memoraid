@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Clock, Play, Pause, ChevronDown, ChevronUp, Zap, Loader2, FileText, Save, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Trash2, Clock, Play, Pause, ChevronDown, ChevronUp, Zap, Loader2, FileText, Save, RefreshCw, Copy, X } from 'lucide-react';
 import {
   ScheduledTask, PublishPlatform, ScheduleType,
   PUBLISH_PLATFORMS, AppSettings
@@ -30,6 +30,7 @@ const createDefaultTask = (): ScheduledTask => ({
   scheduleType: 'daily',
   hour: 9,
   minute: 0,
+  executionTimes: [{ hour: 9, minute: 0 }], // 默认一个执行时间
   weekdays: [1, 2, 3, 4, 5], // 默认工作日
   intervalMinutes: 60,
   newsSourceType: 'tophub', // 默认使用今日热榜
@@ -56,11 +57,21 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
   const [loading, setLoading] = useState(false);
   // 未保存的任务 ID 集合
   const [unsavedTaskIds, setUnsavedTaskIds] = useState<Set<string>>(new Set());
+  // 使用 ref 保存最新的 unsavedTaskIds，避免闭包问题
+  const unsavedTaskIdsRef = useRef<Set<string>>(new Set());
   // 正在保存的任务 ID 集合
   const [savingTaskIds, setSavingTaskIds] = useState<Set<string>>(new Set());
+  // 临时时间输入状态（用于添加新时间）
+  const [tempHour, setTempHour] = useState<number>(9);
+  const [tempMinute, setTempMinute] = useState<number>(0);
 
   const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
   const anonymousId = settings.anonymousId;
+
+  // 同步 unsavedTaskIds 到 ref
+  useEffect(() => {
+    unsavedTaskIdsRef.current = unsavedTaskIds;
+  }, [unsavedTaskIds]);
 
   // 构建认证 headers：优先使用 token，否则使用 anonymousId
   const getAuthHeaders = (): Record<string, string> => {
@@ -75,8 +86,14 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
     return headers;
   };
 
-  // 从后端加载任务列表
-  const loadTasksFromBackend = async () => {
+  // 从后端加载任务列表（如果有未保存的修改，跳过刷新避免覆盖）
+  const loadTasksFromBackend = async (force: boolean = false) => {
+    // 如果有未保存的修改且不是强制刷新，跳过（使用 ref 避免闭包问题）
+    if (!force && unsavedTaskIdsRef.current.size > 0) {
+      console.log('[ScheduleSettings] 跳过自动刷新：有未保存的修改', Array.from(unsavedTaskIdsRef.current));
+      return;
+    }
+    
     setLoading(true);
     try {
       const response = await fetch(`${backendUrl}/api/scheduled-tasks`, {
@@ -95,10 +112,10 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
     }
   };
 
-  // 组件挂载时加载任务，并每10秒自动刷新
+  // 组件挂载时加载任务，并每10秒自动刷新（有未保存修改时跳过）
   useEffect(() => {
-    loadTasksFromBackend();
-    const interval = setInterval(loadTasksFromBackend, 10000);
+    loadTasksFromBackend(true); // 初始加载强制执行
+    const interval = setInterval(() => loadTasksFromBackend(false), 10000); // 自动刷新时检查未保存状态
     return () => clearInterval(interval);
   }, []);
 
@@ -145,8 +162,8 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
           next.delete(task.id);
           return next;
         });
-        // 重新加载任务列表
-        await loadTasksFromBackend();
+        // 重新加载任务列表（强制刷新）
+        await loadTasksFromBackend(true);
       } else {
         const error = await response.text();
         alert(`保存失败: ${error}`);
@@ -162,16 +179,15 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
     }
   };
 
-  // 删除任务
+  // 删除任务（直接删除，不需要确认）
   const deleteTask = async (taskId: string) => {
-    if (!confirm('确定要删除这个任务吗？')) return;
     try {
       const response = await fetch(`${backendUrl}/api/scheduled-tasks/${taskId}`, {
         method: 'DELETE',
         headers: getAuthHeaders(), // 使用统一的认证 headers
       });
       if (response.ok) {
-        await loadTasksFromBackend();
+        await loadTasksFromBackend(true); // 强制刷新
         if (expandedTaskId === taskId) setExpandedTaskId(null);
       } else {
         alert(`删除失败: ${await response.text()}`);
@@ -195,12 +211,78 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
     markTaskUnsaved(newTask.id);
   };
 
+  // 复制任务
+  const duplicateTask = (taskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    
+    const newTask: ScheduledTask = {
+      ...task,
+      id: generateId(),
+      name: `${task.name} (副本)`,
+      enabled: false, // 复制的任务默认禁用
+      createdAt: Date.now(),
+      lastRunTime: undefined,
+      lastRunStatus: undefined,
+      lastRunError: undefined,
+    };
+    
+    setTasks(prev => [...prev, newTask]);
+    setExpandedTaskId(newTask.id);
+    markTaskUnsaved(newTask.id);
+  };
+
+  // 切换展开/收起
+  const toggleExpand = (taskId: string) => {
+    setExpandedTaskId(prev => prev === taskId ? null : taskId);
+  };
+
   // 切换任务启用/禁用
   const toggleTask = (taskId: string) => {
     const task = tasks.find(t => t.id === taskId);
     if (task) {
       updateTaskLocal(taskId, { enabled: !task.enabled });
     }
+  };
+
+  // 添加执行时间（不自动保存，只标记为未保存）
+  const addExecutionTime = (taskId: string, hour: number, minute: number) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    
+    const times = task.executionTimes || [];
+    // 检查是否已存在相同时间（静默处理，不弹窗）
+    const exists = times.some(t => t.hour === hour && t.minute === minute);
+    if (exists) {
+      // 不弹窗，静默返回
+      return;
+    }
+    
+    // 添加新时间并排序
+    const newTimes = [...times, { hour, minute }].sort((a, b) => {
+      if (a.hour !== b.hour) return a.hour - b.hour;
+      return a.minute - b.minute;
+    });
+    
+    // 只更新本地状态，不自动保存
+    updateTaskLocal(taskId, { executionTimes: newTimes });
+  };
+
+  // 删除执行时间（不自动保存，只标记为未保存）
+  const removeExecutionTime = (taskId: string, index: number) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    
+    const times = task.executionTimes || [];
+    // 至少保留一个时间点（静默处理，不弹窗）
+    if (times.length <= 1) {
+      // 不弹窗，静默返回
+      return;
+    }
+    
+    const newTimes = times.filter((_, i) => i !== index);
+    // 只更新本地状态，不自动保存
+    updateTaskLocal(taskId, { executionTimes: newTimes });
   };
 
   // 立即执行任务
@@ -215,17 +297,46 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
     } catch (e) {
       console.error('发送执行任务消息失败:', e);
     }
-    // 轮询后端获取最新任务状态
+    // 轮询后端获取最新任务状态（只更新正在执行的任务，不影响其他任务）
     let pollCount = 0;
     const maxPolls = 20;
     const pollInterval = setInterval(async () => {
       pollCount++;
-      await loadTasksFromBackend();
-      const updatedTask = tasks.find(t => t.id === taskId);
-      if (updatedTask && updatedTask.lastRunStatus !== 'running') {
-        clearInterval(pollInterval);
-        setRunningTaskId(null);
+      
+      // 只获取正在执行的任务的最新状态，不刷新整个列表
+      try {
+        const response = await fetch(`${backendUrl}/api/scheduled-tasks`, {
+          headers: getAuthHeaders(),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          const updatedTask = (data.tasks || []).find((t: ScheduledTask) => t.id === taskId);
+          
+          if (updatedTask) {
+            // 只更新正在执行的任务的状态字段，不覆盖整个任务
+            setTasks(prev => prev.map(t => {
+              if (t.id === taskId) {
+                return {
+                  ...t,
+                  lastRunTime: updatedTask.lastRunTime,
+                  lastRunStatus: updatedTask.lastRunStatus,
+                  lastRunError: updatedTask.lastRunError,
+                };
+              }
+              return t;
+            }));
+            
+            // 如果任务已完成，停止轮询
+            if (updatedTask.lastRunStatus !== 'running') {
+              clearInterval(pollInterval);
+              setRunningTaskId(null);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('轮询任务状态失败:', error);
       }
+      
       if (pollCount >= maxPolls) {
         clearInterval(pollInterval);
         setRunningTaskId(null);
@@ -254,14 +365,30 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
     if (newDays.length > 0) updateTaskLocal(taskId, { weekdays: newDays });
   };
 
-  // 格式化调度描述
+  // 格式化调度描述（支持多个执行时间）
   const formatScheduleDesc = (task: ScheduledTask): string => {
-    const timeStr = `${String(task.hour).padStart(2, '0')}:${String(task.minute).padStart(2, '0')}`;
-    if (task.scheduleType === 'daily') return `每天 ${timeStr}`;
-    if (task.scheduleType === 'weekly') {
-      const days = (task.weekdays || []).map(d => WEEKDAY_NAMES[d]).join('、');
-      return `每${days} ${timeStr}`;
+    // 获取执行时间列表（优先使用 executionTimes，否则使用 hour/minute）
+    const executionTimes = task.executionTimes && task.executionTimes.length > 0
+      ? task.executionTimes
+      : [{ hour: task.hour, minute: task.minute }];
+    
+    // 格式化时间列表
+    const timeStrs = executionTimes.map(t => 
+      `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`
+    );
+    
+    if (task.scheduleType === 'daily') {
+      // 每天模式：显示所有时间点
+      return `每天 ${timeStrs.join('、')}`;
     }
+    
+    if (task.scheduleType === 'weekly') {
+      // 每周模式：显示周几和所有时间点
+      const days = (task.weekdays || []).map(d => WEEKDAY_NAMES[d]).join('、');
+      return `每${days} ${timeStrs.join('、')}`;
+    }
+    
+    // 间隔模式：不使用时间点
     return `每 ${task.intervalMinutes || 60} 分钟`;
   };
 
@@ -282,7 +409,7 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
           ⏰ 定时任务
         </h3>
         <button
-          onClick={loadTasksFromBackend}
+          onClick={loadTasksFromBackend.bind(null, true)}
           disabled={loading}
           className="p-1.5 text-gray-500 hover:text-blue-500 hover:bg-blue-50 rounded transition disabled:opacity-50 flex items-center gap-1"
           title="刷新任务列表"
@@ -312,15 +439,6 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
                 <div key={task.id} className={`border rounded-lg overflow-hidden transition-all ${task.enabled ? 'border-blue-200 bg-blue-50/30' : 'border-gray-200'} ${isUnsaved ? 'ring-2 ring-orange-300' : ''}`}>
                   {/* 任务摘要行 */}
                   <div className="flex items-center gap-2 p-3 cursor-pointer" onClick={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}>
-                    {/* 启用/禁用开关 */}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); toggleTask(task.id); }}
-                      className={`p-1 rounded transition ${task.enabled ? 'text-green-600 hover:bg-green-100' : 'text-gray-400 hover:bg-gray-100'}`}
-                      title={task.enabled ? '点击暂停' : '点击启用'}
-                    >
-                      {task.enabled ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
-                    </button>
-
                     {/* 任务名称和描述 */}
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium truncate flex items-center gap-1">
@@ -328,28 +446,42 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
                         {isUnsaved && <span className="text-xs text-orange-500 font-normal">(未保存)</span>}
                       </div>
                       <div className="text-xs text-gray-500 truncate">
-                        {formatScheduleDesc(task)} · {task.platforms.map(p => PUBLISH_PLATFORMS[p]).join('、')} ·
-                        <span
-                          onClick={(e) => { e.stopPropagation(); onViewTaskLog?.(task); }}
-                          className="cursor-pointer hover:underline inline-flex items-center gap-0.5"
-                          title="点击查看执行日志"
-                        >
-                          {formatLastRun(task)} <FileText className="w-3 h-3 inline" />
-                        </span>
+                        {formatScheduleDesc(task)} · {task.platforms.map(p => PUBLISH_PLATFORMS[p]).join('、')} · {formatLastRun(task)}
                       </div>
+                      {/* 任务状态提示（在任务名称下方） */}
+                      {task.lastRunStatus === 'running' && (
+                        <div className="text-xs text-blue-500 mt-1">
+                          ⏳ 正在执行中...
+                        </div>
+                      )}
+                      {task.lastRunStatus === 'success' && task.lastRunTime && Date.now() - task.lastRunTime < 60000 && (
+                        <div className="text-xs text-green-500 mt-1">
+                          ✅ 执行成功
+                        </div>
+                      )}
+                      {task.lastRunStatus === 'failed' && task.lastRunTime && Date.now() - task.lastRunTime < 60000 && (
+                        <div className="text-xs text-red-500 mt-1">
+                          ❌ 执行失败
+                        </div>
+                      )}
                     </div>
 
-                    {/* 展开/收起 */}
-                    {expandedTaskId === task.id ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
-
-                    {/* 保存按钮（一直显示） */}
+                    {/* 展开/收起按钮 */}
                     <button
-                      onClick={(e) => { e.stopPropagation(); saveTaskToBackend(task); }}
-                      disabled={isSaving}
-                      className={`p-1 rounded transition ${isUnsaved ? 'text-orange-500 hover:text-orange-700 hover:bg-orange-50' : 'text-gray-400 hover:text-blue-500 hover:bg-blue-50'} disabled:opacity-50`}
-                      title={isUnsaved ? '有未保存的修改，点击保存' : '保存任务配置'}
+                      onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
+                      className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded transition"
+                      title={expandedTaskId === task.id ? '收起' : '展开'}
                     >
-                      {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      {expandedTaskId === task.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </button>
+
+                    {/* 启用/禁用开关 */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleTask(task.id); }}
+                      className={`p-1 rounded transition ${task.enabled ? 'text-green-600 hover:bg-green-100' : 'text-gray-400 hover:bg-gray-100'}`}
+                      title={task.enabled ? '点击暂停' : '点击启用'}
+                    >
+                      {task.enabled ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
                     </button>
 
                     {/* 立即执行按钮 */}
@@ -360,6 +492,34 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
                       title="立即执行"
                     >
                       {runningTaskId === task.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                    </button>
+
+                    {/* 查看日志按钮 */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onViewTaskLog?.(task); }}
+                      className="p-1 text-gray-400 hover:text-purple-500 hover:bg-purple-50 rounded transition"
+                      title="查看执行日志"
+                    >
+                      <FileText className="w-4 h-4" />
+                    </button>
+
+                    {/* 复制按钮 */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); duplicateTask(task.id); }}
+                      className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded transition"
+                      title="复制任务"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+
+                    {/* 保存按钮 */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); saveTaskToBackend(task); }}
+                      disabled={isSaving}
+                      className={`p-1 rounded transition ${isUnsaved ? 'text-orange-500 hover:text-orange-700 hover:bg-orange-50' : 'text-gray-400 hover:text-blue-500 hover:bg-blue-50'} disabled:opacity-50`}
+                      title={isUnsaved ? '有未保存的修改，点击保存' : '保存任务配置'}
+                    >
+                      {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                     </button>
 
                     {/* 删除按钮 */}
@@ -412,32 +572,59 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
                         </div>
                       </div>
 
-                      {/* 时间设置 + 文章数量（放在同一行） */}
+                      {/* 时间设置 + 文章数量 */}
                       {task.scheduleType !== 'interval' ? (
                         <div className="grid grid-cols-2 gap-3">
-                          {/* 执行时间 */}
+                          {/* 执行时间（多时间点） */}
                           <div>
                             <label className="text-xs font-medium text-gray-600 block mb-1">执行时间</label>
-                            <div className="flex gap-2 items-center">
+                            
+                            {/* 添加时间输入框 */}
+                            <div className="flex gap-2 items-center mb-2">
                               <select
-                                value={task.hour}
-                                onChange={(e) => updateTaskLocal(task.id, { hour: parseInt(e.target.value) })}
-                                className="p-2 border rounded text-sm flex-1"
+                                value={tempHour}
+                                onChange={(e) => setTempHour(parseInt(e.target.value))}
+                                className="p-1.5 border rounded text-sm flex-1"
                               >
                                 {Array.from({ length: 24 }, (_, i) => (
                                   <option key={i} value={i}>{String(i).padStart(2, '0')} 时</option>
                                 ))}
                               </select>
-                              <span className="text-gray-500">:</span>
+                              <span className="text-gray-500 text-sm">:</span>
                               <select
-                                value={task.minute}
-                                onChange={(e) => updateTaskLocal(task.id, { minute: parseInt(e.target.value) })}
-                                className="p-2 border rounded text-sm flex-1"
+                                value={tempMinute}
+                                onChange={(e) => setTempMinute(parseInt(e.target.value))}
+                                className="p-1.5 border rounded text-sm flex-1"
                               >
-                                {[0, 10, 15, 20, 30, 40, 45, 50].map(m => (
-                                  <option key={m} value={m}>{String(m).padStart(2, '0')} 分</option>
+                                {Array.from({ length: 60 }, (_, i) => (
+                                  <option key={i} value={i}>{String(i).padStart(2, '0')} 分</option>
                                 ))}
                               </select>
+                              <button
+                                onClick={() => addExecutionTime(task.id, tempHour, tempMinute)}
+                                className="p-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 transition"
+                                title="添加时间"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            {/* 已添加的时间列表 */}
+                            <div className="space-y-1 max-h-32 overflow-y-auto">
+                              {(task.executionTimes || [{ hour: task.hour, minute: task.minute }]).map((time, index) => (
+                                <div key={index} className="flex items-center justify-between bg-gray-50 px-2 py-1 rounded text-sm">
+                                  <span className="font-mono">
+                                    {String(time.hour).padStart(2, '0')}:{String(time.minute).padStart(2, '0')}
+                                  </span>
+                                  <button
+                                    onClick={() => removeExecutionTime(task.id, index)}
+                                    className="p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+                                    title="删除"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))}
                             </div>
                           </div>
                           {/* 文章数量 */}
@@ -555,29 +742,6 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
                           ))}
                         </div>
                       </div>
-
-                      {/* 保存按钮（展开区域底部） */}
-                      {isUnsaved && (
-                        <div className="pt-2 border-t">
-                          <button
-                            onClick={() => saveTaskToBackend(task)}
-                            disabled={isSaving}
-                            className="w-full py-2 bg-orange-500 text-white rounded hover:bg-orange-600 transition disabled:opacity-50 flex items-center justify-center gap-2"
-                          >
-                            {isSaving ? (
-                              <>
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                保存中...
-                              </>
-                            ) : (
-                              <>
-                                <Save className="w-4 h-4" />
-                                保存修改
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>

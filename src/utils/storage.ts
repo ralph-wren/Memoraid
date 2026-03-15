@@ -115,13 +115,20 @@ export type ScheduleType = 'daily' | 'weekly' | 'interval';
 export type NewsSourceType = 'newsnow' | 'tophub';
 
 // 定时任务配置
+// 执行时间点
+export interface ExecutionTime {
+  hour: number;    // 小时（0-23）
+  minute: number;  // 分钟（0-59）
+}
+
 export interface ScheduledTask {
   id: string;                        // 唯一标识
   enabled: boolean;                  // 是否启用
   name: string;                      // 任务名称
   scheduleType: ScheduleType;        // 调度类型：每天/每周/间隔
-  hour: number;                      // 执行小时（0-23）
-  minute: number;                    // 执行分钟（0-59）
+  hour: number;                      // 执行小时（0-23）- 保留用于兼容性
+  minute: number;                    // 执行分钟（0-59）- 保留用于兼容性
+  executionTimes?: ExecutionTime[];  // 多个执行时间点（新增）
   weekdays?: number[];               // 周几执行（0=周日, 1=周一...6=周六），仅 weekly 类型
   intervalMinutes?: number;          // 间隔分钟数，仅 interval 类型
   newsSourceType: NewsSourceType;    // 新闻源类型：newsnow API 或今日热榜（默认 tophub）
