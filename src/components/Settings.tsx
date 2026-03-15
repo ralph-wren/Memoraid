@@ -918,7 +918,23 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
       {/* ========== 定时任务（放在同步备份下面） ========== */}
       <ScheduleSettings
         settings={settings}
-        onSettingsChange={setSettings}
+        onSettingsChange={async (newSettings) => {
+          // 标记为 dirty 防止 storage change 监听器重新加载
+          isDirtyRef.current = true;
+          
+          // 立即更新状态并保存
+          setSettings(prev => {
+            const updated = {
+              ...prev,
+              scheduledTasks: newSettings.scheduledTasks
+            };
+            // 异步保存，不阻塞 UI
+            saveSettings(updated).then(() => {
+              isDirtyRef.current = false;
+            });
+            return updated;
+          });
+        }}
         onViewTaskLog={onViewTaskLog}
       />
 

@@ -8955,6 +8955,273 @@ export default {
       }
     }
 
+    // ============================================
+    // 定时任务 API - 用于管理用户的定时发布任务
+    // ============================================
+
+    // 8.1 GET /api/scheduled-tasks - 获取用户的所有定时任务
+    if (url.pathname === '/api/scheduled-tasks' && request.method === 'GET') {
+      try {
+        // 支持匿名用户：优先使用 Authorization，否则使用 X-Anonymous-ID
+        let userId = getUserIdFromRequest(request);
+        if (!userId) {
+          const anonymousId = request.headers.get('X-Anonymous-ID');
+          if (anonymousId) {
+            userId = anonymousId;
+          }
+        }
+        
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { 
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          });
+        }
+
+        const tasks = await env.DB.prepare(
+          'SELECT * FROM scheduled_tasks WHERE user_id = ? ORDER BY created_at DESC'
+        ).bind(userId).all();
+
+        // 将数据库字段转换为前端需要的格式
+        const formattedTasks = tasks.results.map((task: any) => ({
+          id: task.id,
+          enabled: task.enabled === 1,
+          name: task.name,
+          scheduleType: task.schedule_type,
+          hour: task.hour,
+          minute: task.minute,
+          weekdays: task.weekdays ? JSON.parse(task.weekdays) : undefined,
+          intervalMinutes: task.interval_minutes,
+          newsSourceType: task.news_source_type,
+          newsSourceUrl: task.news_source_url,
+          tophubNodeId: task.tophub_node_id,
+          categories: JSON.parse(task.categories),
+          platforms: JSON.parse(task.platforms),
+          lastRunTime: task.last_run_time,
+          lastRunStatus: task.last_run_status,
+          lastRunError: task.last_run_error,
+          createdAt: task.created_at,
+        }));
+
+        return new Response(JSON.stringify({ tasks: formattedTasks }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 8.2 POST /api/scheduled-tasks - 创建新的定时任务
+    if (url.pathname === '/api/scheduled-tasks' && request.method === 'POST') {
+      try {
+        // 支持匿名用户：优先使用 Authorization，否则使用 X-Anonymous-ID
+        let userId = getUserIdFromRequest(request);
+        if (!userId) {
+          const anonymousId = request.headers.get('X-Anonymous-ID');
+          if (anonymousId) {
+            userId = anonymousId;
+          }
+        }
+        
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { 
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          });
+        }
+
+        const body = await request.json() as any;
+        const now = Date.now();
+
+        // 插入新任务
+        await env.DB.prepare(
+          `INSERT INTO scheduled_tasks (
+            id, user_id, enabled, name, schedule_type, hour, minute, 
+            weekdays, interval_minutes, news_source_type, news_source_url, 
+            tophub_node_id, categories, platforms, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          body.id,
+          userId,
+          body.enabled ? 1 : 0,
+          body.name,
+          body.scheduleType,
+          body.hour,
+          body.minute,
+          body.weekdays ? JSON.stringify(body.weekdays) : null,
+          body.intervalMinutes || null,
+          body.newsSourceType,
+          body.newsSourceUrl,
+          body.tophubNodeId || null,
+          JSON.stringify(body.categories),
+          JSON.stringify(body.platforms),
+          now,
+          now
+        ).run();
+
+        return new Response(JSON.stringify({ success: true, id: body.id }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 8.3 PUT /api/scheduled-tasks/:id - 更新指定的定时任务
+    if (url.pathname.startsWith('/api/scheduled-tasks/') && request.method === 'PUT') {
+      try {
+        // 支持匿名用户：优先使用 Authorization，否则使用 X-Anonymous-ID
+        let userId = getUserIdFromRequest(request);
+        if (!userId) {
+          const anonymousId = request.headers.get('X-Anonymous-ID');
+          if (anonymousId) {
+            userId = anonymousId;
+          }
+        }
+        
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { 
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          });
+        }
+
+        const taskId = url.pathname.split('/').pop();
+        const body = await request.json() as any;
+
+        // 验证任务归属
+        const task = await env.DB.prepare(
+          'SELECT user_id FROM scheduled_tasks WHERE id = ?'
+        ).bind(taskId).first();
+
+        if (!task) {
+          return new Response(JSON.stringify({ error: '任务不存在' }), {
+            status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        if (task.user_id !== userId) {
+          return new Response(JSON.stringify({ error: '无权限修改此任务' }), {
+            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 更新任务（只更新配置字段，不更新执行状态字段）
+        await env.DB.prepare(
+          `UPDATE scheduled_tasks SET 
+            enabled = ?, name = ?, schedule_type = ?, hour = ?, minute = ?,
+            weekdays = ?, interval_minutes = ?, news_source_type = ?, 
+            news_source_url = ?, tophub_node_id = ?, categories = ?, 
+            platforms = ?, updated_at = ?
+          WHERE id = ?`
+        ).bind(
+          body.enabled ? 1 : 0,
+          body.name,
+          body.scheduleType,
+          body.hour,
+          body.minute,
+          body.weekdays ? JSON.stringify(body.weekdays) : null,
+          body.intervalMinutes || null,
+          body.newsSourceType,
+          body.newsSourceUrl,
+          body.tophubNodeId || null,
+          JSON.stringify(body.categories),
+          JSON.stringify(body.platforms),
+          Date.now(),
+          taskId
+        ).run();
+
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 8.4 DELETE /api/scheduled-tasks/:id - 删除指定的定时任务
+    if (url.pathname.startsWith('/api/scheduled-tasks/') && request.method === 'DELETE') {
+      try {
+        // 支持匿名用户：优先使用 Authorization，否则使用 X-Anonymous-ID
+        let userId = getUserIdFromRequest(request);
+        if (!userId) {
+          const anonymousId = request.headers.get('X-Anonymous-ID');
+          if (anonymousId) {
+            userId = anonymousId;
+          }
+        }
+        
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), { 
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          });
+        }
+
+        const taskId = url.pathname.split('/').pop();
+
+        // 验证任务归属
+        const task = await env.DB.prepare(
+          'SELECT user_id FROM scheduled_tasks WHERE id = ?'
+        ).bind(taskId).first();
+
+        if (!task) {
+          return new Response(JSON.stringify({ error: '任务不存在' }), {
+            status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        if (task.user_id !== userId) {
+          return new Response(JSON.stringify({ error: '无权限删除此任务' }), {
+            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 删除任务
+        await env.DB.prepare(
+          'DELETE FROM scheduled_tasks WHERE id = ?'
+        ).bind(taskId).run();
+
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 8.5 PATCH /api/scheduled-tasks/:id/status - 更新任务执行状态（供调度器调用）
+    if (url.pathname.match(/^\/api\/scheduled-tasks\/[^/]+\/status$/) && request.method === 'PATCH') {
+      try {
+        const taskId = url.pathname.split('/')[3];
+        const body = await request.json() as any;
+
+        // 只更新执行状态字段
+        await env.DB.prepare(
+          `UPDATE scheduled_tasks SET 
+            last_run_time = ?, last_run_status = ?, last_run_error = ?
+          WHERE id = ?`
+        ).bind(
+          body.lastRunTime || null,
+          body.lastRunStatus || null,
+          body.lastRunError || null,
+          taskId
+        ).run();
+
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
     return new Response('Not Found', { status: 404, headers: corsHeaders });
   },
 };

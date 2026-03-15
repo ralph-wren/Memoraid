@@ -111,6 +111,9 @@ export const PUBLISH_PLATFORMS: Record<PublishPlatform, string> = {
 // 定时任务调度类型
 export type ScheduleType = 'daily' | 'weekly' | 'interval';
 
+// 新闻源类型
+export type NewsSourceType = 'newsnow' | 'tophub';
+
 // 定时任务配置
 export interface ScheduledTask {
   id: string;                        // 唯一标识
@@ -121,8 +124,10 @@ export interface ScheduledTask {
   minute: number;                    // 执行分钟（0-59）
   weekdays?: number[];               // 周几执行（0=周日, 1=周一...6=周六），仅 weekly 类型
   intervalMinutes?: number;          // 间隔分钟数，仅 interval 类型
-  newsSourceUrl: string;             // 新闻源 URL
-  categories: ContentCategory[];     // 内容偏好分类
+  newsSourceType: NewsSourceType;    // 新闻源类型：newsnow API 或今日热榜
+  newsSourceUrl: string;             // 新闻源 URL（newsnow）或完整页面 URL（tophub）
+  tophubNodeId?: string;             // 今日热榜的 node_id（如 3QeLwJEd7k），仅 tophub 类型
+  categories: ContentCategory[];     // 内容偏好分类（仅 newsnow 使用）
   platforms: PublishPlatform[];      // 发布到哪些平台
   lastRunTime?: number;              // 上次执行时间戳
   lastRunStatus?: 'success' | 'failed' | 'running'; // 上次执行状态

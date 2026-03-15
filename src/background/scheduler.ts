@@ -3,7 +3,7 @@
 // 使用 chrome.alarms API 实现定时抓取新闻 → AI 生成文章 → 自动发布
 // ============================================
 
-import { getSettings, saveSettings, ScheduledTask, ContentCategory, CONTENT_CATEGORIES } from '../utils/storage';
+import { getSettings, ScheduledTask, ContentCategory, CONTENT_CATEGORIES } from '../utils/storage';
 // 直接导入 handleInitiateProcess，因为 background 不能通过 sendMessage 给自己发消息
 import { handleInitiateProcess } from './index';
 
@@ -113,11 +113,36 @@ async function handleAlarm(alarm: chrome.alarms.Alarm) {
   if (alarm.name !== CHECK_ALARM_NAME) return;
 
   try {
+    // 从后端 API 获取任务列表
     const settings = await getSettings();
-    const tasks = settings.scheduledTasks || [];
-    const enabledTasks = tasks.filter(t => t.enabled);
+    const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+    const anonymousId = settings.anonymousId;
 
-    if (enabledTasks.length === 0) return;
+    // 构建认证 headers
+    const headers: Record<string, string> = {};
+    if (settings.sync?.token) {
+      headers['Authorization'] = `Bearer ${settings.sync.token}`;
+    } else if (anonymousId) {
+      headers['X-Anonymous-ID'] = anonymousId;
+    }
+
+    const response = await fetch(`${backendUrl}/api/scheduled-tasks`, {
+      headers,
+    });
+
+    if (!response.ok) {
+      console.error(`[Scheduler] 获取任务列表失败: ${response.status}`);
+      return;
+    }
+
+    const data = await response.json();
+    const tasks = data.tasks || [];
+    const enabledTasks = tasks.filter((t: ScheduledTask) => t.enabled);
+
+    if (enabledTasks.length === 0) {
+      console.log('[Scheduler] 未执行任务: 没有启用的任务');
+      return;
+    }
 
     const now = new Date();
 
@@ -125,6 +150,8 @@ async function handleAlarm(alarm: chrome.alarms.Alarm) {
       if (shouldRunTask(task, now)) {
         console.log(`[Scheduler] 触发任务: ${task.name}`);
         await executeTask(task);
+      } else {
+        console.log(`[Scheduler] 未执行任务: ${task.name} (不满足执行条件)`);
       }
     }
   } catch (error) {
@@ -175,10 +202,9 @@ function shouldRunTask(task: ScheduledTask, now: Date): boolean {
 
 /**
  * 执行定时任务
- * 改进流程：通过 NewsNow API 获取新闻列表 → 选择一篇 → 打开文章页 → 触发生成+发布
- * 
- * 之前的方案是打开 SPA 页面用 content script 抓取 DOM，但 SPA 动态渲染导致抓不到内容
- * 现在改为直接调用 NewsNow 的 /api/s?id=xxx 接口获取结构化 JSON 数据，更可靠
+ * 支持两种新闻源类型：
+ * 1. NewsNow API：通过 API 获取新闻列表
+ * 2. 今日热榜：通过页面抓取获取热榜数据
  */
 async function executeTask(task: ScheduledTask) {
   // 清空旧日志，开始新一轮执行
@@ -188,52 +214,30 @@ async function executeTask(task: ScheduledTask) {
 
   try {
     await taskLog(task.id, 'info', `🚀 开始执行任务: ${task.name}`);
-    await taskLog(task.id, 'info', `📰 新闻源: ${task.newsSourceUrl}`);
-    await taskLog(task.id, 'info', `🏷️ 内容偏好: ${task.categories.map(c => CONTENT_CATEGORIES[c]).join('、')}`);
+    await taskLog(task.id, 'info', `📰 新闻源类型: ${task.newsSourceType === 'tophub' ? '今日热榜' : 'NewsNow'}`);
     await taskLog(task.id, 'info', `📤 发布平台: ${task.platforms.join('、')}`);
 
-    // 第一步：从新闻源 URL 中提取基础域名（用于 API 调用）
-    const baseUrl = extractBaseUrl(task.newsSourceUrl);
-    await taskLog(task.id, 'info', `🔗 API 基础地址: ${baseUrl}`);
-
-    // 第二步：根据内容偏好分类，收集对应的 NewsNow source id 列表
-    const sourceIds = getSourceIdsForCategories(task.categories);
-    await taskLog(task.id, 'info', `📋 候选新闻源: ${sourceIds.join(', ')}`);
-
-    if (sourceIds.length === 0) {
-      throw new Error('没有匹配的新闻源，请检查内容偏好设置');
-    }
-
-    // 第三步：随机选择一个 source，调用 API 获取新闻列表
     let articles: Array<{ title: string; url: string }> = [];
-    const shuffledSources = shuffleArray([...sourceIds]);
 
-    for (const sourceId of shuffledSources) {
-      try {
-        await taskLog(task.id, 'info', `🔍 尝试获取新闻源: ${sourceId}...`);
-        const result = await fetchNewsFromApi(baseUrl, sourceId);
-        if (result.length > 0) {
-          articles = result;
-          await taskLog(task.id, 'success', `✅ 从 ${sourceId} 获取到 ${articles.length} 篇文章`);
-          break;
-        } else {
-          await taskLog(task.id, 'warn', `⚠️ ${sourceId} 返回 0 篇文章，尝试下一个源`);
-        }
-      } catch (e: any) {
-        await taskLog(task.id, 'warn', `⚠️ 源 ${sourceId} 获取失败: ${e.message}`);
-      }
+    // 根据新闻源类型选择不同的获取方式
+    if (task.newsSourceType === 'tophub') {
+      // 今日热榜：通过页面抓取
+      articles = await fetchFromTophub(task);
+    } else {
+      // NewsNow：通过 API
+      articles = await fetchFromNewsNow(task);
     }
 
     if (articles.length === 0) {
-      throw new Error(`所有新闻源均获取失败，已尝试: ${shuffledSources.slice(0, 5).join(', ')}`);
+      throw new Error('未获取到任何文章');
     }
 
-    // 第四步：随机选择一篇文章
+    // 随机选择一篇文章
     const selectedArticle = articles[Math.floor(Math.random() * Math.min(articles.length, 10))];
     await taskLog(task.id, 'success', `📝 选择文章: ${selectedArticle.title}`);
     await taskLog(task.id, 'info', `🔗 文章链接: ${selectedArticle.url}`);
 
-    // 第五步：打开文章详情页
+    // 打开文章详情页
     await taskLog(task.id, 'info', `🌐 正在打开文章页面...`);
     const tab = await chrome.tabs.create({
       url: selectedArticle.url,
@@ -247,13 +251,11 @@ async function executeTask(task: ScheduledTask) {
     await new Promise(r => setTimeout(r, 5000));
     await taskLog(task.id, 'info', `⏳ 等待页面渲染完成`);
 
-    // 第六步：依次发布到各平台
-    // 直接调用 handleInitiateProcess，不能用 sendMessage（background 无法给自己发消息）
+    // 依次发布到各平台
     for (const platform of task.platforms) {
       await taskLog(task.id, 'info', `📤 开始发布到: ${platform}...`);
       try {
         await taskLog(task.id, 'info', `⏳ 正在抓取内容、AI 生成文章并发布...`);
-        // 直接调用，等待整个流程完成（包括抓取、AI 生成、发布）
         await handleInitiateProcess(platform, tab.id!);
         await taskLog(task.id, 'success', `✅ ${platform} 发布流程已完成`);
       } catch (e: any) {
@@ -268,23 +270,150 @@ async function executeTask(task: ScheduledTask) {
     await updateTaskStatus(task.id, 'success');
     await taskLog(task.id, 'success', `🎉 任务全部完成！`);
 
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: chrome.runtime.getURL('public/icon-128.png'),
-      title: '定时任务完成',
-      message: `"${task.name}" 已执行完成，文章已发布到 ${task.platforms.length} 个平台`,
-    });
+    // 发送成功通知（添加错误处理）
+    try {
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('public/icon-128.png'),
+        title: '定时任务完成',
+        message: `"${task.name}" 已执行完成，文章已发布到 ${task.platforms.length} 个平台`,
+      });
+    } catch (notifError) {
+      console.error('[Scheduler] 发送通知失败:', notifError);
+    }
 
   } catch (error: any) {
     await taskLog(task.id, 'error', `❌ 任务失败: ${error?.message || String(error)}`);
     await updateTaskStatus(task.id, 'failed', error?.message || String(error));
 
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: chrome.runtime.getURL('public/icon-128.png'),
-      title: '定时任务失败',
-      message: `"${task.name}" 执行失败: ${error.message || '未知错误'}`,
+    // 发送失败通知（添加错误处理）
+    try {
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('public/icon-128.png'),
+        title: '定时任务失败',
+        message: `"${task.name}" 执行失败: ${error.message || '未知错误'}`,
+      });
+    } catch (notifError) {
+      console.error('[Scheduler] 发送通知失败:', notifError);
+    }
+  }
+}
+
+/**
+ * 从 NewsNow 获取新闻列表（原有逻辑）
+ */
+async function fetchFromNewsNow(task: ScheduledTask): Promise<Array<{ title: string; url: string }>> {
+  await taskLog(task.id, 'info', `📰 新闻源: ${task.newsSourceUrl}`);
+  await taskLog(task.id, 'info', `🏷️ 内容偏好: ${task.categories.map(c => CONTENT_CATEGORIES[c]).join('、')}`);
+
+  const baseUrl = extractBaseUrl(task.newsSourceUrl);
+  await taskLog(task.id, 'info', `🔗 API 基础地址: ${baseUrl}`);
+
+  const sourceIds = getSourceIdsForCategories(task.categories);
+  await taskLog(task.id, 'info', `📋 候选新闻源: ${sourceIds.join(', ')}`);
+
+  if (sourceIds.length === 0) {
+    throw new Error('没有匹配的新闻源，请检查内容偏好设置');
+  }
+
+  const shuffledSources = shuffleArray([...sourceIds]);
+  let articles: Array<{ title: string; url: string }> = [];
+
+  for (const sourceId of shuffledSources) {
+    try {
+      await taskLog(task.id, 'info', `🔍 尝试获取新闻源: ${sourceId}...`);
+      const result = await fetchNewsFromApi(baseUrl, sourceId);
+      if (result.length > 0) {
+        articles = result;
+        await taskLog(task.id, 'success', `✅ 从 ${sourceId} 获取到 ${articles.length} 篇文章`);
+        break;
+      } else {
+        await taskLog(task.id, 'warn', `⚠️ ${sourceId} 返回 0 篇文章，尝试下一个源`);
+      }
+    } catch (e: any) {
+      await taskLog(task.id, 'warn', `⚠️ 源 ${sourceId} 获取失败: ${e.message}`);
+    }
+  }
+
+  if (articles.length === 0) {
+    throw new Error(`所有新闻源均获取失败，已尝试: ${shuffledSources.slice(0, 5).join(', ')}`);
+  }
+
+  return articles;
+}
+
+/**
+ * 从今日热榜获取新闻列表
+ * 通过打开页面并注入脚本抓取 DOM 内容
+ */
+async function fetchFromTophub(task: ScheduledTask): Promise<Array<{ title: string; url: string }>> {
+  const nodeId = task.tophubNodeId || '';
+  if (!nodeId) {
+    throw new Error('今日热榜 node_id 未配置');
+  }
+
+  const tophubUrl = `https://tophub.today/n/${nodeId}`;
+  await taskLog(task.id, 'info', `📰 今日热榜: ${tophubUrl}`);
+  await taskLog(task.id, 'info', `🔍 正在打开热榜页面...`);
+
+  // 创建一个隐藏标签页打开今日热榜
+  const tab = await chrome.tabs.create({
+    url: tophubUrl,
+    active: false,
+  });
+
+  if (!tab.id) throw new Error('无法创建标签页');
+
+  try {
+    // 等待页面加载
+    await waitForTabLoad(tab.id, 15000);
+    await taskLog(task.id, 'success', `✅ 页面加载完成`);
+    
+    // 等待页面渲染
+    await new Promise(r => setTimeout(r, 3000));
+    await taskLog(task.id, 'info', `⏳ 正在抓取热榜数据...`);
+
+    // 注入脚本抓取页面数据
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        // 今日热榜的 DOM 结构：表格第二列的链接
+        // 使用更精确的选择器：table tbody tr td:nth-child(2) a
+        const items = document.querySelectorAll('table tbody tr td:nth-child(2) a');
+        const articles: Array<{ title: string; url: string }> = [];
+        
+        items.forEach((item) => {
+          const link = item as HTMLAnchorElement;
+          const title = link.textContent?.trim() || '';
+          const url = link.href || '';
+          
+          // 过滤掉无效的链接（标题太短或没有URL）
+          if (title && url && title.length > 3) {
+            articles.push({ title, url });
+          }
+        });
+        
+        return articles;
+      },
     });
+
+    // 关闭今日热榜标签页
+    await chrome.tabs.remove(tab.id);
+
+    const articles = results[0]?.result || [];
+    
+    if (articles.length === 0) {
+      throw new Error('未能从页面抓取到热榜数据，可能页面结构已变化');
+    }
+
+    await taskLog(task.id, 'success', `✅ 成功抓取到 ${articles.length} 条热榜`);
+    return articles;
+
+  } catch (error: any) {
+    // 确保关闭标签页
+    try { await chrome.tabs.remove(tab.id); } catch (e) { /* 忽略 */ }
+    throw error;
   }
 }
 
@@ -388,25 +517,45 @@ function waitForTabLoad(tabId: number, timeout: number): Promise<void> {
 
 /**
  * 更新任务执行状态
+ * 使用后端 API 更新，避免与用户配置修改冲突
  * @param taskId 任务 ID
  * @param status 执行状态
  * @param errorMessage 失败时的错误信息（可选）
  */
 async function updateTaskStatus(taskId: string, status: 'success' | 'failed' | 'running', errorMessage?: string) {
-  const settings = await getSettings();
-  const tasks = settings.scheduledTasks || [];
-  const updatedTasks = tasks.map(t =>
-    t.id === taskId
-      ? {
-          ...t,
-          lastRunTime: Date.now(),
-          lastRunStatus: status,
-          // 成功或执行中时清空错误信息，失败时保存错误信息
-          lastRunError: status === 'failed' ? (errorMessage || '未知错误') : undefined,
-        }
-      : t
-  );
-  await saveSettings({ ...settings, scheduledTasks: updatedTasks });
+  try {
+    // 先从 settings 获取后端配置
+    const settings = await getSettings();
+    const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+    const anonymousId = settings.anonymousId;
+
+    // 构建认证 headers：优先使用 token，否则使用 anonymousId
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (settings.sync?.token) {
+      headers['Authorization'] = `Bearer ${settings.sync.token}`;
+    } else if (anonymousId) {
+      headers['X-Anonymous-ID'] = anonymousId;
+    }
+
+    // 调用后端 API 更新任务状态
+    const response = await fetch(`${backendUrl}/api/scheduled-tasks/${taskId}/status`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        lastRunTime: Date.now(),
+        lastRunStatus: status,
+        lastRunError: status === 'failed' ? (errorMessage || '未知错误') : null,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('[Scheduler] 更新任务状态失败:', await response.text());
+    }
+  } catch (error) {
+    console.error('[Scheduler] 更新任务状态异常:', error);
+  }
 }
 
 /**
@@ -414,16 +563,43 @@ async function updateTaskStatus(taskId: string, status: 'success' | 'failed' | '
  * @param taskId 要执行的任务 ID
  */
 export async function runTaskById(taskId: string) {
-  const settings = await getSettings();
-  const tasks = settings.scheduledTasks || [];
-  const task = tasks.find(t => t.id === taskId);
+  try {
+    // 从后端 API 获取任务信息
+    const settings = await getSettings();
+    const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+    const anonymousId = settings.anonymousId;
 
-  if (!task) {
-    console.error(`[Scheduler] 未找到任务: ${taskId}`);
-    return;
+    // 构建认证 headers
+    const headers: Record<string, string> = {};
+    if (settings.sync?.token) {
+      headers['Authorization'] = `Bearer ${settings.sync.token}`;
+    } else if (anonymousId) {
+      headers['X-Anonymous-ID'] = anonymousId;
+    }
+
+    console.log(`[Scheduler] 从后端获取任务: ${taskId}`);
+    const response = await fetch(`${backendUrl}/api/scheduled-tasks`, {
+      headers,
+    });
+
+    if (!response.ok) {
+      console.error(`[Scheduler] 获取任务列表失败: ${response.status}`);
+      return;
+    }
+
+    const data = await response.json();
+    const tasks = data.tasks || [];
+    const task = tasks.find((t: ScheduledTask) => t.id === taskId);
+
+    if (!task) {
+      console.error(`[Scheduler] 未找到任务: ${taskId}`);
+      return;
+    }
+
+    console.log(`[Scheduler] 手动触发任务: ${task.name}`);
+    // 异步执行，不阻塞消息响应
+    executeTask(task);
+  } catch (error) {
+    console.error(`[Scheduler] 获取任务失败:`, error);
   }
-
-  console.log(`[Scheduler] 手动触发任务: ${task.name}`);
-  // 异步执行，不阻塞消息响应
-  executeTask(task);
 }
