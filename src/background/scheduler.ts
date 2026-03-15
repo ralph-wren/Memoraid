@@ -216,6 +216,9 @@ async function executeTask(task: ScheduledTask) {
   // 更新任务状态为执行中
   await updateTaskStatus(task.id, 'running');
 
+  // 追踪任务打开的所有标签页 ID
+  const taskTabIds: number[] = [];
+
   try {
     await taskLog(task.id, 'info', `🚀 开始执行任务: ${task.name}`);
     await taskLog(task.id, 'info', `📰 新闻源类型: ${task.newsSourceType === 'tophub' ? '今日热榜' : 'NewsNow'}`);
@@ -266,8 +269,27 @@ async function executeTask(task: ScheduledTask) {
 
         if (!tab.id) throw new Error('无法创建标签页');
 
-        await waitForTabLoad(tab.id, 20000);
-        await taskLog(task.id, 'success', `✅ 页面加载完成`);
+        // 记录任务打开的标签页 ID
+        taskTabIds.push(tab.id);
+
+        // 等待页面加载，增加超时时间到 30 秒，并添加重试机制
+        try {
+          await waitForTabLoad(tab.id, 30000);
+          await taskLog(task.id, 'success', `✅ 页面加载完成`);
+        } catch (loadError: any) {
+          // 如果加载超时，重试一次
+          await taskLog(task.id, 'warn', `⚠️ 页面加载超时，正在重试...`);
+          try {
+            // 刷新页面
+            await chrome.tabs.reload(tab.id);
+            await waitForTabLoad(tab.id, 30000);
+            await taskLog(task.id, 'success', `✅ 页面加载完成（重试成功）`);
+          } catch (retryError: any) {
+            // 重试失败，抛出错误
+            throw new Error(`页面加载失败: ${retryError.message || '超时'}`);
+          }
+        }
+        
         await new Promise(r => setTimeout(r, 5000));
         await taskLog(task.id, 'info', `⏳ 等待页面渲染完成`);
 
@@ -283,8 +305,7 @@ async function executeTask(task: ScheduledTask) {
           }
         }
 
-        // 关闭文章标签页
-        try { await chrome.tabs.remove(tab.id); } catch (e) { /* 可能已关闭 */ }
+        // 注意：不在这里关闭标签页，统一在任务结束时关闭
 
         successCount++;
         await taskLog(task.id, 'success', `✅ [${i + 1}/${selectedArticles.length}] 话题处理完成`);
@@ -305,6 +326,11 @@ async function executeTask(task: ScheduledTask) {
     await updateTaskStatus(task.id, 'success');
     await taskLog(task.id, 'success', `\n🎉 任务全部完成！成功 ${successCount} 篇，失败 ${failCount} 篇`);
 
+    // 关闭所有任务打开的页面（清理现场）
+    await taskLog(task.id, 'info', `🧹 正在关闭任务打开的 ${taskTabIds.length} 个页面...`);
+    await closeAllTaskTabs(taskTabIds);
+    await taskLog(task.id, 'success', `✅ 页面已全部关闭`);
+
     // 发送成功通知（添加错误处理）
     try {
       chrome.notifications.create({
@@ -320,6 +346,11 @@ async function executeTask(task: ScheduledTask) {
   } catch (error: any) {
     await taskLog(task.id, 'error', `❌ 任务失败: ${error?.message || String(error)}`);
     await updateTaskStatus(task.id, 'failed', error?.message || String(error));
+
+    // 关闭所有任务打开的页面（清理现场）
+    await taskLog(task.id, 'info', `🧹 正在关闭任务打开的 ${taskTabIds.length} 个页面...`);
+    await closeAllTaskTabs(taskTabIds);
+    await taskLog(task.id, 'success', `✅ 页面已全部关闭`);
 
     // 发送失败通知（添加错误处理）
     try {
@@ -526,6 +557,34 @@ function shuffleArray<T>(arr: T[]): T[] {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
   return arr;
+}
+
+/**
+ * 关闭所有任务相关的标签页
+ * 只关闭本次任务打开的标签页，不影响用户手动打开的页面
+ */
+async function closeAllTaskTabs(taskTabIds: number[]): Promise<void> {
+  try {
+    if (taskTabIds.length === 0) {
+      console.log('[Scheduler] 没有需要关闭的标签页');
+      return;
+    }
+
+    // 过滤出仍然存在的标签页
+    const existingTabs = await chrome.tabs.query({});
+    const existingTabIds = new Set(existingTabs.map(tab => tab.id));
+    
+    const tabsToClose = taskTabIds.filter(id => existingTabIds.has(id));
+
+    // 批量关闭标签页
+    if (tabsToClose.length > 0) {
+      await chrome.tabs.remove(tabsToClose);
+      console.log(`[Scheduler] 已关闭 ${tabsToClose.length} 个任务标签页`);
+    }
+  } catch (error) {
+    console.error('[Scheduler] 关闭标签页失败:', error);
+    // 不抛出错误，避免影响任务完成状态
+  }
 }
 
 /**

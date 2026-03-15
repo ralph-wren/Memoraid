@@ -1952,11 +1952,13 @@ async function handlePublishToXiaohongshu(payload: {
     }
 
     // 移除可能存在的各种中间提示标记（AI有时会自己添加）
-    // 包括："正文:"、"正文开始"、"内容:"、"以下是正文" 等
+    // 包括："正文:"、"正文开始"、"内容:"、"以下是正文"、"[正文]" 等
     cleanedContent = cleanedContent.replace(/^正文[:：]\s*\n*/gm, '').trim();
     cleanedContent = cleanedContent.replace(/^正文开始[。！!]*\s*\n*/gm, '').trim();
     cleanedContent = cleanedContent.replace(/^内容[:：]\s*\n*/gm, '').trim();
     cleanedContent = cleanedContent.replace(/^以下是正文[:：]?\s*\n*/gm, '').trim();
+    // 移除 [正文] 标记（小红书专用）
+    cleanedContent = cleanedContent.replace(/\[正文\]\s*\n?/g, '').trim();
     
     // 移除文章末尾可能出现的无关文字（如 "loading你看看咋回事"）
     // 这些通常是AI生成过程中的调试信息或错误输出
