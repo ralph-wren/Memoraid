@@ -202,9 +202,9 @@ function shouldRunTask(task: ScheduledTask, now: Date): boolean {
 
 /**
  * 执行定时任务
- * 支持两种新闻源类型：
- * 1. NewsNow API：通过 API 获取新闻列表
- * 2. 今日热榜：通过页面抓取获取热榜数据
+ * 支持两种模式：
+ * 1. 单篇模式：随机选择一篇文章生成
+ * 2. AI 选择模式：让 AI 从热榜中选择指定数量的话题生成多篇文章
  */
 async function executeTask(task: ScheduledTask) {
   // 清空旧日志，开始新一轮执行
@@ -216,6 +216,9 @@ async function executeTask(task: ScheduledTask) {
     await taskLog(task.id, 'info', `🚀 开始执行任务: ${task.name}`);
     await taskLog(task.id, 'info', `📰 新闻源类型: ${task.newsSourceType === 'tophub' ? '今日热榜' : 'NewsNow'}`);
     await taskLog(task.id, 'info', `📤 发布平台: ${task.platforms.join('、')}`);
+    
+    const articleCount = task.articleCount || 1;
+    await taskLog(task.id, 'info', `📝 生成文章数量: ${articleCount} 篇`);
 
     let articles: Array<{ title: string; url: string }> = [];
 
@@ -232,43 +235,71 @@ async function executeTask(task: ScheduledTask) {
       throw new Error('未获取到任何文章');
     }
 
-    // 随机选择一篇文章
-    const selectedArticle = articles[Math.floor(Math.random() * Math.min(articles.length, 10))];
-    await taskLog(task.id, 'success', `📝 选择文章: ${selectedArticle.title}`);
-    await taskLog(task.id, 'info', `🔗 文章链接: ${selectedArticle.url}`);
+    // 选择要处理的文章列表
+    let selectedArticles: Array<{ title: string; url: string }> = [];
 
-    // 打开文章详情页
-    await taskLog(task.id, 'info', `🌐 正在打开文章页面...`);
-    const tab = await chrome.tabs.create({
-      url: selectedArticle.url,
-      active: false,
-    });
+    // 始终使用 AI 选择话题（即使只选 1 篇）
+    await taskLog(task.id, 'info', `🤖 正在调用 AI 选择话题...`);
+    selectedArticles = await selectArticlesWithAI(task, articles, articleCount);
+    await taskLog(task.id, 'success', `✅ AI 已选择 ${selectedArticles.length} 个话题`);
 
-    if (!tab.id) throw new Error('无法创建标签页');
+    // 循环处理每个选中的文章
+    let successCount = 0;
+    let failCount = 0;
 
-    await waitForTabLoad(tab.id, 20000);
-    await taskLog(task.id, 'success', `✅ 页面加载完成`);
-    await new Promise(r => setTimeout(r, 5000));
-    await taskLog(task.id, 'info', `⏳ 等待页面渲染完成`);
+    for (let i = 0; i < selectedArticles.length; i++) {
+      const article = selectedArticles[i];
+      await taskLog(task.id, 'info', `\n📝 [${i + 1}/${selectedArticles.length}] 处理话题: ${article.title}`);
+      await taskLog(task.id, 'info', `🔗 文章链接: ${article.url}`);
 
-    // 依次发布到各平台
-    for (const platform of task.platforms) {
-      await taskLog(task.id, 'info', `📤 开始发布到: ${platform}...`);
       try {
-        await taskLog(task.id, 'info', `⏳ 正在抓取内容、AI 生成文章并发布...`);
-        await handleInitiateProcess(platform, tab.id!);
-        await taskLog(task.id, 'success', `✅ ${platform} 发布流程已完成`);
+        // 打开文章详情页
+        await taskLog(task.id, 'info', `🌐 正在打开文章页面...`);
+        const tab = await chrome.tabs.create({
+          url: article.url,
+          active: false,
+        });
+
+        if (!tab.id) throw new Error('无法创建标签页');
+
+        await waitForTabLoad(tab.id, 20000);
+        await taskLog(task.id, 'success', `✅ 页面加载完成`);
+        await new Promise(r => setTimeout(r, 5000));
+        await taskLog(task.id, 'info', `⏳ 等待页面渲染完成`);
+
+        // 依次发布到各平台
+        for (const platform of task.platforms) {
+          await taskLog(task.id, 'info', `📤 开始发布到: ${platform}...`);
+          try {
+            await taskLog(task.id, 'info', `⏳ 正在抓取内容、AI 生成文章并发布...`);
+            await handleInitiateProcess(platform, tab.id!);
+            await taskLog(task.id, 'success', `✅ ${platform} 发布流程已完成`);
+          } catch (e: any) {
+            await taskLog(task.id, 'error', `❌ 发布到 ${platform} 失败: ${e.message}`);
+          }
+        }
+
+        // 关闭文章标签页
+        try { await chrome.tabs.remove(tab.id); } catch (e) { /* 可能已关闭 */ }
+
+        successCount++;
+        await taskLog(task.id, 'success', `✅ [${i + 1}/${selectedArticles.length}] 话题处理完成`);
+
+        // 如果还有下一篇，等待一段时间避免频率过高
+        if (i < selectedArticles.length - 1) {
+          await taskLog(task.id, 'info', `⏳ 等待 10 秒后处理下一篇...`);
+          await new Promise(r => setTimeout(r, 10000));
+        }
+
       } catch (e: any) {
-        await taskLog(task.id, 'error', `❌ 发布到 ${platform} 失败: ${e.message}`);
+        failCount++;
+        await taskLog(task.id, 'error', `❌ [${i + 1}/${selectedArticles.length}] 话题处理失败: ${e.message}`);
       }
     }
 
-    // 关闭文章标签页
-    try { await chrome.tabs.remove(tab.id); } catch (e) { /* 可能已关闭 */ }
-
     // 更新任务状态为成功
     await updateTaskStatus(task.id, 'success');
-    await taskLog(task.id, 'success', `🎉 任务全部完成！`);
+    await taskLog(task.id, 'success', `\n🎉 任务全部完成！成功 ${successCount} 篇，失败 ${failCount} 篇`);
 
     // 发送成功通知（添加错误处理）
     try {
@@ -276,7 +307,7 @@ async function executeTask(task: ScheduledTask) {
         type: 'basic',
         iconUrl: chrome.runtime.getURL('public/icon-128.png'),
         title: '定时任务完成',
-        message: `"${task.name}" 已执行完成，文章已发布到 ${task.platforms.length} 个平台`,
+        message: `"${task.name}" 已执行完成，成功生成 ${successCount} 篇文章`,
       });
     } catch (notifError) {
       console.error('[Scheduler] 发送通知失败:', notifError);
@@ -513,6 +544,163 @@ function waitForTabLoad(tabId: number, timeout: number): Promise<void> {
 
     chrome.tabs.onUpdated.addListener(listener);
   });
+}
+
+/**
+ * 使用 AI 从热榜列表中选择指定数量的话题
+ * @param task 定时任务配置
+ * @param articles 热榜文章列表
+ * @param articleCount 需要选择的数量
+ * @returns 选中的文章列表
+ */
+async function selectArticlesWithAI(
+  task: ScheduledTask,
+  articles: Array<{ title: string; url: string }>,
+  articleCount: number
+): Promise<Array<{ title: string; url: string }>> {
+  try {
+    // 获取设置，创建 AI 客户端
+    const settings = await getSettings();
+    
+    // 构建 AI 客户端（复用 createOpenAIClient 的逻辑）
+    let effectiveApiKey: string = '';
+    let extraHeaders: Record<string, string> = {};
+
+    if (settings.provider === 'memoraid') {
+      if (settings.sync?.token) {
+        effectiveApiKey = String(settings.sync.token);
+      } else {
+        const anonId = settings.anonymousId;
+        if (!anonId) {
+          throw new Error('无法获取匿名用户标识');
+        }
+        effectiveApiKey = 'anonymous';
+        extraHeaders['X-Anonymous-ID'] = String(anonId);
+      }
+    } else {
+      const rawKey = settings.apiKeys?.[settings.provider] || settings.apiKey;
+      effectiveApiKey = rawKey ? String(rawKey) : '';
+    }
+
+    if (!effectiveApiKey) {
+      throw new Error(`API Key for ${settings.provider} is missing`);
+    }
+
+    const baseURL = settings.baseUrl ? String(settings.baseUrl) : undefined;
+
+    // 动态导入 OpenAI（避免在文件顶部导入导致循环依赖）
+    const OpenAI = (await import('openai')).default;
+    
+    const client = new OpenAI({
+      apiKey: effectiveApiKey,
+      baseURL,
+      defaultHeaders: extraHeaders
+    });
+
+    // 构建热榜列表文本（只取前 50 条，避免 token 过多）
+    const articleList = articles.slice(0, 50).map((article, index) => 
+      `${index + 1}. ${article.title}`
+    ).join('\n');
+
+    // 构建 AI 提示词
+    const systemPrompt = `你是一个专业的内容选题助手。用户会给你一个热榜列表和选题要求，你需要从中选择最合适的话题。
+
+要求：
+1. 严格按照用户的选题要求进行筛选
+2. 优先选择热度高、有讨论价值的话题
+3. 避免重复或相似的话题
+4. 返回格式必须是 JSON 对象，包含选中话题的序号和选择理由
+
+返回格式示例：
+{
+  "selections": [
+    {"index": 1, "reason": "该话题讨论度高，符合科技类要求"},
+    {"index": 5, "reason": "热点事件，具有时效性"}
+  ]
+}`;
+
+    const userPrompt = `请从以下热榜中选择 ${articleCount} 个最合适的话题：
+
+${articleList}
+
+${task.customPrompt ? `\n选题要求：${task.customPrompt}\n` : '\n选题要求：选择热度高、有讨论价值的话题\n'}
+
+请返回 JSON 格式的选择结果，包含每个话题的序号和选择理由。`;
+
+    await taskLog(task.id, 'info', `🤖 AI 提示词已构建，共 ${articles.length} 个候选话题`);
+
+    // 调用 AI API
+    const response = await client.chat.completions.create({
+      model: settings.model || 'deepseek-chat',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.7,
+      max_tokens: 1000, // 增加 token 限制，因为需要返回理由
+    });
+
+    const aiResponse = response.choices[0]?.message?.content?.trim() || '';
+    await taskLog(task.id, 'info', `🤖 AI 返回: ${aiResponse}`);
+
+    // 解析 AI 返回的选择结果
+    let selections: Array<{ index: number; reason: string }> = [];
+    try {
+      // 尝试直接解析 JSON
+      const parsed = JSON.parse(aiResponse);
+      if (parsed.selections && Array.isArray(parsed.selections)) {
+        selections = parsed.selections;
+      } else if (Array.isArray(parsed)) {
+        // 兼容旧格式：直接返回数组
+        selections = parsed.map((item: any) => ({
+          index: typeof item === 'number' ? item : item.index,
+          reason: item.reason || '未提供理由'
+        }));
+      }
+    } catch (e) {
+      // 如果解析失败，尝试提取数字（降级处理）
+      const matches = aiResponse.match(/\d+/g);
+      if (matches) {
+        selections = matches.map(n => ({
+          index: parseInt(n),
+          reason: '解析失败，未获取到理由'
+        }));
+      }
+    }
+
+    if (selections.length === 0) {
+      throw new Error('AI 未返回有效的选择结果');
+    }
+
+    // 根据序号提取文章（序号从 1 开始，数组索引从 0 开始）
+    const selectedArticles = selections
+      .map(sel => {
+        const article = articles[sel.index - 1];
+        return article ? { ...article, reason: sel.reason } : null;
+      })
+      .filter((article): article is { title: string; url: string; reason: string } => article !== null)
+      .slice(0, articleCount); // 确保不超过请求数量
+
+    if (selectedArticles.length === 0) {
+      throw new Error('AI 选择的序号无效');
+    }
+
+    await taskLog(task.id, 'success', `✅ AI 已选择 ${selectedArticles.length} 个话题`);
+    selectedArticles.forEach((article, i) => {
+      taskLog(task.id, 'info', `  ${i + 1}. ${article.title}`);
+      taskLog(task.id, 'info', `     💡 选择理由: ${article.reason}`);
+    });
+
+    // 返回时去掉 reason 字段（保持原有接口兼容）
+    return selectedArticles.map(({ title, url }) => ({ title, url }));
+
+  } catch (error: any) {
+    await taskLog(task.id, 'error', `❌ AI 选择失败: ${error.message}`);
+    // 如果 AI 选择失败，降级为随机选择
+    await taskLog(task.id, 'warn', `⚠️ 降级为随机选择模式`);
+    const shuffled = shuffleArray([...articles]);
+    return shuffled.slice(0, articleCount);
+  }
 }
 
 /**

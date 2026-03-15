@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Clock, Play, Pause, ChevronDown, ChevronUp, Zap, Loader2, FileText, Save, RefreshCw } from 'lucide-react';
 import {
-  ScheduledTask, ContentCategory, PublishPlatform, ScheduleType,
-  CONTENT_CATEGORIES, PUBLISH_PLATFORMS, AppSettings
+  ScheduledTask, PublishPlatform, ScheduleType,
+  PUBLISH_PLATFORMS, AppSettings
 } from '../utils/storage';
 
 // ============================================
@@ -32,10 +32,13 @@ const createDefaultTask = (): ScheduledTask => ({
   minute: 0,
   weekdays: [1, 2, 3, 4, 5], // 默认工作日
   intervalMinutes: 60,
-  newsSourceType: 'newsnow', // 默认使用 NewsNow
-  newsSourceUrl: 'https://cryptonews.dpdns.org/c/hottest',
-  categories: ['tech'],
-  platforms: ['weixin'],
+  newsSourceType: 'tophub', // 默认使用今日热榜
+  newsSourceUrl: '',
+  tophubNodeId: '3QeLwJEd7k', // 默认知乎热榜
+  categories: [],
+  platforms: ['xiaohongshu'], // 默认小红书
+  articleCount: 1, // 默认生成 1 篇文章
+  customPrompt: '', // 默认无自定义提示词
   createdAt: Date.now(),
 });
 
@@ -230,16 +233,6 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
     }, 3000);
   };
 
-  // 切换内容分类
-  const toggleCategory = (taskId: string, category: ContentCategory) => {
-    const task = tasks.find(t => t.id === taskId);
-    if (!task) return;
-    const cats = task.categories.includes(category)
-      ? task.categories.filter(c => c !== category)
-      : [...task.categories, category];
-    if (cats.length > 0) updateTaskLocal(taskId, { categories: cats });
-  };
-
   // 切换发布平台
   const togglePlatform = (taskId: string, platform: PublishPlatform) => {
     const task = tasks.find(t => t.id === taskId);
@@ -349,17 +342,15 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
                     {/* 展开/收起 */}
                     {expandedTaskId === task.id ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
 
-                    {/* 保存按钮 */}
-                    {isUnsaved && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); saveTaskToBackend(task); }}
-                        disabled={isSaving}
-                        className="p-1 rounded transition text-orange-500 hover:text-orange-700 hover:bg-orange-50 disabled:opacity-50"
-                        title="保存修改"
-                      >
-                        {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                      </button>
-                    )}
+                    {/* 保存按钮（一直显示） */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); saveTaskToBackend(task); }}
+                      disabled={isSaving}
+                      className={`p-1 rounded transition ${isUnsaved ? 'text-orange-500 hover:text-orange-700 hover:bg-orange-50' : 'text-gray-400 hover:text-blue-500 hover:bg-blue-50'} disabled:opacity-50`}
+                      title={isUnsaved ? '有未保存的修改，点击保存' : '保存任务配置'}
+                    >
+                      {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    </button>
 
                     {/* 立即执行按钮 */}
                     <button
@@ -421,46 +412,78 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
                         </div>
                       </div>
 
-                      {/* 时间设置 */}
+                      {/* 时间设置 + 文章数量（放在同一行） */}
                       {task.scheduleType !== 'interval' ? (
-                        <div>
-                          <label className="text-xs font-medium text-gray-600 block mb-1">执行时间</label>
-                          <div className="flex gap-2 items-center">
+                        <div className="grid grid-cols-2 gap-3">
+                          {/* 执行时间 */}
+                          <div>
+                            <label className="text-xs font-medium text-gray-600 block mb-1">执行时间</label>
+                            <div className="flex gap-2 items-center">
+                              <select
+                                value={task.hour}
+                                onChange={(e) => updateTaskLocal(task.id, { hour: parseInt(e.target.value) })}
+                                className="p-2 border rounded text-sm flex-1"
+                              >
+                                {Array.from({ length: 24 }, (_, i) => (
+                                  <option key={i} value={i}>{String(i).padStart(2, '0')} 时</option>
+                                ))}
+                              </select>
+                              <span className="text-gray-500">:</span>
+                              <select
+                                value={task.minute}
+                                onChange={(e) => updateTaskLocal(task.id, { minute: parseInt(e.target.value) })}
+                                className="p-2 border rounded text-sm flex-1"
+                              >
+                                {[0, 10, 15, 20, 30, 40, 45, 50].map(m => (
+                                  <option key={m} value={m}>{String(m).padStart(2, '0')} 分</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          {/* 文章数量 */}
+                          <div>
+                            <label className="text-xs font-medium text-gray-600 block mb-1">生成文章数量</label>
                             <select
-                              value={task.hour}
-                              onChange={(e) => updateTaskLocal(task.id, { hour: parseInt(e.target.value) })}
-                              className="p-2 border rounded text-sm"
+                              value={task.articleCount || 1}
+                              onChange={(e) => updateTaskLocal(task.id, { articleCount: parseInt(e.target.value) })}
+                              className="w-full p-2 border rounded text-sm"
                             >
-                              {Array.from({ length: 24 }, (_, i) => (
-                                <option key={i} value={i}>{String(i).padStart(2, '0')} 时</option>
-                              ))}
-                            </select>
-                            <span className="text-gray-500">:</span>
-                            <select
-                              value={task.minute}
-                              onChange={(e) => updateTaskLocal(task.id, { minute: parseInt(e.target.value) })}
-                              className="p-2 border rounded text-sm"
-                            >
-                              {[0, 10, 15, 20, 30, 40, 45, 50].map(m => (
-                                <option key={m} value={m}>{String(m).padStart(2, '0')} 分</option>
+                              {[1, 2, 3, 4, 5].map(n => (
+                                <option key={n} value={n}>{n} 篇</option>
                               ))}
                             </select>
                           </div>
                         </div>
                       ) : (
-                        <div>
-                          <label className="text-xs font-medium text-gray-600 block mb-1">执行间隔</label>
-                          <select
-                            value={task.intervalMinutes || 60}
-                            onChange={(e) => updateTaskLocal(task.id, { intervalMinutes: parseInt(e.target.value) })}
-                            className="p-2 border rounded text-sm"
-                          >
-                            {[30, 60, 120, 180, 360, 720, 1440].map(m => (
-                              <option key={m} value={m}>
-                                {m < 60 ? `${m} 分钟` : m < 1440 ? `${m / 60} 小时` : '24 小时'}
-                              </option>
-                            ))}
-                          </select>
+                        <div className="grid grid-cols-2 gap-3">
+                          {/* 执行间隔 */}
+                          <div>
+                            <label className="text-xs font-medium text-gray-600 block mb-1">执行间隔</label>
+                            <select
+                              value={task.intervalMinutes || 60}
+                              onChange={(e) => updateTaskLocal(task.id, { intervalMinutes: parseInt(e.target.value) })}
+                              className="w-full p-2 border rounded text-sm"
+                            >
+                              {[30, 60, 120, 180, 360, 720, 1440].map(m => (
+                                <option key={m} value={m}>
+                                  {m < 60 ? `${m} 分钟` : m < 1440 ? `${m / 60} 小时` : '24 小时'}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          {/* 文章数量 */}
+                          <div>
+                            <label className="text-xs font-medium text-gray-600 block mb-1">生成文章数量</label>
+                            <select
+                              value={task.articleCount || 1}
+                              onChange={(e) => updateTaskLocal(task.id, { articleCount: parseInt(e.target.value) })}
+                              className="w-full p-2 border rounded text-sm"
+                            >
+                              {[1, 2, 3, 4, 5].map(n => (
+                                <option key={n} value={n}>{n} 篇</option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
                       )}
 
@@ -482,80 +505,40 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
                         </div>
                       )}
 
-                      {/* 新闻源类型选择 */}
+                      {/* 今日热榜 Node ID */}
                       <div>
-                        <label className="text-xs font-medium text-gray-600 block mb-1">新闻源类型</label>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => updateTaskLocal(task.id, { newsSourceType: 'newsnow', tophubNodeId: undefined })}
-                            className={`flex-1 px-3 py-2 text-sm rounded border transition ${task.newsSourceType === 'newsnow' ? 'bg-purple-500 text-white border-purple-500' : 'bg-white text-gray-600 border-gray-300 hover:border-purple-300'}`}
-                          >
-                            NewsNow API
-                          </button>
-                          <button
-                            onClick={() => updateTaskLocal(task.id, { newsSourceType: 'tophub', categories: [] })}
-                            className={`flex-1 px-3 py-2 text-sm rounded border transition ${task.newsSourceType === 'tophub' ? 'bg-purple-500 text-white border-purple-500' : 'bg-white text-gray-600 border-gray-300 hover:border-purple-300'}`}
-                          >
-                            今日热榜
-                          </button>
-                        </div>
+                        <label className="text-xs font-medium text-gray-600 block mb-1">今日热榜 Node ID</label>
+                        <p className="text-xs text-gray-500 mb-2">
+                          访问 <a href="https://tophub.today" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">tophub.today</a>，
+                          选择热榜后从 URL 中获取 Node ID。例如：tophub.today/n/<span className="font-semibold text-gray-700">3QeLwJEd7k</span> 中的 <span className="font-semibold text-gray-700">3QeLwJEd7k</span>
+                        </p>
+                        <input
+                          type="text"
+                          value={task.tophubNodeId || ''}
+                          onChange={(e) => updateTaskLocal(task.id, { tophubNodeId: e.target.value })}
+                          className="w-full p-2 border rounded text-sm font-mono"
+                          placeholder="3QeLwJEd7k"
+                        />
+                  
                       </div>
 
-                      {/* NewsNow 配置 */}
-                      {task.newsSourceType === 'newsnow' && (
-                        <>
-                          <div>
-                            <label className="text-xs font-medium text-gray-600 block mb-1">NewsNow 地址</label>
-                            <input
-                              type="url"
-                              value={task.newsSourceUrl}
-                              onChange={(e) => updateTaskLocal(task.id, { newsSourceUrl: e.target.value })}
-                              className="w-full p-2 border rounded text-sm"
-                              placeholder="https://cryptonews.dpdns.org/c/hottest"
-                            />
-                            <p className="text-xs text-gray-400 mt-1">NewsNow 新闻站的任意页面地址</p>
-                          </div>
-
-                          {/* 内容偏好 */}
-                          <div>
-                            <label className="text-xs font-medium text-gray-600 block mb-1">内容偏好（可多选）</label>
-                            <div className="flex gap-1.5 flex-wrap">
-                              {(Object.entries(CONTENT_CATEGORIES) as [ContentCategory, string][]).map(([key, label]) => (
-                                <button
-                                  key={key}
-                                  onClick={() => toggleCategory(task.id, key)}
-                                  className={`px-2.5 py-1 text-xs rounded-full border transition ${task.categories.includes(key) ? 'bg-purple-500 text-white border-purple-500' : 'bg-white text-gray-600 border-gray-300 hover:border-purple-300'}`}
-                                >
-                                  {label}
-                                </button>
-                              ))}
-                            </div>
-                            <p className="text-xs text-gray-400 mt-1">根据偏好自动选择对应的新闻源</p>
-                          </div>
-                        </>
-                      )}
-
-                      {/* 今日热榜配置 */}
-                      {task.newsSourceType === 'tophub' && (
-                        <div>
-                          <label className="text-xs font-medium text-gray-600 block mb-1">今日热榜 Node ID</label>
-                          <input
-                            type="text"
-                            value={task.tophubNodeId || ''}
-                            onChange={(e) => updateTaskLocal(task.id, { tophubNodeId: e.target.value })}
-                            className="w-full p-2 border rounded text-sm font-mono"
-                            placeholder="3QeLwJEd7k"
-                          />
-                          <p className="text-xs text-gray-400 mt-1">
-                            从今日热榜页面 URL 中获取，如 tophub.today/n/<span className="font-semibold">3QeLwJEd7k</span> 中的 <span className="font-semibold">3QeLwJEd7k</span>
-                          </p>
-                          <p className="text-xs text-gray-400 mt-1">
-                            常用：知乎热榜 <code className="bg-gray-100 px-1 rounded">3QeLwJEd7k</code>、
-                            微博热搜 <code className="bg-gray-100 px-1 rounded">KqndgxeLl9</code>、
-                            百度热搜 <code className="bg-gray-100 px-1 rounded">Jb0vmloB1G</code>
-                          </p>
-                        </div>
-                      )}
+                      {/* 自定义提示词（直接保存，不需要独立按钮） */}
+                      <div>
+                        <label className="text-xs font-medium text-gray-600 block mb-1">自定义提示词（可选）</label>
+                        <textarea
+                          value={task.customPrompt || ''}
+                          onChange={(e) => updateTaskLocal(task.id, { customPrompt: e.target.value })}
+                          className="w-full p-2 border rounded text-sm"
+                          placeholder="例如：优先选择科技类话题，避免娱乐八卦"
+                          rows={3}
+                        />
+                        <p className="text-xs text-gray-400 mt-1">
+                          AI 会根据你的要求从热榜中选择合适的话题
+                          {isUnsaved && (
+                            <span className="text-orange-500 ml-1">· 修改内容后记得点击右上角的保存按钮</span>
+                          )}
+                        </p>
+                      </div>
 
                       {/* 发布平台 */}
                       <div>

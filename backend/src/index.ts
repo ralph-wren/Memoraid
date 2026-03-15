@@ -8981,7 +8981,7 @@ export default {
           'SELECT * FROM scheduled_tasks WHERE user_id = ? ORDER BY created_at DESC'
         ).bind(userId).all();
 
-        // 将数据库字段转换为前端需要的格式
+        // 将数据库字段转换为前端需要的格式（添加 articleCount 和 customPrompt）
         const formattedTasks = tasks.results.map((task: any) => ({
           id: task.id,
           enabled: task.enabled === 1,
@@ -8996,6 +8996,8 @@ export default {
           tophubNodeId: task.tophub_node_id,
           categories: JSON.parse(task.categories),
           platforms: JSON.parse(task.platforms),
+          articleCount: task.article_count || 1, // 单次生成文章数量
+          customPrompt: task.custom_prompt || '', // 自定义提示词
           lastRunTime: task.last_run_time,
           lastRunStatus: task.last_run_status,
           lastRunError: task.last_run_error,
@@ -9033,13 +9035,14 @@ export default {
         const body = await request.json() as any;
         const now = Date.now();
 
-        // 插入新任务
+        // 插入新任务（添加 article_count 和 custom_prompt 字段）
         await env.DB.prepare(
           `INSERT INTO scheduled_tasks (
             id, user_id, enabled, name, schedule_type, hour, minute, 
             weekdays, interval_minutes, news_source_type, news_source_url, 
-            tophub_node_id, categories, platforms, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            tophub_node_id, categories, platforms, article_count, custom_prompt,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           body.id,
           userId,
@@ -9055,6 +9058,8 @@ export default {
           body.tophubNodeId || null,
           JSON.stringify(body.categories),
           JSON.stringify(body.platforms),
+          body.articleCount || 1, // 默认 1 篇
+          body.customPrompt || null, // 自定义提示词
           now,
           now
         ).run();
@@ -9107,13 +9112,13 @@ export default {
           });
         }
 
-        // 更新任务（只更新配置字段，不更新执行状态字段）
+        // 更新任务（只更新配置字段，不更新执行状态字段，添加 article_count 和 custom_prompt）
         await env.DB.prepare(
           `UPDATE scheduled_tasks SET 
             enabled = ?, name = ?, schedule_type = ?, hour = ?, minute = ?,
             weekdays = ?, interval_minutes = ?, news_source_type = ?, 
             news_source_url = ?, tophub_node_id = ?, categories = ?, 
-            platforms = ?, updated_at = ?
+            platforms = ?, article_count = ?, custom_prompt = ?, updated_at = ?
           WHERE id = ?`
         ).bind(
           body.enabled ? 1 : 0,
@@ -9128,6 +9133,8 @@ export default {
           body.tophubNodeId || null,
           JSON.stringify(body.categories),
           JSON.stringify(body.platforms),
+          body.articleCount || 1, // 默认 1 篇
+          body.customPrompt || null, // 自定义提示词
           Date.now(),
           taskId
         ).run();
