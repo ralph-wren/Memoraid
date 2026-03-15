@@ -144,10 +144,12 @@ async function handleAlarm(alarm: chrome.alarms.Alarm) {
       return;
     }
 
+    // 获取中国时区的当前时间（UTC+8）
     const now = new Date();
+    const chinaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
 
     for (const task of enabledTasks) {
-      if (shouldRunTask(task, now)) {
+      if (shouldRunTask(task, chinaTime)) {
         console.log(`[Scheduler] 触发任务: ${task.name}`);
         await executeTask(task);
       } else {
@@ -161,6 +163,8 @@ async function handleAlarm(alarm: chrome.alarms.Alarm) {
 
 /**
  * 判断任务是否应该在当前时间执行
+ * @param task 任务配置
+ * @param now 当前时间（中国时区）
  */
 function shouldRunTask(task: ScheduledTask, now: Date): boolean {
   const currentHour = now.getHours();
@@ -598,8 +602,9 @@ async function selectArticlesWithAI(
     });
 
     // 构建热榜列表文本（只取前 50 条，避免 token 过多）
+    // 格式：序号. 标题 | URL
     const articleList = articles.slice(0, 50).map((article, index) => 
-      `${index + 1}. ${article.title}`
+      `${index + 1}. ${article.title} | ${article.url}`
     ).join('\n');
 
     // 构建 AI 提示词
@@ -609,13 +614,13 @@ async function selectArticlesWithAI(
 1. 严格按照用户的选题要求进行筛选
 2. 优先选择热度高、有讨论价值的话题
 3. 避免重复或相似的话题
-4. 返回格式必须是 JSON 对象，包含选中话题的序号和选择理由
+4. 返回格式必须是 JSON 对象，包含选中话题的完整 URL 和选择理由
 
 返回格式示例：
 {
   "selections": [
-    {"index": 1, "reason": "该话题讨论度高，符合科技类要求"},
-    {"index": 5, "reason": "热点事件，具有时效性"}
+    {"url": "https://example.com/article1", "reason": "该话题讨论度高，符合科技类要求"},
+    {"url": "https://example.com/article2", "reason": "热点事件，具有时效性"}
   ]
 }`;
 
@@ -625,7 +630,7 @@ ${articleList}
 
 ${task.customPrompt ? `\n选题要求：${task.customPrompt}\n` : '\n选题要求：选择热度高、有讨论价值的话题\n'}
 
-请返回 JSON 格式的选择结果，包含每个话题的序号和选择理由。`;
+请返回 JSON 格式的选择结果，包含每个话题的完整 URL 和选择理由。注意：必须返回列表中的原始 URL，不要修改。`;
 
     await taskLog(task.id, 'info', `🤖 AI 提示词已构建，共 ${articles.length} 个候选话题`);
 
@@ -644,51 +649,82 @@ ${task.customPrompt ? `\n选题要求：${task.customPrompt}\n` : '\n选题要�
     await taskLog(task.id, 'info', `🤖 AI 返回: ${aiResponse}`);
 
     // 解析 AI 返回的选择结果
-    let selections: Array<{ index: number; reason: string }> = [];
+    let selections: Array<{ url: string; reason: string }> = [];
     try {
-      // 尝试直接解析 JSON
-      const parsed = JSON.parse(aiResponse);
+      // 尝试提取 JSON（可能包含在 markdown 代码块中）
+      let jsonText = aiResponse.trim();
+      
+      // 方法1：尝试匹配 ```json 或 ``` 代码块（使用贪婪匹配）
+      const codeBlockMatch = jsonText.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
+      if (codeBlockMatch) {
+        jsonText = codeBlockMatch[1].trim();
+        await taskLog(task.id, 'info', `🔍 从代码块中提取 JSON`);
+      }
+      
+      await taskLog(task.id, 'info', `🔍 准备解析 JSON (长度: ${jsonText.length})`);
+      
+      const parsed = JSON.parse(jsonText);
       if (parsed.selections && Array.isArray(parsed.selections)) {
         selections = parsed.selections;
+        await taskLog(task.id, 'info', `✅ 成功解析，获得 ${selections.length} 个选择`);
       } else if (Array.isArray(parsed)) {
-        // 兼容旧格式：直接返回数组
-        selections = parsed.map((item: any) => ({
-          index: typeof item === 'number' ? item : item.index,
-          reason: item.reason || '未提供理由'
-        }));
+        // 兼容直接返回数组的格式
+        selections = parsed;
+        await taskLog(task.id, 'info', `✅ 成功解析数组格式，获得 ${selections.length} 个选择`);
+      } else {
+        await taskLog(task.id, 'warn', `⚠️ JSON 格式不符合预期`);
       }
     } catch (e) {
-      // 如果解析失败，尝试提取数字（降级处理）
-      const matches = aiResponse.match(/\d+/g);
-      if (matches) {
-        selections = matches.map(n => ({
-          index: parseInt(n),
-          reason: '解析失败，未获取到理由'
-        }));
-      }
+      await taskLog(task.id, 'error', `❌ JSON 解析失败: ${e}`);
     }
 
     if (selections.length === 0) {
       throw new Error('AI 未返回有效的选择结果');
     }
 
-    // 根据序号提取文章（序号从 1 开始，数组索引从 0 开始）
+    // 根据 URL 匹配文章
+    await taskLog(task.id, 'info', `🔍 开始匹配 ${selections.length} 个 URL...`);
+    
     const selectedArticles = selections
-      .map(sel => {
-        const article = articles[sel.index - 1];
+      .map((sel, idx) => {
+        // 在原始列表中查找匹配的 URL
+        const article = articles.find(a => a.url === sel.url);
+        if (!article) {
+          // 如果没有匹配到，记录日志方便调试
+          taskLog(task.id, 'warn', `⚠️ [${idx + 1}] 无法匹配 URL: ${sel.url}`);
+          // 打印前 3 个热榜 URL 作为参考
+          if (idx === 0) {
+            taskLog(task.id, 'info', `📋 热榜前 3 个 URL 示例:`);
+            articles.slice(0, 3).forEach((a, i) => {
+              taskLog(task.id, 'info', `  ${i + 1}. ${a.url}`);
+            });
+          }
+        } else {
+          taskLog(task.id, 'success', `✅ [${idx + 1}] 匹配成功: ${article.title}`);
+        }
         return article ? { ...article, reason: sel.reason } : null;
       })
       .filter((article): article is { title: string; url: string; reason: string } => article !== null)
       .slice(0, articleCount); // 确保不超过请求数量
 
     if (selectedArticles.length === 0) {
-      throw new Error('AI 选择的序号无效');
+      throw new Error('AI 返回的 URL 无法匹配到热榜文章');
     }
 
-    await taskLog(task.id, 'success', `✅ AI 已选择 ${selectedArticles.length} 个话题`);
+    await taskLog(task.id, 'success', `✅ 最终选择 ${selectedArticles.length} 个话题（AI 返回 ${selections.length} 个）`);
+    
+    // 打印 AI 返回的所有 URL（用于调试）
+    await taskLog(task.id, 'info', `🔍 AI 返回的 URL 列表:`);
+    selections.forEach((sel, i) => {
+      taskLog(task.id, 'info', `  ${i + 1}. ${sel.url}`);
+    });
+    
+    // 打印匹配成功的文章
+    await taskLog(task.id, 'info', `✅ 匹配成功的文章:`);
     selectedArticles.forEach((article, i) => {
       taskLog(task.id, 'info', `  ${i + 1}. ${article.title}`);
       taskLog(task.id, 'info', `     💡 选择理由: ${article.reason}`);
+      taskLog(task.id, 'info', `     🔗 URL: ${article.url}`);
     });
 
     // 返回时去掉 reason 字段（保持原有接口兼容）

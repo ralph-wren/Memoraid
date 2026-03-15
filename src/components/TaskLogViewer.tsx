@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Trash2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Trash2, RefreshCw, Copy } from 'lucide-react';
 import { ScheduledTask, CONTENT_CATEGORIES, PUBLISH_PLATFORMS } from '../utils/storage';
 
 // ============================================
@@ -25,6 +25,7 @@ const LOG_STORAGE_PREFIX = 'task_log_';
 const TaskLogViewer: React.FC<TaskLogViewerProps> = ({ task, onBack }) => {
   const [logs, setLogs] = useState<TaskLogEntry[]>([]);
   const [autoScroll, setAutoScroll] = useState(true); // 是否自动滚动到底部
+  const [copySuccess, setCopySuccess] = useState(false); // 复制成功提示
   const logEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -50,12 +51,14 @@ const TaskLogViewer: React.FC<TaskLogViewerProps> = ({ task, onBack }) => {
     return () => clearInterval(interval);
   }, [task.id]);
 
-  // 自动滚动到底部
+  // 自动滚动到底部（只在任务执行中时自动滚动）
   useEffect(() => {
-    if (autoScroll && logEndRef.current) {
+    // 只有任务状态为 'running' 时才自动滚动
+    const shouldAutoScroll = task.lastRunStatus === 'running' && autoScroll;
+    if (shouldAutoScroll && logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [logs, autoScroll]);
+  }, [logs, autoScroll, task.lastRunStatus]);
 
   // 监听用户手动滚动，如果滚到上面就暂停自动滚动
   const handleScroll = () => {
@@ -70,6 +73,29 @@ const TaskLogViewer: React.FC<TaskLogViewerProps> = ({ task, onBack }) => {
     const key = `${LOG_STORAGE_PREFIX}${task.id}`;
     await chrome.storage.local.set({ [key]: [] });
     setLogs([]);
+  };
+
+  // 复制所有日志到剪贴板
+  const copyLogs = async () => {
+    if (logs.length === 0) {
+      return;
+    }
+    
+    // 格式化日志内容
+    const logText = logs.map(entry => {
+      const time = formatTime(entry.time);
+      const level = entry.level.toUpperCase().padEnd(7); // 对齐
+      return `[${time}] [${level}] ${entry.message}`;
+    }).join('\n');
+    
+    try {
+      await navigator.clipboard.writeText(logText);
+      setCopySuccess(true);
+      // 2秒后隐藏提示
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (e) {
+      console.error('复制日志失败:', e);
+    }
   };
 
   // 格式化时间
@@ -109,6 +135,21 @@ const TaskLogViewer: React.FC<TaskLogViewerProps> = ({ task, onBack }) => {
             {statusLabel} · {task.categories.map(c => CONTENT_CATEGORIES[c]).join('、')} → {task.platforms.map(p => PUBLISH_PLATFORMS[p]).join('、')}
           </div>
         </div>
+        {/* 复制日志按钮 */}
+        <button
+          onClick={copyLogs}
+          disabled={logs.length === 0}
+          className={`p-1.5 rounded transition ${
+            copySuccess 
+              ? 'text-green-500 bg-green-50' 
+              : logs.length === 0
+                ? 'text-gray-300 cursor-not-allowed'
+                : 'text-gray-400 hover:text-blue-500 hover:bg-blue-50'
+          }`}
+          title={copySuccess ? '已复制！' : '复制所有日志'}
+        >
+          <Copy className="w-4 h-4" />
+        </button>
         {/* 清空日志按钮 */}
         <button
           onClick={clearLogs}
@@ -150,7 +191,12 @@ const TaskLogViewer: React.FC<TaskLogViewerProps> = ({ task, onBack }) => {
       {/* 底部状态栏 */}
       <div className="px-3 py-2 border-t bg-gray-50 text-xs text-gray-500 flex justify-between shrink-0">
         <span>共 {logs.length} 条日志</span>
-        <span>{autoScroll ? '📍 自动滚动' : '⏸️ 已暂停滚动（滑到底部恢复）'}</span>
+        <span>
+          {task.lastRunStatus === 'running' 
+            ? (autoScroll ? '📍 自动滚动' : '⏸️ 已暂停滚动（滑到底部恢复）')
+            : '⏹️ 任务已结束'
+          }
+        </span>
       </div>
     </div>
   );
