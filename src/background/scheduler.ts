@@ -338,7 +338,8 @@ async function executeTask(task: ScheduledTask) {
           await taskLog(task.id, 'info', `📤 开始发布到: ${platform}...`);
           try {
             await taskLog(task.id, 'info', `⏳ 正在抓取内容、AI 生成文章并发布...`);
-            await handleInitiateProcess(platform, tab.id!);
+            // 传递 isScheduledTask = true，标识这是定时任务，强制自动发布
+            await handleInitiateProcess(platform, tab.id!, true);
             await taskLog(task.id, 'success', `✅ ${platform} 发布流程已完成`);
           } catch (e: any) {
             await taskLog(task.id, 'error', `❌ 发布到 ${platform} 失败: ${e.message}`);

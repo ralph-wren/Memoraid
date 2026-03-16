@@ -13,6 +13,7 @@ interface PublishData {
   timestamp: number;
   generatedId?: string;
   tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number }; // AI token 消耗数据
+  autoPublish?: boolean; // 是否自动发布（定时任务会强制设置为 true）
 }
 
 // ============================================
@@ -4778,11 +4779,10 @@ const autoFillContent = async () => {
 
     const settings = await chrome.storage.sync.get(['autoPublishAll', 'weixin']);
     const authorName = settings.weixin?.authorName || '';
-    const autoPublish = settings.autoPublishAll === true
-      ? true
-      : settings.autoPublishAll === false
-      ? false
-      : settings.weixin?.autoPublish !== false;
+    // 优先使用 payload 中的 autoPublish 标识（定时任务会强制设置为 true）
+    const autoPublish = payload.autoPublish !== undefined 
+      ? payload.autoPublish  // 使用 payload 对象中的标识（定时任务强制为 true）
+      : true;  // 默认开启自动发布
     // 默认不优先使用素材来源图片，使用平台图片
     const imageSource: 'source' | 'platform' = 'platform';
 

@@ -201,13 +201,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 export const getSettings = async (): Promise<AppSettings> => {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(DEFAULT_SETTINGS, (items) => {
+    // 改用 chrome.storage.local，没有大小限制
+    chrome.storage.local.get(DEFAULT_SETTINGS, (items) => {
       const settings = items as AppSettings;
       
       // 如果没有匿名 ID，生成一个并保存
       if (!settings.anonymousId) {
         settings.anonymousId = `anon_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        chrome.storage.sync.set({ anonymousId: settings.anonymousId });
+        chrome.storage.local.set({ anonymousId: settings.anonymousId });
       }
       
       resolve(settings);
@@ -216,8 +217,16 @@ export const getSettings = async (): Promise<AppSettings> => {
 };
 
 export const saveSettings = async (settings: AppSettings): Promise<void> => {
+  // 确保 autoPublishAll 字段有明确的值（不是 undefined）
+  const settingsToSave = {
+    ...settings,
+    autoPublishAll: settings.autoPublishAll ?? false // 如果是 undefined，使用 false
+  };
+  
   return new Promise((resolve) => {
-    chrome.storage.sync.set(settings, () => {
+    // 改用 chrome.storage.local，没有大小限制
+    chrome.storage.local.set(settingsToSave, () => {
+      console.log('[Storage] 保存设置成功，autoPublishAll =', settingsToSave.autoPublishAll);
       resolve();
     });
   });

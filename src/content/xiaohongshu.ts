@@ -21,6 +21,7 @@ interface PublishData {
     timestamp: number;
     generatedId?: string;
     tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number }; // AI token 消耗数据
+    autoPublish?: boolean; // 是否自动发布（定时任务会强制设置为 true）
 }
 
 // ============================================
@@ -1603,12 +1604,10 @@ const autoFillContent = async (): Promise<void> => {
         if (isFlowCancelled) return;
 
         // 步骤10: 检查是否开启自动发布
-        const settings = await chrome.storage.sync.get(['autoPublishAll', 'xiaohongshu']);
-        const autoPublish = settings.autoPublishAll === true
-            ? true
-            : settings.autoPublishAll === false
-            ? false
-            : settings.xiaohongshu?.autoPublish !== false; // 默认开启
+        // 优先使用 pending 对象中的 autoPublish 标识（定时任务会强制设置为 true）
+        const autoPublish = pending.autoPublish !== undefined 
+            ? pending.autoPublish  // 使用 pending 对象中的标识（定时任务强制为 true）
+            : true;  // 默认开启自动发布
 
         if (autoPublish) {
             logger.log('🔔 自动发布已开启，准备发布...', 'info');

@@ -27,6 +27,7 @@ interface PublishData {
   timestamp: number;
   generatedId?: string;
   tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number }; // AI token 消耗数据
+  autoPublish?: boolean; // 是否自动发布（定时任务会强制设置为 true）
 }
 
 // ============================================
@@ -1737,12 +1738,10 @@ const fillContent = async () => {
       sessionStorage.setItem('memoraid_pending_title', payload.title);
     }
 
-    const settings = await chrome.storage.sync.get(['autoPublishAll', 'toutiao']);
-    const autoPublish = settings.autoPublishAll === true
-      ? true
-      : settings.autoPublishAll === false
-      ? false
-      : settings.toutiao?.autoPublish !== false;
+    // 优先使用 payload 中的 autoPublish 标识（定时任务会强制设置为 true）
+    const autoPublish = payload.autoPublish !== undefined 
+      ? payload.autoPublish  // 使用 payload 对象中的标识（定时任务强制为 true）
+      : true;  // 默认开启自动发布
 
     logger.log(`📄 准备填充内容: ${payload.title}`, 'info');
     if (autoPublish) {

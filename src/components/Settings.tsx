@@ -156,7 +156,7 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
   const isDirtyRef = React.useRef(false);
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
   const [selectedProvider] = useState<string>('memoraid'); // 固定使用 memoraid，不再需要 setSelectedProvider
-  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  // 移除 autoSaveStatus，改为只使用全局保存按钮
   const [showGithubToken, setShowGithubToken] = useState(false);
   const [showToutiaoCookie, setShowToutiaoCookie] = useState(false);
   const [showZhihuCookie, setShowZhihuCookie] = useState(false);
@@ -172,21 +172,30 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'restoring' | 'success' | 'error'>('idle');
   const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [showEncKey, setShowEncKey] = useState(false);
+  const [globalSaveStatus, setGlobalSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle'); // 全局保存按钮状态
+  // 移除 autoSaveStatus，不再需要自动保存状态
 
   const t = getTranslation(settings.language || 'zh-CN');
 
   latestSettingsRef.current = settings;
 
+  // 组件卸载时的保存逻辑已禁用，改为只使用全局保存按钮
+  /*
   useEffect(() => {
     return () => {
+      // 组件卸载时，如果有未保存的修改，立即保存
       if (!hasLoadedRef.current) return;
       if (!isDirtyRef.current) return;
+      console.log('[Settings] 组件卸载，保存未保存的修改');
       saveSettings(latestSettingsRef.current);
     };
   }, []);
+  */
 
   // 自动保存：当 settings 变化时自动保存（防抖）
+  // 注释掉自动保存功能，改为只使用全局保存按钮
   const isInitialMount = React.useRef(true);
+  /*
   useEffect(() => {
     // 跳过初始加载时的保存
     if (isInitialMount.current) {
@@ -207,6 +216,7 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
       clearTimeout(timer);
     };
   }, [settings]);
+  */
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -348,6 +358,9 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
           weixin: PROMPT_VERSIONS.WEIXIN,
           xiaohongshu: PROMPT_VERSIONS.XIAOHONGSHU
         };
+
+        // 确保保留 autoPublishAll 字段
+        newSettings.autoPublishAll = settings.autoPublishAll ?? false;
 
         // 阻止自动保存触发
         isInitialMount.current = true;
@@ -783,9 +796,65 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
     );
   }
 
+  // 全局保存按钮处理函数
+  const handleGlobalSave = async () => {
+    setGlobalSaveStatus('saving');
+    console.log('[Settings] 全局保存开始，autoPublishAll =', settings.autoPublishAll);
+    try {
+      // 标记为 dirty，防止 storage change 监听器在保存过程中重新加载
+      isDirtyRef.current = true;
+      await saveSettings(settings);
+      setGlobalSaveStatus('saved');
+      console.log('[Settings] 全局保存成功，已保存 autoPublishAll =', settings.autoPublishAll);
+      
+      // 延迟 1 秒后才允许 storage change 监听器重新加载，避免保存后立即被覆盖
+      setTimeout(() => {
+        isDirtyRef.current = false;
+      }, 1000);
+      
+      // 2秒后恢复 idle 状态
+      setTimeout(() => setGlobalSaveStatus('idle'), 2000);
+    } catch (error) {
+      console.error('[Settings] 全局保存失败:', error);
+      setGlobalSaveStatus('idle');
+      isDirtyRef.current = false;
+    }
+  };
+
   return (
     <div className="p-4 space-y-4">
-      <h2 className="text-xl font-bold mb-4">{t.settingsTitle}</h2>
+      {/* 标题和全局保存按钮 */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-bold">{t.settingsTitle}</h2>
+        <button
+          onClick={handleGlobalSave}
+          disabled={globalSaveStatus === 'saving'}
+          className={`px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-all ${
+            globalSaveStatus === 'saved'
+              ? 'bg-green-500 text-white'
+              : globalSaveStatus === 'saving'
+              ? 'bg-blue-500 text-white cursor-wait'
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+          }`}
+        >
+          {globalSaveStatus === 'saving' ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              保存中...
+            </>
+          ) : globalSaveStatus === 'saved' ? (
+            <>
+              <CheckCircle className="w-4 h-4" />
+              已保存
+            </>
+          ) : (
+            <>
+              <Cloud className="w-4 h-4" />
+              保存设置
+            </>
+          )}
+        </button>
+      </div>
 
       {/* ========== 同步与备份 ========== */}
       <div className="pb-4">
@@ -926,7 +995,8 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
           setSettings(prev => {
             const updated = {
               ...prev,
-              scheduledTasks: newSettings.scheduledTasks
+              scheduledTasks: newSettings.scheduledTasks,
+              autoPublishAll: prev.autoPublishAll ?? false // 明确保留 autoPublishAll 字段
             };
             // 异步保存，不阻塞 UI
             saveSettings(updated).then(() => {
@@ -956,7 +1026,7 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
                 className="sr-only peer"
                 checked={settings.autoPublishAll ?? false}
                 onChange={(e) => {
-                  isDirtyRef.current = true;
+                  // 直接更新状态，不再标记 dirty（已禁用自动保存和组件卸载保存）
                   setSettings({ ...settings, autoPublishAll: e.target.checked });
                 }}
               />
@@ -1476,28 +1546,7 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
       </div>
 
 
-      {/* ========== 自动保存状态提示 ========== */}
-      {autoSaveStatus !== 'idle' && (
-        <div className="pt-2 pb-2">
-          <div className={`text-center text-xs py-2 rounded transition-all ${autoSaveStatus === 'saving'
-            ? 'bg-blue-50 text-blue-600'
-            : 'bg-green-50 text-green-600'
-            }`}>
-            {autoSaveStatus === 'saving' && (
-              <span className="flex items-center justify-center gap-1">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                {t.autoSaving || '自动保存中...'}
-              </span>
-            )}
-            {autoSaveStatus === 'saved' && (
-              <span className="flex items-center justify-center gap-1">
-                <CheckCircle className="w-3 h-3" />
-                {t.autoSaved || '已自动保存'}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
+      {/* 移除自动保存状态提示，改为只使用全局保存按钮 */}
     </div>
   );
 };

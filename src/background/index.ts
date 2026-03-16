@@ -160,8 +160,10 @@ async function updatePlatformCookie(platform: 'toutiao' | 'zhihu' | 'weixin' | '
       if (cookieStr !== currentCookie) {
         console.log(`[Cookie Monitor] Updating ${platform} cookie (${validCookies.length} cookies)`);
 
+        // 确保保留所有现有字段，特别是 autoPublishAll
         const newSettings = {
           ...settings,
+          autoPublishAll: settings.autoPublishAll ?? false, // 明确保留 autoPublishAll 字段
           [settingsKey]: {
             ...settings[settingsKey],
             cookie: cookieStr
@@ -178,8 +180,10 @@ async function updatePlatformCookie(platform: 'toutiao' | 'zhihu' | 'weixin' | '
       if (currentCookie) {
         console.log(`[Cookie Monitor] ${platform} cookies cleared (user logged out?)`);
 
+        // 确保保留所有现有字段，特别是 autoPublishAll
         const newSettings = {
           ...settings,
+          autoPublishAll: settings.autoPublishAll ?? false, // 明确保留 autoPublishAll 字段
           [settingsKey]: {
             ...settings[settingsKey],
             cookie: ''
@@ -278,8 +282,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         // 只清空插件存储中的微信 Cookie 字符串
         const settings = await getSettings();
         if (settings.weixin?.cookie) {
-          settings.weixin.cookie = '';
-          await saveSettings(settings);
+          // 创建新对象，确保保留所有字段
+          const newSettings = {
+            ...settings,
+            autoPublishAll: settings.autoPublishAll ?? false, // 明确保留 autoPublishAll 字段
+            weixin: {
+              ...settings.weixin,
+              cookie: ''
+            }
+          };
+          await saveSettings(newSettings);
           console.log('[Cookie] 已清空存储中的微信 Cookie（浏览器 Cookie 保持不变）');
         } else {
           console.log('[Cookie] 存储中的微信 Cookie 已经是空的');
@@ -444,7 +456,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 // 导出 handleInitiateProcess，供 scheduler 直接调用
 // （background 不能通过 chrome.runtime.sendMessage 给自己发消息）
-export async function handleInitiateProcess(platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu', tabId: number) {
+// 添加 isScheduledTask 参数，用于标识是否来自定时任务
+export async function handleInitiateProcess(platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu', tabId: number, isScheduledTask: boolean = false) {
   const platformName = platform === 'toutiao' ? '头条' :
     platform === 'zhihu' ? '知乎' :
       platform === 'xiaohongshu' ? '小红书' : '公众号';
@@ -510,11 +523,12 @@ export async function handleInitiateProcess(platform: 'toutiao' | 'zhihu' | 'wei
     console.log('[DEBUG] handleInitiateProcess: 准备调用 startArticleGenerationAndPublish', {
       platform,
       title: extraction.title,
-      hasUrl: !!extraction.url
+      hasUrl: !!extraction.url,
+      isScheduledTask // 添加定时任务标识日志
     });
 
-    // 3. 开始生成和发布流程
-    await startArticleGenerationAndPublish(extraction, platform);
+    // 3. 开始生成和发布流程，传递 isScheduledTask 参数
+    await startArticleGenerationAndPublish(extraction, platform, isScheduledTask);
     
     // 【调试日志】startArticleGenerationAndPublish 调用完成
     console.log('[DEBUG] handleInitiateProcess: startArticleGenerationAndPublish 调用完成');
@@ -1492,7 +1506,16 @@ function broadcastUpdate() {
   });
 }
 
-async function handlePublishToToutiao(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[]; generatedId?: string; tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {
+// 添加 isScheduledTask 参数，用于标识是否来自定时任务
+async function handlePublishToToutiao(payload: { 
+  title: string; 
+  content: string; 
+  sourceUrl?: string; 
+  sourceImages?: string[]; 
+  generatedId?: string; 
+  tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  isScheduledTask?: boolean; // 定时任务标识
+}) {
   try {
     const settings = await getSettings();
     const cookieStr = settings.toutiao?.cookie;
@@ -1572,6 +1595,9 @@ async function handlePublishToToutiao(payload: { title: string; content: string;
     const htmlContent = await marked.parse(cleanedContent);
 
     // Save payload to storage for content script to pick up
+    // 如果是定时任务，强制设置 autoPublish = true
+    const autoPublish = payload.isScheduledTask ? true : settings.autoPublishAll;
+    
     await chrome.storage.local.set({
       pending_toutiao_publish: {
         title: articleTitle,
@@ -1581,7 +1607,8 @@ async function handlePublishToToutiao(payload: { title: string; content: string;
         sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
         timestamp: Date.now(),
         generatedId: payload.generatedId,
-        tokenUsage: payload.tokenUsage // 传递 token 数据
+        tokenUsage: payload.tokenUsage, // 传递 token 数据
+        autoPublish // 传递自动发布标识（定时任务强制为 true）
       }
     });
 
@@ -1624,6 +1651,7 @@ async function handlePublishToToutiao(payload: { title: string; content: string;
   }
 }
 
+// 添加 isScheduledTask 参数，用于标识是否来自定时任务
 async function handlePublishToZhihu(payload: { 
   title: string; 
   content: string; 
@@ -1631,6 +1659,7 @@ async function handlePublishToZhihu(payload: {
   sourceImages?: string[]; 
   generatedId?: string;
   tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  isScheduledTask?: boolean; // 定时任务标识
 }) {
   try {
     const settings = await getSettings();
@@ -1696,6 +1725,9 @@ async function handlePublishToZhihu(payload: {
     const htmlContent = await marked.parse(cleanedContent);
 
     // Save payload to storage for content script to pick up
+    // 如果是定时任务，强制设置 autoPublish = true
+    const autoPublish = payload.isScheduledTask ? true : settings.autoPublishAll;
+    
     await chrome.storage.local.set({
       pending_zhihu_publish: {
         title: articleTitle,
@@ -1705,7 +1737,8 @@ async function handlePublishToZhihu(payload: {
         sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
         timestamp: Date.now(),
         generatedId: payload.generatedId,
-        tokenUsage: payload.tokenUsage // 传递 token 数据
+        tokenUsage: payload.tokenUsage, // 传递 token 数据
+        autoPublish // 传递自动发布标识（定时任务强制为 true）
       }
     });
 
@@ -1724,7 +1757,16 @@ async function handlePublishToZhihu(payload: {
   }
 }
 
-async function handlePublishToWeixin(payload: { title: string; content: string; sourceUrl?: string; sourceImages?: string[]; generatedId?: string; tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {
+// 添加 isScheduledTask 参数，用于标识是否来自定时任务
+async function handlePublishToWeixin(payload: { 
+  title: string; 
+  content: string; 
+  sourceUrl?: string; 
+  sourceImages?: string[]; 
+  generatedId?: string; 
+  tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  isScheduledTask?: boolean; // 定时任务标识
+}) {
   try {
     const settings = await getSettings();
     const cookieStr = settings.weixin?.cookie;
@@ -1793,6 +1835,9 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
     const htmlContent = await marked.parse(cleanedContent);
 
     // Save payload to storage for content script to pick up
+    // 如果是定时任务，强制设置 autoPublish = true
+    const autoPublish = payload.isScheduledTask ? true : settings.autoPublishAll;
+    
     await chrome.storage.local.set({
       pending_weixin_publish: {
         title: articleTitle,
@@ -1802,7 +1847,8 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
         sourceImages: Array.isArray(payload.sourceImages) ? payload.sourceImages.filter(u => typeof u === 'string' && u.trim()) : undefined,
         timestamp: Date.now(),
         generatedId: payload.generatedId,
-        tokenUsage: payload.tokenUsage // 传递 token 数据
+        tokenUsage: payload.tokenUsage, // 传递 token 数据
+        autoPublish // 传递自动发布标识（定时任务强制为 true）
       }
     });
 
@@ -1846,13 +1892,15 @@ async function handlePublishToWeixin(payload: { title: string; content: string; 
   }
 }
 
+// 添加 isScheduledTask 参数，用于标识是否来自定时任务
 async function handlePublishToXiaohongshu(payload: { 
   title: string, 
   content: string, 
   sourceUrl?: string, 
   sourceImages?: string[], 
   generatedId?: string, 
-  tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } 
+  tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number },
+  isScheduledTask?: boolean // 定时任务标识
 }) {
   try {
     console.log('Handling publish to Xiaohongshu:', payload.title);
@@ -1969,7 +2017,9 @@ async function handlePublishToXiaohongshu(payload: {
     cleanedContent = cleanedContent.replace(/\n*(?:#[^\s#]+\s*)+\s*$/, '').trim();
 
     // 3. 将数据保存到 Storage，供 Content Script 读取
-    // 注意：pending_xiaohongshu_publish
+    // 如果是定时任务，强制设置 autoPublish = true
+    const autoPublish = payload.isScheduledTask ? true : settings.autoPublishAll;
+    
     const publishData = {
       title: articleTitle,
       content: cleanedContent,
@@ -1979,7 +2029,8 @@ async function handlePublishToXiaohongshu(payload: {
       topics: topics.length > 0 ? topics : undefined, // 添加话题字段
       timestamp: Date.now(),
       generatedId: payload.generatedId,
-      tokenUsage: payload.tokenUsage // 传递 token 数据
+      tokenUsage: payload.tokenUsage, // 传递 token 数据
+      autoPublish // 传递自动发布标识（定时任务强制为 true）
     };
 
     await chrome.storage.local.set({
@@ -2264,13 +2315,15 @@ async function startArticleGeneration(extraction: ExtractionResult) {
 }
 
 // 一键生成文章并发布到指定平台
-async function startArticleGenerationAndPublish(extraction: ExtractionResult, platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu') {
+// 添加 isScheduledTask 参数，用于标识是否来自定时任务
+async function startArticleGenerationAndPublish(extraction: ExtractionResult, platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu', isScheduledTask: boolean = false) {
   try {
     // 【调试日志】函数入口
     console.log('[DEBUG] startArticleGenerationAndPublish 开始执行:', {
       platform,
       title: extraction.title,
-      url: extraction.url
+      url: extraction.url,
+      isScheduledTask // 添加定时任务标识日志
     });
     
     abortController = new AbortController();
@@ -2555,7 +2608,7 @@ ${platformPrompt}
       generatedId
     });
 
-    // 根据平台发布
+    // 根据平台发布，传递 isScheduledTask 参数
     if (platform === 'toutiao') {
       await handlePublishToToutiao({
         title: finalTitle,
@@ -2563,7 +2616,8 @@ ${platformPrompt}
         sourceUrl: extraction.url,
         sourceImages: extraction.images,
         generatedId, // 传递 generatedId
-        tokenUsage // 传递 token 数据
+        tokenUsage, // 传递 token 数据
+        isScheduledTask // 传递定时任务标识
       });
     } else if (platform === 'zhihu') {
       await handlePublishToZhihu({
@@ -2572,7 +2626,8 @@ ${platformPrompt}
         sourceUrl: extraction.url,
         sourceImages: extraction.images,
         generatedId, // 传递 generatedId
-        tokenUsage // 传递 token 数据
+        tokenUsage, // 传递 token 数据
+        isScheduledTask // 传递定时任务标识
       });
     } else if (platform === 'weixin') {
       await handlePublishToWeixin({
@@ -2581,7 +2636,8 @@ ${platformPrompt}
         sourceUrl: extraction.url,
         sourceImages: extraction.images,
         generatedId, // 传递 generatedId
-        tokenUsage // 传递 token 数据
+        tokenUsage, // 传递 token 数据
+        isScheduledTask // 传递定时任务标识
       });
     } else if (platform === 'xiaohongshu') {
       await handlePublishToXiaohongshu({
@@ -2590,7 +2646,8 @@ ${platformPrompt}
         sourceUrl: extraction.url,
         sourceImages: extraction.images,
         generatedId, // 传递 generatedId
-        tokenUsage // 传递 token 数据
+        tokenUsage, // 传递 token 数据
+        isScheduledTask // 传递定时任务标识
       });
     }
 
@@ -2750,6 +2807,7 @@ async function handleLogin(provider: 'google' | 'github') {
           const currentSettings = await getSettings();
           const newSettings = {
             ...currentSettings,
+            autoPublishAll: currentSettings.autoPublishAll ?? false, // 明确保留 autoPublishAll 字段
             sync: {
               ...currentSettings.sync!,
               enabled: true,
