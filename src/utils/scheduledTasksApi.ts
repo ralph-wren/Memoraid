@@ -6,6 +6,29 @@
 import { ScheduledTask, AppSettings } from './storage';
 
 /**
+ * 任务执行结果数据（用于邮件通知）
+ */
+export interface TaskExecutionResult {
+  taskId: string;
+  taskName: string;
+  executionTime: number;
+  status: 'success' | 'failed';
+  articles: Array<{
+    title: string;
+    sourceUrl: string;
+    platforms: string[];
+    status: 'success' | 'failed';
+    publishTime?: number;
+    error?: string;
+  }>;
+  logs: Array<{
+    time: number;
+    level: 'info' | 'warn' | 'error' | 'success';
+    message: string;
+  }>;
+}
+
+/**
  * 定时任务 API 客户端
  */
 export class ScheduledTasksApi {
@@ -110,6 +133,30 @@ export class ScheduledTasksApi {
 
     if (!response.ok) {
       throw new Error(`更新任务状态失败: ${response.status} ${await response.text()}`);
+    }
+  }
+
+  /**
+   * 发送任务完成通知邮件
+   */
+  async sendNotification(
+    notificationEmail: string,
+    executionResult: TaskExecutionResult
+  ): Promise<void> {
+    const response = await fetch(`${this.backendUrl}/api/scheduled-tasks/send-notification`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Anonymous-ID': this.anonymousId,
+      },
+      body: JSON.stringify({
+        notificationEmail,
+        executionResult,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`发送邮件通知失败: ${response.status} ${await response.text()}`);
     }
   }
 }

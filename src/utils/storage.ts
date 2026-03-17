@@ -138,6 +138,7 @@ export interface ScheduledTask {
   platforms: PublishPlatform[];      // 发布到哪些平台
   articleCount?: number;             // 单次生成文章数量（默认 1）
   customPrompt?: string;             // 自定义提示词（用于 AI 选择话题）
+  notificationEmail?: string;        // 通知邮箱（任务完成后发送邮件通知）
   lastRunTime?: number;              // 上次执行时间戳
   lastRunStatus?: 'success' | 'failed' | 'running'; // 上次执行状态
   lastRunError?: string;             // 上次执行失败的错误信息

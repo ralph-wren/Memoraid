@@ -8981,7 +8981,7 @@ export default {
           'SELECT * FROM scheduled_tasks WHERE user_id = ? ORDER BY created_at DESC'
         ).bind(userId).all();
 
-        // 将数据库字段转换为前端需要的格式（添加 articleCount、customPrompt 和 executionTimes）
+        // 将数据库字段转换为前端需要的格式（添加 articleCount、customPrompt、executionTimes 和 notificationEmail）
         const formattedTasks = tasks.results.map((task: any) => ({
           id: task.id,
           enabled: task.enabled === 1,
@@ -8999,6 +8999,7 @@ export default {
           platforms: JSON.parse(task.platforms),
           articleCount: task.article_count || 1, // 单次生成文章数量
           customPrompt: task.custom_prompt || '', // 自定义提示词
+          notificationEmail: task.notification_email || '', // 通知邮箱
           lastRunTime: task.last_run_time,
           lastRunStatus: task.last_run_status,
           lastRunError: task.last_run_error,
@@ -9036,14 +9037,14 @@ export default {
         const body = await request.json() as any;
         const now = Date.now();
 
-        // 插入新任务（添加 article_count、custom_prompt 和 execution_times 字段）
+        // 插入新任务（添加 article_count、custom_prompt、execution_times 和 notification_email 字段）
         await env.DB.prepare(
           `INSERT INTO scheduled_tasks (
             id, user_id, enabled, name, schedule_type, hour, minute, 
             weekdays, interval_minutes, news_source_type, news_source_url, 
             tophub_node_id, categories, platforms, article_count, custom_prompt,
-            execution_times, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            execution_times, notification_email, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
           body.id,
           userId,
@@ -9062,6 +9063,7 @@ export default {
           body.articleCount || 1, // 默认 1 篇
           body.customPrompt || null, // 自定义提示词
           body.executionTimes ? JSON.stringify(body.executionTimes) : null, // 多个执行时间点
+          body.notificationEmail || null, // 通知邮箱
           now,
           now
         ).run();
@@ -9114,13 +9116,14 @@ export default {
           });
         }
 
-        // 更新任务（只更新配置字段，不更新执行状态字段，添加 article_count 和 custom_prompt）
+        // 更新任务（只更新配置字段，不更新执行状态字段，添加 article_count、custom_prompt 和 notification_email）
         await env.DB.prepare(
           `UPDATE scheduled_tasks SET 
             enabled = ?, name = ?, schedule_type = ?, hour = ?, minute = ?,
             weekdays = ?, interval_minutes = ?, news_source_type = ?, 
             news_source_url = ?, tophub_node_id = ?, categories = ?, 
-            platforms = ?, article_count = ?, custom_prompt = ?, execution_times = ?, updated_at = ?
+            platforms = ?, article_count = ?, custom_prompt = ?, execution_times = ?, 
+            notification_email = ?, updated_at = ?
           WHERE id = ?`
         ).bind(
           body.enabled ? 1 : 0,
@@ -9138,6 +9141,7 @@ export default {
           body.articleCount || 1, // 默认 1 篇
           body.customPrompt || null, // 自定义提示词
           body.executionTimes ? JSON.stringify(body.executionTimes) : null, // 多个执行时间点
+          body.notificationEmail || null, // 通知邮箱
           Date.now(),
           taskId
         ).run();
@@ -9226,6 +9230,382 @@ export default {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 8.6 POST /api/scheduled-tasks/send-notification - 发送任务完成通知邮件
+    if (url.pathname === '/api/scheduled-tasks/send-notification' && request.method === 'POST') {
+      try {
+        const body = await request.json() as {
+          taskName: string;
+          taskId: string;
+          executionTime: string;
+          status: 'success' | 'failed';
+          successCount: number;
+          failedCount: number;
+          totalCount: number;
+          articles: Array<{
+            title: string;
+            sourceUrl: string;
+            platforms: string[];
+            status: 'success' | 'failed';
+            publishTime: string;
+            errorMessage?: string;
+          }>;
+          logs: Array<{
+            time: string;
+            level: 'info' | 'success' | 'error' | 'warn';
+            message: string;
+          }>;
+          notificationEmail: string;
+        };
+
+        // 验证邮箱地址
+        if (!body.notificationEmail || !body.notificationEmail.includes('@')) {
+          return new Response(JSON.stringify({ error: '无效的邮箱地址' }), {
+            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 生成文章详情 HTML
+        const articlesHtml = body.articles.map((article, index) => {
+          const statusClass = article.status === 'success' ? 'status-success' : 'status-failed';
+          const statusIcon = article.status === 'success' ? '✅' : '❌';
+          const statusText = article.status === 'success' ? '发布成功' : '发布失败';
+          const cardClass = article.status === 'success' ? 'article-card' : 'article-card failed';
+          
+          const platformTags = article.platforms.map(p => 
+            `<span class="platform-tag">${p}</span>`
+          ).join('');
+
+          let errorHtml = '';
+          if (article.status === 'failed' && article.errorMessage) {
+            errorHtml = `<div class="article-info" style="color: #f44336;">失败原因：${article.errorMessage}</div>`;
+          }
+
+          return `
+            <div class="${cardClass}">
+              <div class="article-title">${statusIcon} 文章 ${index + 1}</div>
+              <div class="article-info"><strong>状态：</strong><span class="${statusClass}">${statusText}</span></div>
+              <div class="article-info"><strong>标题：</strong>${article.title}</div>
+              <div class="article-info"><strong>素材来源：</strong><a href="${article.sourceUrl}" style="color: #1976d2;">${article.sourceUrl}</a></div>
+              <div class="article-info"><strong>发布时间：</strong>${article.publishTime}</div>
+              ${errorHtml}
+              <div class="article-platforms">${platformTags}</div>
+            </div>
+          `;
+        }).join('');
+
+        // 生成日志 HTML
+        const logsHtml = body.logs.map(log => {
+          const icon = log.level === 'success' ? '✅' : 
+                      log.level === 'error' ? '❌' : 
+                      log.level === 'warn' ? '⚠️' : 'ℹ️';
+          return `<div class="log-entry"><span class="log-time">[${log.time}]</span> ${icon} ${log.message}</div>`;
+        }).join('');
+
+        // 读取邮件模板
+        const emailTemplate = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memoraid 定时任务执行报告</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #4CAF50;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #4CAF50;
+            margin: 0;
+            font-size: 24px;
+        }
+        .header p {
+            color: #666;
+            margin: 10px 0 0 0;
+            font-size: 14px;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .info-row {
+            display: flex;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #666;
+            min-width: 100px;
+        }
+        .info-value {
+            color: #333;
+            flex: 1;
+        }
+        .status-success {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .status-failed {
+            color: #f44336;
+            font-weight: bold;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+            padding: 20px;
+            background-color: #f9f9f9;
+            border-radius: 8px;
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-number {
+            font-size: 32px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .article-card {
+            background-color: #f9f9f9;
+            border-left: 4px solid #4CAF50;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
+        .article-card.failed {
+            border-left-color: #f44336;
+        }
+        .article-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .article-info {
+            font-size: 14px;
+            color: #666;
+            margin: 5px 0;
+        }
+        .article-platforms {
+            display: inline-flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .platform-tag {
+            background-color: #e3f2fd;
+            color: #1976d2;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+        .log-container {
+            background-color: #f5f5f5;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .log-entry {
+            margin: 5px 0;
+            color: #333;
+        }
+        .log-time {
+            color: #999;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            color: #999;
+            font-size: 12px;
+        }
+        .footer a {
+            color: #4CAF50;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📋 Memoraid 定时任务执行报告</h1>
+            <p>任务已完成，以下是详细信息</p>
+        </div>
+
+        <div class="section">
+            <div class="section-title">📊 任务概览</div>
+            <div class="info-row">
+                <div class="info-label">任务名称：</div>
+                <div class="info-value">${body.taskName}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">执行时间：</div>
+                <div class="info-value">${body.executionTime}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">任务状态：</div>
+                <div class="info-value ${body.status === 'success' ? 'status-success' : 'status-failed'}">${body.status === 'success' ? '✅ 成功' : '❌ 失败'}</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">📈 执行统计</div>
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-number">${body.successCount}</div>
+                    <div class="stat-label">成功发布</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" style="color: #f44336;">${body.failedCount}</div>
+                    <div class="stat-label">失败发布</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" style="color: #2196F3;">${body.totalCount}</div>
+                    <div class="stat-label">总计文章</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">📝 文章详情</div>
+            ${articlesHtml}
+        </div>
+
+        <div class="section">
+            <div class="section-title">📌 任务日志</div>
+            <div class="log-container">
+                ${logsHtml}
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>此邮件由 Memoraid 自动发送，请勿回复</p>
+            <p>如有问题，请访问：<a href="https://memoraid.dpdns.org">https://memoraid.dpdns.org</a></p>
+        </div>
+    </div>
+</body>
+</html>`;
+
+        // 生成纯文本版本
+        const textContent = `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 Memoraid 定时任务执行报告
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+任务名称：${body.taskName}
+执行时间：${body.executionTime}
+任务状态：${body.status === 'success' ? '✅ 成功' : '❌ 失败'}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 执行统计
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• 成功发布：${body.successCount} 篇
+• 失败发布：${body.failedCount} 篇
+• 总计文章：${body.totalCount} 篇
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 文章详情
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${body.articles.map((article, index) => `
+【文章 ${index + 1}】
+状态：${article.status === 'success' ? '✅ 发布成功' : '❌ 发布失败'}
+标题：${article.title}
+素材来源：${article.sourceUrl}
+发布平台：${article.platforms.join('、')}
+发布时间：${article.publishTime}
+${article.status === 'failed' && article.errorMessage ? `失败原因：${article.errorMessage}` : ''}
+`).join('\n')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📌 任务日志
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+${body.logs.map(log => {
+  const icon = log.level === 'success' ? '✅' : 
+              log.level === 'error' ? '❌' : 
+              log.level === 'warn' ? '⚠️' : 'ℹ️';
+  return `[${log.time}] ${icon} ${log.message}`;
+}).join('\n')}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+此邮件由 Memoraid 自动发送，请勿回复。
+如有问题，请访问：https://memoraid.dpdns.org
+`;
+
+        // 发送邮件
+        const emailResponse = await sendEmailViaResend(env.RESEND_API_KEY, {
+          from: 'onboarding@resend.dev',
+          fromName: 'Memoraid',
+          to: body.notificationEmail,
+          subject: `[Memoraid] 定时任务执行完成 - ${body.taskName}`,
+          text: textContent,
+          html: emailTemplate
+        });
+
+        if (!emailResponse.ok) {
+          const errorText = await emailResponse.text();
+          console.error('发送邮件失败:', errorText);
+          return new Response(JSON.stringify({ 
+            error: '发送邮件失败', 
+            details: errorText 
+          }), {
+            status: 500, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const emailResult = await emailResponse.json();
+        console.log('邮件发送成功:', emailResult);
+
+        return new Response(JSON.stringify({ 
+          success: true,
+          emailId: (emailResult as any).id
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        console.error('发送通知邮件错误:', e);
         return new Response(JSON.stringify({ error: e.message }), {
           status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });

@@ -293,11 +293,30 @@ async function executeTask(task: ScheduledTask) {
     // 循环处理每个选中的文章
     let successCount = 0;
     let failCount = 0;
+    // 记录每篇文章的详细信息（用于邮件通知）
+    const articleResults: Array<{
+      title: string;
+      sourceUrl: string;
+      platforms: string[];
+      status: 'success' | 'failed';
+      publishTime: string;
+      errorMessage?: string;
+    }> = [];
 
     for (let i = 0; i < selectedArticles.length; i++) {
       const article = selectedArticles[i];
       await taskLog(task.id, 'info', `\n📝 [${i + 1}/${selectedArticles.length}] 处理话题: ${article.title}`);
       await taskLog(task.id, 'info', `🔗 文章链接: ${article.url}`);
+
+      // 记录当前文章的发布结果
+      const articleResult = {
+        title: article.title,
+        sourceUrl: article.url,
+        platforms: task.platforms,
+        status: 'success' as 'success' | 'failed',
+        publishTime: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+        errorMessage: undefined as string | undefined,
+      };
 
       try {
         // 打开文章详情页
@@ -350,6 +369,9 @@ async function executeTask(task: ScheduledTask) {
 
         successCount++;
         await taskLog(task.id, 'success', `✅ [${i + 1}/${selectedArticles.length}] 话题处理完成`);
+        
+        // 记录成功结果
+        articleResults.push(articleResult);
 
         // 如果还有下一篇，等待一段时间避免频率过高
         if (i < selectedArticles.length - 1) {
@@ -360,6 +382,11 @@ async function executeTask(task: ScheduledTask) {
       } catch (e: any) {
         failCount++;
         await taskLog(task.id, 'error', `❌ [${i + 1}/${selectedArticles.length}] 话题处理失败: ${e.message}`);
+        
+        // 记录失败结果
+        articleResult.status = 'failed';
+        articleResult.errorMessage = e.message;
+        articleResults.push(articleResult);
       }
     }
 
@@ -371,6 +398,18 @@ async function executeTask(task: ScheduledTask) {
     await taskLog(task.id, 'info', `🧹 正在关闭任务打开的 ${taskTabIds.length} 个页面...`);
     await closeAllTaskTabs(taskTabIds);
     await taskLog(task.id, 'success', `✅ 页面已全部关闭`);
+
+    // 如果配置了通知邮箱，发送邮件通知
+    if (task.notificationEmail) {
+      await taskLog(task.id, 'info', `📧 正在发送邮件通知到: ${task.notificationEmail}...`);
+      try {
+        await sendTaskNotification(task, articleResults, successCount, failCount);
+        await taskLog(task.id, 'success', `✅ 邮件通知已发送`);
+      } catch (emailError: any) {
+        await taskLog(task.id, 'error', `❌ 邮件发送失败: ${emailError.message}`);
+        // 邮件发送失败不影响任务状态
+      }
+    }
 
   } catch (error: any) {
     await taskLog(task.id, 'error', `❌ 任务失败: ${error?.message || String(error)}`);
@@ -812,6 +851,80 @@ ${task.customPrompt ? `\n选题要求：${task.customPrompt}\n` : '\n选题要�
     await taskLog(task.id, 'warn', `⚠️ 降级为随机选择模式`);
     const shuffled = shuffleArray([...articles]);
     return shuffled.slice(0, articleCount);
+  }
+}
+
+/**
+ * 发送任务完成通知邮件
+ * 调用后端 API 发送包含任务执行详情的邮件
+ */
+async function sendTaskNotification(
+  task: ScheduledTask,
+  articleResults: Array<{
+    title: string;
+    sourceUrl: string;
+    platforms: string[];
+    status: 'success' | 'failed';
+    publishTime: string;
+    errorMessage?: string;
+  }>,
+  successCount: number,
+  failCount: number
+) {
+  try {
+    // 获取任务日志
+    const key = `${LOG_STORAGE_PREFIX}${task.id}`;
+    const result = await chrome.storage.local.get(key);
+    const logs: TaskLogEntry[] = result[key] || [];
+
+    // 格式化日志为邮件格式
+    const formattedLogs = logs.map(log => ({
+      time: new Date(log.time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+      level: log.level,
+      message: log.message,
+    }));
+
+    // 获取设置
+    const settings = await getSettings();
+    const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+
+    // 构建认证 headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (settings.sync?.token) {
+      headers['Authorization'] = `Bearer ${settings.sync.token}`;
+    } else if (settings.anonymousId) {
+      headers['X-Anonymous-ID'] = settings.anonymousId;
+    }
+
+    // 调用后端 API 发送邮件
+    const response = await fetch(`${backendUrl}/api/scheduled-tasks/send-notification`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        taskName: task.name,
+        executionTime: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+        status: failCount === 0 ? 'success' : 'failed',
+        successCount,
+        failedCount: failCount,
+        totalCount: articleResults.length,
+        articles: articleResults,
+        logs: formattedLogs,
+        notificationEmail: task.notificationEmail,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`邮件发送失败: ${errorText}`);
+    }
+
+    const result2 = await response.json();
+    console.log('[Scheduler] 邮件发送成功:', result2);
+  } catch (error: any) {
+    console.error('[Scheduler] 发送邮件通知失败:', error);
+    throw error;
   }
 }
 
