@@ -1853,29 +1853,76 @@ async function handlePublishToWeixin(payload: {
     });
 
     // 打开或激活微信公众号页面
-    // 编辑器页面URL（直接进入新建文章页面，避免content script点击按钮打开新页面）
-    const editorUrl = 'https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&isNew=1&type=10&createType=0&token=&lang=zh_CN';
-
-    // 优先查找编辑器页面
-    const editorTabs = await chrome.tabs.query({ url: '*://mp.weixin.qq.com/*appmsg_edit*' });
-    // 其次查找所有微信页面
-    const allTabs = await chrome.tabs.query({ url: '*://mp.weixin.qq.com/*' });
-
+    // 【修复】直接打开编辑器 URL，不再通过首页点击"文章"按钮
+    // 原因：点击"文章"按钮会打开新标签页，content script 无法检测到 URL 变化
+    // 解决方案：从首页 URL 提取 token，直接构造编辑器 URL
+    
+    const homeUrl = 'https://mp.weixin.qq.com/';
+    
+    // 先查找首页，获取 token
+    const homeTabs = await chrome.tabs.query({ url: 'https://mp.weixin.qq.com/*' });
+    
+    let token: string | null = null;
+    
+    // 从已有的微信页面 URL 中提取 token
+    for (const tab of homeTabs) {
+      if (tab.url) {
+        const match = tab.url.match(/[?&]token=(\d+)/);
+        if (match) {
+          token = match[1];
+          console.log(`[Weixin] 从已有页面提取 token: ${token}`);
+          break;
+        }
+      }
+    }
+    
+    // 如果没有找到 token，打开首页获取
+    if (!token) {
+      console.log('[Weixin] 未找到 token，打开首页获取...');
+      
+      // 打开首页
+      const homeTab = await chrome.tabs.create({
+        url: homeUrl,
+        active: true
+      });
+      
+      // 等待首页加载，从 URL 中提取 token
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      if (homeTab.id) {
+        const updatedTab = await chrome.tabs.get(homeTab.id);
+        if (updatedTab.url) {
+          const match = updatedTab.url.match(/[?&]token=(\d+)/);
+          if (match) {
+            token = match[1];
+            console.log(`[Weixin] 从首页提取 token: ${token}`);
+          }
+        }
+      }
+    }
+    
+    if (!token) {
+      console.error('[Weixin] 无法获取 token，请先登录微信公众平台');
+      throw new Error('无法获取 token，请先登录微信公众平台');
+    }
+    
+    // 构造编辑器 URL
+    const timestamp = Date.now();
+    const editorUrl = `https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&isNew=1&type=77&createType=0&token=${token}&lang=zh_CN&timestamp=${timestamp}`;
+    
+    console.log(`[Weixin] 打开编辑器: ${editorUrl}`);
+    
+    // 查找已有的编辑器页面
+    const editorTabs = await chrome.tabs.query({ url: '*://mp.weixin.qq.com/*appmsg*edit*' });
+    
     let tab: chrome.tabs.Tab;
-
+    
     if (editorTabs.length > 0) {
-      // 找到编辑器页面，复用它
+      // 如果已有编辑器页面，导航到新的编辑器 URL
       tab = editorTabs[0];
-      await chrome.tabs.update(tab.id!, { active: true });
-      // 重新加载页面以触发 content script
-      await chrome.tabs.reload(tab.id!);
-    } else if (allTabs.length > 0) {
-      // 如果已有其他微信页面（如首页），直接导航到编辑器页面
-      // 这样可以避免content script检测到首页后点击"文章"按钮打开新页面
-      tab = allTabs[0];
       await chrome.tabs.update(tab.id!, { active: true, url: editorUrl });
     } else {
-      // 否则创建新标签页，直接打开编辑器页面
+      // 否则创建新标签页
       tab = await chrome.tabs.create({
         url: editorUrl,
         active: true
@@ -1885,7 +1932,7 @@ async function handlePublishToWeixin(payload: {
     if (!tab.id) throw new Error('Failed to create or find tab');
 
     // The content script (src/content/weixin.ts) will handle the rest
-    console.log('Opened Weixin publish page, waiting for content script to fill...');
+    console.log('Opened Weixin editor page, waiting for content script to fill...');
 
   } catch (error) {
     console.error('Weixin publish failed', error);

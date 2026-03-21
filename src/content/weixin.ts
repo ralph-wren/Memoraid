@@ -667,33 +667,11 @@ const generateAIImage = async (prompt: string, setRatio: boolean = true): Promis
   
   await new Promise(r => setTimeout(r, 300));
   
-  // 关键优化：在点击"创作"按钮之前，先检查是否有推荐图片
-  // 如果有推荐图片，直接使用，无需等待AI生成
-  logger.log('检查是否有推荐图片...', 'info');
+  // 修改：不再使用推荐图片，强制等待AI生成新图片（避免推荐图片重复）
+  // 原因：推荐图片是从图片库搜索的，经常重复，AI生成的图片更符合提示词且不重复
+  logger.log('等待AI生成图片（不使用推荐图片，避免重复）...', 'info');
   
-  // 等待推荐图片加载（增加等待时间到2.5秒）
-  await new Promise(r => setTimeout(r, 2500));
-  
-  // 查找"已在图片库中找到以下图片"区域
-  let hasRecommendImages = false;
-  const allTexts = document.querySelectorAll('*');
-  for (const el of allTexts) {
-    const text = (el as HTMLElement).textContent;
-    if (text && text.includes('已在图片库中找到以下图片')) {
-      logger.log('✅ 发现推荐图片区域，无需等待AI生成', 'success');
-      hasRecommendImages = true;
-      break;
-    }
-  }
-  
-  // 如果有推荐图片，直接返回成功，不点击"创作"按钮
-  if (hasRecommendImages) {
-    logger.log('跳过AI生成，将直接使用推荐图片', 'info');
-    return true;
-  }
-  
-  // 如果没有推荐图片，继续原有逻辑：点击"创作"按钮等待AI生成
-  logger.log('未发现推荐图片，开始AI生成流程', 'info');
+  // 直接开始AI生成流程
   logger.log('查找创作按钮...', 'info');
   
   let createBtn: HTMLElement | null = null;
@@ -882,121 +860,7 @@ const insertAIImage = async (): Promise<boolean> => {
     }
   }
   
-  // 新增：优先查找推荐图片区域（"已在图片库中找到以下图片"）
-  // 这些是微信推荐的图片，不需要等待AI生成
-  if (activeDialog) {
-    logger.log('查找推荐图片区域...', 'info');
-    
-    // 增加等待时间，确保推荐图片加载完成
-    await new Promise(r => setTimeout(r, 1500));
-    
-    // 查找"已在图片库中找到以下图片"区域
-    let recommendSection: Element | null = null;
-    const allTexts = activeDialog.querySelectorAll('*');
-    for (const el of allTexts) {
-      const text = (el as HTMLElement).textContent;
-      if (text && text.includes('已在图片库中找到以下图片')) {
-        logger.log('找到推荐图片区域标题', 'info');
-        recommendSection = el.parentElement || el.nextElementSibling;
-        break;
-      }
-    }
-    
-    // 如果找到推荐区域，查找其中的图片
-    if (recommendSection) {
-      const recommendImages = Array.from(recommendSection.querySelectorAll('img')).filter(img => {
-        const rect = img.getBoundingClientRect();
-        const parent = img.parentElement;
-        // 推荐图片的特征：parent 为 'image-wrapper'，尺寸约 132x132
-        return rect.width > 50 && rect.height > 50 && parent?.className?.includes('image-wrapper');
-      });
-      
-      logger.log(`推荐区域找到 ${recommendImages.length} 张可用图片`, 'info');
-      
-      if (recommendImages.length > 0) {
-        // 选择第一张推荐图片
-        const firstRecommendImage = recommendImages[0];
-        logger.log('使用推荐的第一张图片（无需等待AI生成）', 'success');
-        
-        // 查找图片的可点击容器
-        const imageContainer = firstRecommendImage.closest('div[class*="item"], li, .image-item, [class*="image"]');
-        if (imageContainer) {
-          logger.log('点击推荐图片容器', 'action');
-          (imageContainer as HTMLElement).scrollIntoView({ behavior: 'instant', block: 'center' });
-          await new Promise(r => setTimeout(r, 300));
-          
-          // 修复：使用原生click()避免重复触发
-          (imageContainer as HTMLElement).click();
-          await new Promise(r => setTimeout(r, 800));
-          
-          // 查找并点击确定按钮
-          logger.log('查找确定按钮...', 'info');
-          const buttons = activeDialog.querySelectorAll('button');
-          for (const btn of buttons) {
-            const text = (btn as HTMLElement).textContent?.trim();
-            const btnStyle = window.getComputedStyle(btn as HTMLElement);
-            if (btnStyle.display !== 'none' && (text === '确定' || text === '确认' || text === '插入')) {
-              logger.log(`点击"${text}"按钮`, 'action');
-              // 修复：使用原生click()避免重复触发
-              (btn as HTMLElement).click();
-              await new Promise(r => setTimeout(r, 1000));
-              logger.log('推荐图片已插入', 'success');
-              return true;
-            }
-          }
-          
-          // 如果在弹窗内没找到，尝试全局查找
-          const allButtons = document.querySelectorAll('button');
-          for (const btn of allButtons) {
-            const text = (btn as HTMLElement).textContent?.trim();
-            const btnStyle = window.getComputedStyle(btn as HTMLElement);
-            if (btnStyle.display !== 'none' && (text === '确定' || text === '确认' || text === '插入')) {
-              logger.log(`全局找到"${text}"按钮`, 'action');
-              // 修复：使用原生click()避免重复触发
-              (btn as HTMLElement).click();
-              await new Promise(r => setTimeout(r, 1000));
-              logger.log('推荐图片已插入', 'success');
-              return true;
-            }
-          }
-          
-          // 如果还是没找到确定按钮，也返回true，避免继续执行AI生成图片的插入逻辑
-          logger.log('⚠️ 未找到确定按钮，但推荐图片已点击，跳过后续逻辑', 'warn');
-          return true;
-        } else {
-          // 直接点击图片
-          logger.log('直接点击推荐图片', 'action');
-          firstRecommendImage.scrollIntoView({ behavior: 'instant', block: 'center' });
-          await new Promise(r => setTimeout(r, 300));
-          // 修复：使用原生click()避免重复触发
-          firstRecommendImage.click();
-          await new Promise(r => setTimeout(r, 800));
-          
-          // 查找确定按钮（同上）
-          const buttons = activeDialog.querySelectorAll('button');
-          for (const btn of buttons) {
-            const text = (btn as HTMLElement).textContent?.trim();
-            const btnStyle = window.getComputedStyle(btn as HTMLElement);
-            if (btnStyle.display !== 'none' && (text === '确定' || text === '确认' || text === '插入')) {
-              // 修复：使用原生click()避免重复触发
-              (btn as HTMLElement).click();
-              await new Promise(r => setTimeout(r, 1000));
-              logger.log('推荐图片已插入', 'success');
-              return true;
-            }
-          }
-          
-          // 如果没找到确定按钮，也返回true，避免继续执行
-          logger.log('⚠️ 未找到确定按钮，但推荐图片已点击，跳过后续逻辑', 'warn');
-          return true;
-        }
-      }
-    } else {
-      logger.log('未找到推荐图片区域，将使用AI生成的图片', 'info');
-    }
-  }
-  
-  // 如果没有推荐图片，继续原有的逻辑（使用AI生成的图片）
+  // 直接查找AI生成的图片（不再使用推荐图片）
   logger.log('查找AI生成的图片...', 'info');
   
   // 在弹窗内查找图片列表
@@ -1071,7 +935,8 @@ const insertAIImage = async (): Promise<boolean> => {
     return false;
   }
   
-  // 优先选择新生成的图片项（基于图片加载状态和生成时间判断）
+  // 收集所有已完成的图片项（有操作按钮且图片已加载）
+  const completedItems: HTMLElement[] = [];
   let targetItem: HTMLElement | null = null;
   let newestItem: HTMLElement | null = null;
   
@@ -1084,17 +949,22 @@ const insertAIImage = async (): Promise<boolean> => {
     // 检查图片是否已加载完成
     const isImageLoaded = img && img.complete && img.naturalWidth > 0;
     
-    // 优先选择已完成的图片（有操作按钮且图片已加载）
+    // 收集所有已完成的图片
     if (opGroup && isNotLoading && isImageLoaded) {
-      targetItem = item as HTMLElement;
-      logger.log('找到已完成的图片项（有 operation-group 且图片已加载）', 'info');
-      break;
+      completedItems.push(item as HTMLElement);
     }
     
     // 记录最新的图片项（即使还在加载中）
     if (!newestItem) {
       newestItem = item as HTMLElement;
     }
+  }
+  
+  // 从已完成的图片中随机选择一张（避免总是选第一张导致重复）
+  if (completedItems.length > 0) {
+    const randomIndex = Math.floor(Math.random() * completedItems.length);
+    targetItem = completedItems[randomIndex];
+    logger.log(`找到 ${completedItems.length} 张已完成的图片，随机选择第 ${randomIndex + 1} 张（避免重复）`, 'info');
   }
   
   // 如果没有找到已完成的图片，选择最新的图片项（通常是第一个）
@@ -4660,45 +4530,64 @@ const detectPageState = (): 'login' | 'home' | 'editor' | 'unknown' => {
 
 /**
  * 点击"文章"按钮进入编辑页面
+ * 【已废弃】不再使用，因为 Background script 直接打开编辑器 URL
  */
+/*
 const clickArticleButton = async (): Promise<boolean> => {
   logger.log('查找"文章"按钮...', 'info');
   
-  // 方法1: 通过文本查找 "文章"
-  let articleBtn = findElementByText('文章', ['div', 'span', 'a', 'button']);
+  let articleBtn: HTMLElement | null = null;
   
-  // 方法2: 通过类名查找（新的创作区域的第一个菜单项是"文章"）
+  // 方法1: 查找 new-creation__menu-title（最内层的标题元素）
+  // 根据调试信息，有3个元素：menu-item（外层）、menu-content（中层）、menu-title（内层）
+  // 应该点击最内层的 menu-title
+  const menuTitles = document.querySelectorAll('.new-creation__menu-title');
+  for (const title of menuTitles) {
+    const text = (title as HTMLElement).innerText?.trim();
+    if (text === '文章' && isElementVisible(title as HTMLElement)) {
+      articleBtn = title as HTMLElement;
+      logger.log('找到 menu-title 元素', 'info');
+      break;
+    }
+  }
+  
+  // 方法2: 使用 XPath 精确查找文本为"文章"的元素（最精确）
+  if (!articleBtn) {
+    try {
+      const xpathResult = document.evaluate(
+        "//div[text()='文章'] | //span[text()='文章']",
+        document,
+        null,
+        XPathResult.FIRST_ORDERED_NODE_TYPE,
+        null
+      );
+      if (xpathResult.singleNodeValue) {
+        articleBtn = xpathResult.singleNodeValue as HTMLElement;
+        logger.log('通过 XPath 找到元素', 'info');
+      }
+    } catch (e) {
+      logger.log('XPath 查找失败', 'warn');
+    }
+  }
+  
+  // 方法3: 通过类名查找 menu-item，但要确保点击的是包含"文章"文本的
   if (!articleBtn) {
     const menuItems = document.querySelectorAll('.new-creation__menu-item, .new-creation_menu-item, .new-creation_menuitem');
-    if (menuItems.length > 0) {
-      // 第一个通常是"文章"
-      for (const item of menuItems) {
-        const text = (item as HTMLElement).innerText?.trim();
-        if (text === '文章' || text?.includes('文章')) {
-          articleBtn = item as HTMLElement;
-          break;
-        }
-      }
-      // 如果没找到包含"文章"的，就用第一个
-      if (!articleBtn && menuItems.length > 0) {
-        articleBtn = menuItems[0] as HTMLElement;
+    for (const item of menuItems) {
+      const text = (item as HTMLElement).innerText?.trim();
+      if (text === '文章' || text?.includes('文章')) {
+        articleBtn = item as HTMLElement;
+        logger.log('找到 menu-item 元素', 'info');
+        break;
       }
     }
   }
   
-  // 方法3: 查找包含"文章"文本的可点击元素
+  // 方法4: 通过文本查找（备用）
   if (!articleBtn) {
-    const allElements = document.querySelectorAll('div, span, a');
-    for (const el of allElements) {
-      const text = (el as HTMLElement).innerText?.trim();
-      if (text === '文章' && isElementVisible(el as HTMLElement)) {
-        // 检查是否在"新的创作"区域内
-        const parent = el.closest('.new-creation_menu, .weui-desktop-panel');
-        if (parent) {
-          articleBtn = el as HTMLElement;
-          break;
-        }
-      }
+    articleBtn = findElementByText('文章', ['div', 'span', 'a', 'button']);
+    if (articleBtn) {
+      logger.log('通过文本查找找到元素', 'info');
     }
   }
   
@@ -4707,14 +4596,38 @@ const clickArticleButton = async (): Promise<boolean> => {
     return false;
   }
   
-  logger.log('点击"文章"按钮', 'action');
+  logger.log(`点击"文章"按钮 (${articleBtn.className})`, 'action');
+  
+  // 记录点击前的 URL
+  const beforeUrl = window.location.href;
+  logger.log(`点击前 URL: ${beforeUrl}`, 'info');
+  
+  // 点击按钮
   simulateClick(articleBtn);
   
-  // 等待页面跳转
-  await new Promise(r => setTimeout(r, 3000));
+  // 等待 URL 变化（最多等待 10 秒）
+  let urlChanged = false;
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    const currentUrl = window.location.href;
+    if (currentUrl !== beforeUrl && currentUrl.includes('appmsg')) {
+      urlChanged = true;
+      logger.log(`✅ URL 已变化: ${currentUrl}`, 'success');
+      break;
+    }
+  }
+  
+  if (!urlChanged) {
+    logger.log('⚠️ URL 未变化，可能点击失败', 'warn');
+    return false;
+  }
+  
+  // URL 变化后，再等待页面加载
+  await new Promise(r => setTimeout(r, 2000));
   
   return true;
 };
+*/
 
 /**
  * 等待页面加载完成并检测状态
@@ -4757,6 +4670,17 @@ const autoFillContent = async () => {
       chrome.storage.local.remove('pending_weixin_publish');
       return;
     }
+    
+    // 【修复】使用 sessionStorage 标记当前标签页是否已经处理过这个任务
+    // 防止同一个 pending 数据在多个标签页重复触发
+    const taskKey = `memoraid_task_${payload.timestamp}`;
+    const alreadyProcessed = sessionStorage.getItem(taskKey);
+    if (alreadyProcessed) {
+      console.log('[Memoraid] 当前标签页已处理过此任务，跳过');
+      return;
+    }
+    // 标记当前标签页已开始处理
+    sessionStorage.setItem(taskKey, 'processing');
 
     // 保存 generatedId 供发布上报使用
     if (payload.generatedId) {
@@ -4827,21 +4751,12 @@ const autoFillContent = async () => {
     // 登录成功后清除标记
     sessionStorage.removeItem('memoraid_cookie_cleared');
     
-    // 如果在首页，点击"文章"按钮
+    // 【修复】不再处理首页情况，因为 Background script 已经直接打开编辑器 URL
+    // 如果在首页，说明是 Background 为了获取 token 而打开的，不需要 content script 处理
     if (pageState === 'home') {
-      logger.log('📍 当前在首页，正在进入文章编辑页面...', 'info');
-      
-      if (await clickArticleButton()) {
-        // 等待页面跳转
-        await new Promise(r => setTimeout(r, 3000));
-        
-        // 重新检测状态
-        pageState = await waitForPageReady(10000);
-        logger.log(`跳转后页面状态: ${pageState}`, 'info');
-      } else {
-        logger.log('❌ 无法进入编辑页面，请手动点击"文章"按钮', 'error');
-        return;
-      }
+      logger.log('📍 当前在首页，等待 Background 打开编辑器...', 'info');
+      // 不清除 pending 数据，让编辑器页面的 content script 处理
+      return;
     }
     
     // 如果还不是编辑页面，等待更长时间
@@ -4888,6 +4803,8 @@ const autoFillContent = async () => {
       autoPreview: false
     });
     
+    // 【修复】发布流程完成后再清除 pending 数据（如果还没清除的话）
+    // 因为在首页点击"文章"按钮时已经清除过一次了
     chrome.storage.local.remove('pending_weixin_publish');
 
   } catch (error) {

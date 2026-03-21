@@ -828,12 +828,6 @@ ${task.customPrompt ? `\n选题要求：${task.customPrompt}\n` : '\n选题要�
 
     await taskLog(task.id, 'success', `✅ 最终选择 ${selectedArticles.length} 个话题（AI 返回 ${selections.length} 个）`);
     
-    // 打印 AI 返回的所有 URL（用于调试）
-    await taskLog(task.id, 'info', `🔍 AI 返回的 URL 列表:`);
-    selections.forEach((sel, i) => {
-      taskLog(task.id, 'info', `  ${i + 1}. ${sel.url}`);
-    });
-    
     // 打印匹配成功的文章
     await taskLog(task.id, 'info', `✅ 匹配成功的文章:`);
     selectedArticles.forEach((article, i) => {
