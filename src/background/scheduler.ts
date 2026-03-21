@@ -359,7 +359,33 @@ async function executeTask(task: ScheduledTask) {
             await taskLog(task.id, 'info', `⏳ 正在抓取内容、AI 生成文章并发布...`);
             // 传递 isScheduledTask = true，标识这是定时任务，强制自动发布
             await handleInitiateProcess(platform, tab.id!, true);
-            await taskLog(task.id, 'success', `✅ ${platform} 发布流程已完成`);
+            
+            // 【修复】等待发布流程完全完成
+            // 检查 pending 数据是否已被清除（表示发布完成）
+            // 最多等待 120 秒（2 分钟）
+            const maxWaitTime = 120000; // 120 秒
+            const checkInterval = 2000; // 每 2 秒检查一次
+            const startTime = Date.now();
+            let publishCompleted = false;
+            
+            while (Date.now() - startTime < maxWaitTime) {
+              await new Promise(r => setTimeout(r, checkInterval));
+              
+              // 检查 pending 数据是否已清除
+              const storageKey = `pending_${platform}_publish`;
+              const result = await chrome.storage.local.get(storageKey);
+              
+              if (!result[storageKey]) {
+                // pending 数据已清除，说明发布完成
+                publishCompleted = true;
+                await taskLog(task.id, 'success', `✅ ${platform} 发布流程已完成`);
+                break;
+              }
+            }
+            
+            if (!publishCompleted) {
+              await taskLog(task.id, 'warn', `⚠️ ${platform} 发布超时（120秒），继续下一个平台`);
+            }
           } catch (e: any) {
             await taskLog(task.id, 'error', `❌ 发布到 ${platform} 失败: ${e.message}`);
           }
