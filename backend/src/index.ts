@@ -893,7 +893,7 @@ function renderMarketingNav(origin: string): string {
       </nav>
       <div class="nav-actions">
         <a class="nav-login" href="/login" data-auth-login>登录</a>
-        <a class="nav-login" href="/user" data-auth-admin>进入后台</a>
+        <a class="nav-login" href="/user" data-auth-admin>个人中心</a>
         <a class="btn btn-chrome" href="https://chromewebstore.google.com/detail/memoraid/leonoilddlplhmmahjmnendflfnlnlmg" target="_blank" rel="noreferrer" aria-label="免费添加到 Chrome（新标签页打开）">
           <span class="btn-icon">${chromeIcon}</span>
           <span>免费添加到 Chrome</span>
@@ -1446,7 +1446,7 @@ function renderMarketingPricing(origin: string): string {
         <div class="pill" style="display:inline-flex">体验套餐</div>
         <h3 style="margin:12px 0 6px;font-size:22px">¥9.9</h3>
         <p style="margin:0 0 14px;color:var(--text-3)">30 额度 · 适合新手体验</p>
-        <a class="btn btn-ghost" href="/user" rel="noreferrer">立即充值</a>
+        <button class="btn btn-ghost" onclick="openPricingRecharge(9.9, 30)">立即充值</button>
         <div style="height:14px"></div>
         <div style="color:var(--text-2);font-weight:800;font-size:13px;margin-bottom:8px">包含</div>
         <div style="color:var(--text-3);font-size:13px">
@@ -1460,7 +1460,7 @@ function renderMarketingPricing(origin: string): string {
         <div class="pill" style="display:inline-flex;border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.08);color:var(--text)">推荐</div>
         <h3 style="margin:12px 0 6px;font-size:22px">¥29.9<span style="font-size:13px;color:var(--text-3);font-weight:800"></span></h3>
         <p style="margin:0 0 14px;color:var(--text-3)">100 额度 · 高性价比</p>
-        <a class="btn btn-primary" href="/user" rel="noreferrer">立即充值</a>
+        <button class="btn btn-primary" onclick="openPricingRecharge(29.9, 100)">立即充值</button>
         <div style="height:14px"></div>
         <div style="color:var(--text-2);font-weight:800;font-size:13px;margin-bottom:8px">包含</div>
         <div style="color:var(--text-3);font-size:13px">
@@ -1474,7 +1474,7 @@ function renderMarketingPricing(origin: string): string {
         <div class="pill" style="display:inline-flex">超值套餐</div>
         <h3 style="margin:12px 0 6px;font-size:22px">¥49.9</h3>
         <p style="margin:0 0 14px;color:var(--text-3)">200 额度 · 大量优惠</p>
-        <a class="btn btn-ghost" href="/user">立即充值</a>
+        <button class="btn btn-ghost" onclick="openPricingRecharge(49.9, 200)">立即充值</button>
         <div style="height:14px"></div>
         <div style="color:var(--text-2);font-weight:800;font-size:13px;margin-bottom:8px">包含</div>
         <div style="color:var(--text-3);font-size:13px">
@@ -1486,26 +1486,10 @@ function renderMarketingPricing(origin: string): string {
     </div>
     
     <div style="margin-top:24px;padding:16px;background:rgba(59,130,246,.05);border:1px solid rgba(59,130,246,.2);border-radius:12px;text-align:center">
-      <p style="margin:0;color:var(--text-2);font-size:14px">💡 <strong>大量额度购买</strong>：如需购买 500 额度以上，请<a href="/user#recharge" style="color:#3b82f6;text-decoration:none;margin-left:4px">联系客服</a>获取优惠价格</p>
+      <p style="margin:0;color:var(--text-2);font-size:14px">💡 <strong>大量额度购买</strong>：如需购买 500 额度以上，请<a href="/user#tickets" style="color:#3b82f6;text-decoration:none;margin-left:4px">联系客服</a>获取优惠价格</p>
     </div>
   </div>
 </main>
-  document.body.style.overflow = 'hidden';
-}
-
-function closeImageModal() {
-  const lightbox = document.getElementById('imageLightbox');
-  lightbox.style.display = 'none';
-  document.body.style.overflow = '';
-}
-
-// ESC键关闭
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') {
-    closeImageModal();
-  }
-});
-</script>
 
 <section class="section">
   <div class="container">
@@ -1543,6 +1527,162 @@ document.addEventListener('keydown', function(e) {
     </div>
   </div>
 </section>
+
+<!-- 充值弹窗 -->
+<div id="pricingRechargeModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;padding:20px">
+  <div style="background:white;border-radius:16px;max-width:400px;width:100%;padding:32px;position:relative">
+    <div style="position:absolute;top:16px;right:16px;cursor:pointer;font-size:24px;color:#9ca3af" onclick="closePricingRecharge()">×</div>
+    
+    <div id="pricingPayStep1" style="display:block">
+      <h3 style="margin:0 0 8px;font-size:20px;font-weight:600">充值 <span id="pricingAmount"></span> 元</h3>
+      <p style="margin:0 0 24px;color:#6b7280;font-size:14px">获得 <span id="pricingQuota"></span> 额度</p>
+      
+      <div style="text-align:center;margin-bottom:24px">
+        <img id="pricingQrCode" src="" style="width:200px;height:200px;border:1px solid #e5e7eb;border-radius:8px">
+      </div>
+      
+      <div style="text-align:center;color:#6b7280;font-size:14px;margin-bottom:16px">
+        <p style="margin:0 0 8px">请使用微信扫码支付</p>
+        <p id="pricingPaymentStatus" style="margin:0;color:#10b981">系统会自动检查付款状态...</p>
+      </div>
+      
+      <button onclick="checkPricingPayment()" class="btn btn-primary" style="width:100%">我已完成支付</button>
+    </div>
+    
+    <div id="pricingPayStep2" style="display:none;text-align:center">
+      <div style="font-size:48px;margin-bottom:16px">✅</div>
+      <h3 style="margin:0 0 8px;font-size:20px;font-weight:600">支付成功！</h3>
+      <p style="margin:0 0 24px;color:#6b7280">额度已到账，请<a href="/user" style="color:#3b82f6">登录</a>后使用</p>
+      <button onclick="closePricingRecharge()" class="btn btn-ghost" style="width:100%">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let pricingOrderId = null;
+let pricingPollTimer = null;
+
+// 打开充值弹窗
+async function openPricingRecharge(amount, quota) {
+  try {
+    // 获取token（如果用户已登录）
+    const token = localStorage.getItem('memoraid_token');
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+    
+    // 如果有token，添加到请求头
+    if (token) {
+      headers['Authorization'] = 'Bearer ' + token;
+    }
+    
+    // 创建订单
+    const res = await fetch('/api/payment/create', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({ amount: amount })
+    });
+    
+    const data = await res.json();
+    
+    if (!res.ok) {
+      if (res.status === 401) {
+        // 未登录，跳转到登录页面
+        alert('请先登录后再充值');
+        window.location.href = '/login';
+        return;
+      }
+      alert('创建订单失败: ' + (data.error || '未知错误'));
+      return;
+    }
+    
+    // 检查是否有二维码
+    if (!data.paymentQrcode && !data.qrcode) {
+      alert('获取支付二维码失败');
+      return;
+    }
+    
+    // 订单创建成功，设置数据
+    pricingOrderId = data.orderId;
+    document.getElementById('pricingAmount').textContent = amount;
+    document.getElementById('pricingQuota').textContent = quota;
+    document.getElementById('pricingQrCode').src = data.paymentQrcode || data.qrcode || '';
+    
+    // 显示弹窗
+    document.getElementById('pricingRechargeModal').style.display = 'flex';
+    document.getElementById('pricingPayStep1').style.display = 'block';
+    document.getElementById('pricingPayStep2').style.display = 'none';
+    
+    // 开始轮询支付状态
+    startPricingPaymentPolling();
+  } catch (e) {
+    alert('创建订单失败: ' + e.message);
+  }
+}
+
+// 关闭充值弹窗
+function closePricingRecharge() {
+  document.getElementById('pricingRechargeModal').style.display = 'none';
+  stopPricingPaymentPolling();
+  pricingOrderId = null;
+}
+
+// 开始轮询支付状态
+function startPricingPaymentPolling() {
+  stopPricingPaymentPolling();
+  pricingPollTimer = setInterval(checkPricingPayment, 3000);
+}
+
+// 停止轮询
+function stopPricingPaymentPolling() {
+  if (pricingPollTimer) {
+    clearInterval(pricingPollTimer);
+    pricingPollTimer = null;
+  }
+}
+
+// 检查支付状态
+async function checkPricingPayment() {
+  if (!pricingOrderId) return;
+  
+  try {
+    const token = localStorage.getItem('memoraid_token');
+    const headers = {};
+    
+    if (token) {
+      headers['Authorization'] = 'Bearer ' + token;
+    }
+    
+    // 修复：使用查询参数而不是路径参数
+    const res = await fetch('/api/payment/status?orderId=' + pricingOrderId, {
+      headers: headers
+    });
+    const data = await res.json();
+    
+    // 修复：检查isPaid字段
+    if (data.isPaid) {
+      stopPricingPaymentPolling();
+      document.getElementById('pricingPayStep1').style.display = 'none';
+      document.getElementById('pricingPayStep2').style.display = 'block';
+    } else if (data.status === 'pending') {
+      document.getElementById('pricingPaymentStatus').textContent = '等待支付中...';
+    }
+  } catch (e) {
+    console.error('检查支付状态失败:', e);
+  }
+}
+
+// ESC键关闭充值弹窗
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    const modal = document.getElementById('pricingRechargeModal');
+    if (modal && modal.style.display === 'flex') {
+      closePricingRecharge();
+    }
+  }
+});
+</script>
+
 ${footer}`;
 
   return renderMarketingShell({
@@ -4524,14 +4664,13 @@ export default {
     // 7.0.0.3 GET /api/admin/feedback - 获取用户反馈列表
     if (url.pathname === '/api/admin/feedback' && request.method === 'GET') {
       try {
-        const userId = getUserIdFromRequest(request);
-        if (!userId) {
-          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
-        }
-
-        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
-        if (!admin) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Admin access required' }), { status: 403, headers: corsHeaders });
+        // 验证管理员权限
+        const adminCheck = verifyAdminToken(request);
+        if (!adminCheck.valid) {
+          const status = adminCheck.error === 'Forbidden' ? 403 : 401;
+          return new Response(JSON.stringify({ error: adminCheck.error }), {
+            status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
         }
 
         // 获取查询参数
@@ -4603,19 +4742,18 @@ export default {
     // 7.0.0.4 POST /api/admin/feedback/:id/status - 更新反馈状态
     if (url.pathname.match(/^\/api\/admin\/feedback\/\d+\/status$/) && request.method === 'POST') {
       try {
-        const userId = getUserIdFromRequest(request);
-        if (!userId) {
-          return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
-        }
-
-        const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
-        if (!admin) {
-          return new Response(JSON.stringify({ error: 'Forbidden: Admin access required' }), { status: 403, headers: corsHeaders });
+        // 验证管理员权限
+        const adminCheck = verifyAdminToken(request);
+        if (!adminCheck.valid) {
+          const status = adminCheck.error === 'Forbidden' ? 403 : 401;
+          return new Response(JSON.stringify({ error: adminCheck.error }), {
+            status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
         }
 
         const feedbackId = url.pathname.split('/')[4];
         const body = await request.json() as any;
-        const { status, adminReply } = body;
+        const { status, admin_reply } = body;
 
         // 验证状态值
         if (!['pending', 'resolved', 'ignored'].includes(status)) {
@@ -4625,10 +4763,10 @@ export default {
           });
         }
 
-        // 更新反馈状态
+        // 更新反馈状态（支持admin_reply字段）
         await env.DB.prepare(
           `UPDATE feedback SET status = ?, admin_reply = ?, updated_at = ? WHERE id = ?`
-        ).bind(status, adminReply || null, Math.floor(Date.now() / 1000), feedbackId).run();
+        ).bind(status, admin_reply || null, Math.floor(Date.now() / 1000), feedbackId).run();
 
         return new Response(JSON.stringify({ success: true }), {
           status: 200,
@@ -4855,13 +4993,17 @@ export default {
                 <a href="#orders" class="nav-item" id="nav-orders" onclick="switchTab('orders')">
                     <span>💰</span> 支付记录
                 </a>
-                <!-- 排行榜导航项 - 移到支付记录下面 -->
+                <!-- 排行榜导航项 -->
                 <a href="#leaderboards" class="nav-item" id="nav-leaderboards" onclick="switchTab('leaderboards')">
                     <span>🏆</span> 排行榜
                 </a>
-                <!-- 用户反馈导航项 -->
+                <!-- 工单系统导航项 -->
+                <a href="#tickets" class="nav-item" id="nav-tickets" onclick="switchTab('tickets')">
+                    <span>🎫</span> 工单系统
+                </a>
+                <!-- 插件反馈导航项 -->
                 <a href="#feedback" class="nav-item" id="nav-feedback" onclick="switchTab('feedback')">
-                    <span>💬</span> 用户反馈
+                    <span>💬</span> 插件反馈
                 </a>
                 <a href="#settings" class="nav-item" id="nav-settings" onclick="switchTab('settings')">
                     <span>⚙️</span> 系统设置
@@ -5127,10 +5269,10 @@ export default {
                 </div>
             </div>
 
-            <!-- 用户反馈 Tab -->
-            <div id="tab-feedback" class="tab-content" style="display:none">
+            <!-- 工单系统 Tab -->
+            <div id="tab-tickets" class="tab-content" style="display:none">
                 <div class="section">
-                    <h2 class="section-title">💬 用户反馈（工单系统）</h2>
+                    <h2 class="section-title">🎫 工单系统</h2>
                     <div class="toolbar">
                         <!-- 工单状态筛选 -->
                         <select id="ticketStatusFilter" class="form-select" onchange="loadAdminTickets()" style="max-width:150px">
@@ -5142,6 +5284,31 @@ export default {
                         <button onclick="loadAdminTickets()" class="btn-sm btn-outline">🔄 刷新</button>
                     </div>
                     <div id="adminTicketsList" class="card" style="margin-top:16px">
+                        <div style="text-align:center;padding:40px;color:var(--text-muted)">加载中...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 插件反馈 Tab -->
+            <div id="tab-feedback" class="tab-content" style="display:none">
+                <div class="section">
+                    <h2 class="section-title">💬 插件反馈</h2>
+                    <div class="toolbar">
+                        <select id="feedbackTypeFilter" class="form-select" onchange="loadPluginFeedback()" style="max-width:150px">
+                            <option value="all">全部类型</option>
+                            <option value="experience">使用体验</option>
+                            <option value="suggestion">功能建议</option>
+                            <option value="bug">问题反馈</option>
+                        </select>
+                        <select id="feedbackStatusFilter" class="form-select" onchange="loadPluginFeedback()" style="max-width:150px">
+                            <option value="all">全部状态</option>
+                            <option value="pending">待处理</option>
+                            <option value="resolved">已解决</option>
+                            <option value="ignored">已忽略</option>
+                        </select>
+                        <button onclick="loadPluginFeedback()" class="btn-sm btn-outline">🔄 刷新</button>
+                    </div>
+                    <div id="pluginFeedbackList" class="card" style="margin-top:16px">
                         <div style="text-align:center;padding:40px;color:var(--text-muted)">加载中...</div>
                     </div>
                 </div>
@@ -6497,9 +6664,15 @@ export default {
                 window.leaderboardsLoaded = true;
             }
             
-            // 加载用户反馈数据（工单系统）
-            if (tabId === 'feedback' && !window.feedbackLoaded) {
+            // 加载工单系统数据
+            if (tabId === 'tickets' && !window.ticketsLoaded) {
                 loadAdminTickets();
+                window.ticketsLoaded = true;
+            }
+            
+            // 加载插件反馈数据
+            if (tabId === 'feedback' && !window.feedbackLoaded) {
+                loadPluginFeedback();
                 window.feedbackLoaded = true;
             }
             
@@ -7080,6 +7253,147 @@ export default {
         function closeAdminTicketDetailModal() {
             document.getElementById('adminTicketDetailModal').style.display = 'none';
             currentAdminTicketId = null;
+        }
+        
+        // 加载插件反馈列表
+        async function loadPluginFeedback() {
+            const container = document.getElementById('pluginFeedbackList');
+            container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">加载中...</div>';
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const type = document.getElementById('feedbackTypeFilter').value;
+                const status = document.getElementById('feedbackStatusFilter').value;
+                
+                let params = '?pageSize=100';
+                if (type !== 'all') params += '&type=' + type;
+                if (status !== 'all') params += '&status=' + status;
+                
+                const res = await fetch('/api/admin/feedback' + params, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) {
+                    throw new Error(data.error || '加载反馈列表失败');
+                }
+                
+                const feedbackList = data.list || [];
+                
+                if (feedbackList.length === 0) {
+                    container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">暂无反馈记录</div>';
+                    return;
+                }
+                
+                const typeMap = {
+                    'experience': { text: '使用体验', icon: '😊', color: '#10b981' },
+                    'suggestion': { text: '功能建议', icon: '💡', color: '#f59e0b' },
+                    'bug': { text: '问题反馈', icon: '🐛', color: '#ef4444' }
+                };
+                
+                const statusMap = {
+                    'pending': { text: '待处理', color: '#f59e0b' },
+                    'resolved': { text: '已解决', color: '#10b981' },
+                    'ignored': { text: '已忽略', color: '#6b7280' }
+                };
+                
+                let html = '';
+                feedbackList.forEach(item => {
+                    const typeInfo = typeMap[item.type] || typeMap['experience'];
+                    const statusInfo = statusMap[item.status] || statusMap['pending'];
+                    const userEmail = item.user_email_from_users || item.user_email || '匿名用户';
+                    
+                    html += '<div style="border-bottom:1px solid #e2e8f0;padding:16px;transition:background 0.2s" onmouseover="this.style.background=&apos;#f1f5f9&apos;" onmouseout="this.style.background=&apos;transparent&apos;">';
+                    html += '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px">';
+                    html += '<div style="flex:1">';
+                    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
+                    html += '<span style="font-size:20px">' + typeInfo.icon + '</span>';
+                    html += '<span style="font-weight:600;color:' + typeInfo.color + '">' + typeInfo.text + '</span>';
+                    html += '<span style="font-size:13px;color:#9ca3af">ID: ' + item.id + '</span>';
+                    html += '</div>';
+                    html += '<div style="color:#0f172a;margin-bottom:8px;line-height:1.6">' + item.content + '</div>';
+                    html += '<div style="font-size:13px;color:#9ca3af">用户: ' + userEmail + ' | 时间: ' + new Date(item.created_at * 1000).toLocaleString('zh-CN') + '</div>';
+                    if (item.admin_reply) {
+                        html += '<div style="margin-top:12px;padding:12px;background:#dbeafe;border-radius:8px;border-left:3px solid #0284c7">';
+                        html += '<div style="font-size:12px;color:#0284c7;font-weight:600;margin-bottom:4px">管理员回复：</div>';
+                        html += '<div style="color:#0f172a;font-size:14px">' + item.admin_reply + '</div>';
+                        html += '</div>';
+                    }
+                    html += '</div>';
+                    html += '<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">';
+                    html += '<span style="padding:6px 12px;border-radius:12px;font-size:0.875rem;font-weight:600;color:' + statusInfo.color + ';background:' + statusInfo.color + '20;white-space:nowrap">' + statusInfo.text + '</span>';
+                    html += '<div style="display:flex;gap:8px">';
+                    if (item.status === 'pending') {
+                        html += '<button onclick="updateFeedbackStatus(' + item.id + ', &apos;resolved&apos;)" class="btn-sm btn-success">标记已解决</button>';
+                        html += '<button onclick="updateFeedbackStatus(' + item.id + ', &apos;ignored&apos;)" class="btn-sm btn-ghost">忽略</button>';
+                    }
+                    html += '<button onclick="replyToFeedback(' + item.id + ')" class="btn-sm btn-outline">回复</button>';
+                    html += '</div></div></div></div>';
+                });
+                
+                container.innerHTML = html;
+            } catch (e) {
+                console.error('加载插件反馈失败:', e);
+                container.innerHTML = '<div style="text-align:center;padding:40px;color:#ef4444">加载失败: ' + e.message + '</div>';
+            }
+        }
+        
+        // 更新反馈状态
+        async function updateFeedbackStatus(feedbackId, newStatus) {
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch('/api/admin/feedback/' + feedbackId + '/status', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ status: newStatus })
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) {
+                    throw new Error(data.error || '更新状态失败');
+                }
+                
+                loadPluginFeedback(); // 刷新列表
+            } catch (e) {
+                alert('更新状态失败: ' + e.message);
+            }
+        }
+        
+        // 回复反馈
+        async function replyToFeedback(feedbackId) {
+            const reply = prompt('请输入回复内容：');
+            if (!reply || !reply.trim()) return;
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch('/api/admin/feedback/' + feedbackId + '/status', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        status: 'resolved',
+                        admin_reply: reply.trim()
+                    })
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) {
+                    throw new Error(data.error || '回复失败');
+                }
+                
+                alert('回复成功');
+                loadPluginFeedback(); // 刷新列表
+            } catch (e) {
+                alert('回复失败: ' + e.message);
+            }
         }
         
         // 提交管理员工单回复
@@ -8861,7 +9175,7 @@ export default {
         let currentSortOrder = 'desc'; // 排序顺序：desc 或 asc
         let currentTab = 'articles'; // 当前Tab：articles、tasks 或 recharge
         let userEmail = '';
-        let selectedAmount = 10;
+        let selectedAmount = 9.9; // 修复：默认选中第一个套餐9.9元
         
         // 分页状态（仅文章列表和充值记录需要分页）
         let articlesPage = 1;
@@ -10251,18 +10565,23 @@ export default {
         }
 
         const body = await request.json() as any;
-        const amount = Number(body.amount || 10);
-        if (![10, 30, 50].includes(amount)) {
-          return new Response(JSON.stringify({ error: '仅支持 10 / 30 / 50 元套餐' }), {
+        const amount = Number(body.amount || 9.9);
+        
+        // 支持的套餐金额：9.9元(30额度)、29.9元(100额度)、49.9元(200额度)
+        const validAmounts = [9.9, 29.9, 49.9];
+        if (!validAmounts.includes(amount)) {
+          return new Response(JSON.stringify({ error: '仅支持 9.9 / 29.9 / 49.9 元套餐' }), {
             status: 400,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         }
 
         const orderId = crypto.randomUUID().replace(/-/g, '');
-        let quota = 50;
-        if (amount === 30) quota = 150;
-        if (amount === 50) quota = 250;
+        
+        // 根据金额计算额度
+        let quota = 30;  // 9.9元 = 30额度
+        if (amount === 29.9) quota = 100;  // 29.9元 = 100额度
+        if (amount === 49.9) quota = 200;  // 49.9元 = 200额度
 
         const totalFee = amount.toFixed(2);
         const nonceStr = crypto.randomUUID().replace(/-/g, '');
