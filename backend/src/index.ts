@@ -8370,14 +8370,14 @@ export default {
             <!-- 左侧导航菜单 -->
             <aside class="sidebar">
                 <nav class="sidebar-nav" style="padding-top: 24px;">
-                    <a href="#articles" class="nav-item active" id="nav-articles" onclick="switchTab('articles')">
+                    <a href="#articles" class="nav-item active" id="nav-articles">
                         <span>📝</span> 文章列表
                     </a>
-                    <a href="#tasks" class="nav-item" id="nav-tasks" onclick="switchTab('tasks')">
+                    <a href="#tasks" class="nav-item" id="nav-tasks">
                         <span>⏰</span> 定时任务
                     </a>
-                    <a href="#recharge" class="nav-item" id="nav-recharge" onclick="switchTab('recharge')">
-                        <span>�</span> 充值记录
+                    <a href="#recharge" class="nav-item" id="nav-recharge">
+                        <span>💰</span> 充值记录
                     </a>
                 </nav>
             </aside>
@@ -8985,21 +8985,40 @@ export default {
                 '</table></div>';
         }
         
+        // 执行记录分页变量
+        let currentTaskId = '';
+        let currentTaskName = '';
+        let logsPage = 1;
+        let logsPageSize = 10;
+        let logsTotalCount = 0;
+        
         // 查看任务执行记录
         async function viewTaskLogs(taskId, taskName) {
+            // 保存当前任务信息，用于分页
+            currentTaskId = taskId;
+            currentTaskName = taskName;
+            logsPage = 1; // 重置到第一页
+            
+            await loadTaskLogs();
+        }
+        
+        // 加载任务执行记录（支持分页）
+        async function loadTaskLogs() {
             try {
                 const token = localStorage.getItem('memoraid_token');
                 if (!token) return;
                 
+                const offset = (logsPage - 1) * logsPageSize;
                 const headers = { 'Authorization': 'Bearer ' + token };
-                const res = await fetch(API_BASE + '/api/task-execution-logs?task_id=' + encodeURIComponent(taskId) + '&limit=20', { headers });
+                const res = await fetch(API_BASE + '/api/task-execution-logs?task_id=' + encodeURIComponent(currentTaskId) + '&limit=' + logsPageSize + '&offset=' + offset, { headers });
                 const data = await res.json();
                 
                 const logs = data.logs || [];
+                logsTotalCount = data.total || 0;
                 
                 // 构建弹窗内容
                 let modalContent = '<div style="padding:20px">';
-                modalContent += '<h3 style="margin:0 0 16px;font-size:18px;color:var(--text)">📋 ' + taskName + ' - 执行记录</h3>';
+                modalContent += '<h3 style="margin:0 0 16px;font-size:18px;color:var(--text)">📋 ' + currentTaskName + ' - 执行记录</h3>';
                 
                 if (logs.length === 0) {
                     modalContent += '<div class="empty-state"><div class="empty-icon">📝</div><p class="empty-text">暂无执行记录</p></div>';
@@ -9033,6 +9052,16 @@ export default {
                     });
                     
                     modalContent += '</tbody></table></div>';
+                    
+                    // 添加分页组件
+                    const totalPages = Math.ceil(logsTotalCount / logsPageSize);
+                    if (totalPages > 1) {
+                        modalContent += '<div style="margin-top:16px;display:flex;align-items:center;justify-content:center;gap:12px">';
+                        modalContent += '<button class="pagination-btn" onclick="changeLogsPage(' + (logsPage - 1) + ')" ' + (logsPage === 1 ? 'disabled' : '') + '>上一页</button>';
+                        modalContent += '<span class="pagination-info">第 ' + logsPage + ' / ' + totalPages + ' 页（共 ' + logsTotalCount + ' 条）</span>';
+                        modalContent += '<button class="pagination-btn" onclick="changeLogsPage(' + (logsPage + 1) + ')" ' + (logsPage === totalPages ? 'disabled' : '') + '>下一页</button>';
+                        modalContent += '</div>';
+                    }
                 }
                 
                 modalContent += '<div style="margin-top:20px;text-align:right">';
@@ -9046,6 +9075,14 @@ export default {
                 console.error('加载执行记录失败:', e);
                 alert('加载执行记录失败，请稍后重试');
             }
+        }
+        
+        // 切换执行记录页码
+        function changeLogsPage(page) {
+            const totalPages = Math.ceil(logsTotalCount / logsPageSize);
+            if (page < 1 || page > totalPages) return;
+            logsPage = page;
+            loadTaskLogs();
         }
         
         // 显示模态框
@@ -9338,11 +9375,24 @@ export default {
         async function init() {
             const isAuth = await checkAuth();
             if (isAuth) {
-                // 默认显示文章列表Tab，立即显示平台筛选区域（显示加载状态）
-                document.getElementById('platformFilterBar').style.display = 'block';
+                // 根据URL hash决定显示哪个Tab（默认为articles）
+                const hash = window.location.hash.slice(1) || 'articles';
+                switchTab(hash);
+                
+                // 如果是文章列表Tab，立即显示平台筛选区域（显示加载状态）
+                if (hash === 'articles') {
+                    document.getElementById('platformFilterBar').style.display = 'block';
+                }
+                
                 loadData();
             }
         }
+        
+        // 监听hash变化，实现前端路由
+        window.addEventListener('hashchange', () => {
+            const hash = window.location.hash.slice(1) || 'articles';
+            switchTab(hash);
+        });
         
         init();
     </script>
@@ -10056,6 +10106,125 @@ export default {
           body.lastRunError || null,
           taskId
         ).run();
+
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 8.5.1 POST /api/task-execution-logs - 创建任务执行记录（供调度器调用）
+    if (url.pathname === '/api/task-execution-logs' && request.method === 'POST') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const body = await request.json() as {
+          task_id: string;
+          task_name: string;
+          status: 'running' | 'success' | 'failed';
+          started_at: number;
+        };
+
+        // 插入执行记录
+        const result = await env.DB.prepare(
+          `INSERT INTO task_execution_logs (task_id, user_id, task_name, status, started_at)
+           VALUES (?, ?, ?, ?, ?)`
+        ).bind(
+          body.task_id,
+          userId,
+          body.task_name,
+          body.status,
+          body.started_at
+        ).run();
+
+        // 返回新创建的记录ID
+        return new Response(JSON.stringify({ 
+          success: true, 
+          id: result.meta.last_row_id 
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 8.5.2 PATCH /api/task-execution-logs/:id - 更新任务执行记录（供调度器调用）
+    if (url.pathname.match(/^\/api\/task-execution-logs\/\d+$/) && request.method === 'PATCH') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const logId = url.pathname.split('/')[3];
+        const body = await request.json() as {
+          status?: 'running' | 'success' | 'failed';
+          completed_at?: number;
+          duration?: number;
+          articles_generated?: number;
+          articles_published?: number;
+          error_message?: string;
+        };
+
+        // 构建更新语句
+        const updates: string[] = [];
+        const params: any[] = [];
+
+        if (body.status !== undefined) {
+          updates.push('status = ?');
+          params.push(body.status);
+        }
+        if (body.completed_at !== undefined) {
+          updates.push('completed_at = ?');
+          params.push(body.completed_at);
+        }
+        if (body.duration !== undefined) {
+          updates.push('duration = ?');
+          params.push(body.duration);
+        }
+        if (body.articles_generated !== undefined) {
+          updates.push('articles_generated = ?');
+          params.push(body.articles_generated);
+        }
+        if (body.articles_published !== undefined) {
+          updates.push('articles_published = ?');
+          params.push(body.articles_published);
+        }
+        if (body.error_message !== undefined) {
+          updates.push('error_message = ?');
+          params.push(body.error_message);
+        }
+
+        if (updates.length === 0) {
+          return new Response(JSON.stringify({ error: 'No fields to update' }), {
+            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 添加WHERE条件参数
+        params.push(logId);
+        params.push(userId);
+
+        // 执行更新（只能更新自己的记录）
+        await env.DB.prepare(
+          `UPDATE task_execution_logs SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`
+        ).bind(...params).run();
 
         return new Response(JSON.stringify({ success: true }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }

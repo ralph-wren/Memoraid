@@ -253,6 +253,19 @@ function shouldRunTask(task: ScheduledTask, now: Date): boolean {
 async function executeTask(task: ScheduledTask) {
   // 清空旧日志，开始新一轮执行
   await clearTaskLog(task.id);
+  
+  // 记录任务开始时间
+  const startedAt = Date.now();
+  
+  // 创建执行记录
+  let executionLogId: number | null = null;
+  try {
+    executionLogId = await createExecutionLog(task.id, task.name, startedAt);
+    await taskLog(task.id, 'info', `📝 已创建执行记录 ID: ${executionLogId}`);
+  } catch (e: any) {
+    await taskLog(task.id, 'warn', `⚠️ 创建执行记录失败: ${e.message}`);
+  }
+  
   // 更新任务状态为执行中
   await updateTaskStatus(task.id, 'running');
 
@@ -420,6 +433,24 @@ async function executeTask(task: ScheduledTask) {
     await updateTaskStatus(task.id, 'success');
     await taskLog(task.id, 'success', `\n🎉 任务全部完成！成功 ${successCount} 篇，失败 ${failCount} 篇`);
 
+    // 更新执行记录（任务成功完成）
+    if (executionLogId) {
+      const completedAt = Date.now();
+      const duration = completedAt - startedAt;
+      try {
+        await updateExecutionLog(executionLogId, {
+          status: 'success',
+          completed_at: completedAt,
+          duration,
+          articles_generated: selectedArticles.length,
+          articles_published: successCount,
+        });
+        await taskLog(task.id, 'info', `✅ 已更新执行记录`);
+      } catch (e: any) {
+        await taskLog(task.id, 'warn', `⚠️ 更新执行记录失败: ${e.message}`);
+      }
+    }
+
     // 关闭所有任务打开的页面（清理现场）
     await taskLog(task.id, 'info', `🧹 正在关闭任务打开的 ${taskTabIds.length} 个页面...`);
     await closeAllTaskTabs(taskTabIds);
@@ -440,6 +471,23 @@ async function executeTask(task: ScheduledTask) {
   } catch (error: any) {
     await taskLog(task.id, 'error', `❌ 任务失败: ${error?.message || String(error)}`);
     await updateTaskStatus(task.id, 'failed', error?.message || String(error));
+
+    // 更新执行记录（任务失败）
+    if (executionLogId) {
+      const completedAt = Date.now();
+      const duration = completedAt - startedAt;
+      try {
+        await updateExecutionLog(executionLogId, {
+          status: 'failed',
+          completed_at: completedAt,
+          duration,
+          error_message: error?.message || String(error),
+        });
+        await taskLog(task.id, 'info', `✅ 已更新执行记录（失败）`);
+      } catch (e: any) {
+        await taskLog(task.id, 'warn', `⚠️ 更新执行记录失败: ${e.message}`);
+      }
+    }
 
     // 关闭所有任务打开的页面（清理现场）
     await taskLog(task.id, 'info', `🧹 正在关闭任务打开的 ${taskTabIds.length} 个页面...`);
@@ -1034,5 +1082,97 @@ export async function runTaskById(taskId: string) {
     executeTask(task);
   } catch (error) {
     console.error(`[Scheduler] 获取任务失败:`, error);
+  }
+}
+
+/**
+ * 创建任务执行记录
+ * @param taskId 任务ID
+ * @param taskName 任务名称
+ * @param startedAt 开始时间戳
+ * @returns 执行记录ID
+ */
+async function createExecutionLog(taskId: string, taskName: string, startedAt: number): Promise<number> {
+  try {
+    const settings = await getSettings();
+    const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+
+    // 构建认证 headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (settings.sync?.token) {
+      headers['Authorization'] = `Bearer ${settings.sync.token}`;
+    } else if (settings.anonymousId) {
+      headers['X-Anonymous-ID'] = settings.anonymousId;
+    }
+
+    // 调用后端 API 创建执行记录
+    const response = await fetch(`${backendUrl}/api/task-execution-logs`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        task_id: taskId,
+        task_name: taskName,
+        status: 'running',
+        started_at: startedAt,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`创建执行记录失败: ${response.status}`);
+    }
+
+    const result = await response.json();
+    return result.id;
+  } catch (error: any) {
+    console.error('[Scheduler] 创建执行记录失败:', error);
+    throw error;
+  }
+}
+
+/**
+ * 更新任务执行记录
+ * @param logId 执行记录ID
+ * @param updates 要更新的字段
+ */
+async function updateExecutionLog(
+  logId: number,
+  updates: {
+    status?: 'running' | 'success' | 'failed';
+    completed_at?: number;
+    duration?: number;
+    articles_generated?: number;
+    articles_published?: number;
+    error_message?: string;
+  }
+): Promise<void> {
+  try {
+    const settings = await getSettings();
+    const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+
+    // 构建认证 headers
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (settings.sync?.token) {
+      headers['Authorization'] = `Bearer ${settings.sync.token}`;
+    } else if (settings.anonymousId) {
+      headers['X-Anonymous-ID'] = settings.anonymousId;
+    }
+
+    // 调用后端 API 更新执行记录
+    const response = await fetch(`${backendUrl}/api/task-execution-logs/${logId}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(updates),
+    });
+
+    if (!response.ok) {
+      throw new Error(`更新执行记录失败: ${response.status}`);
+    }
+  } catch (error: any) {
+    console.error('[Scheduler] 更新执行记录失败:', error);
+    throw error;
   }
 }
