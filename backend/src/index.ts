@@ -155,6 +155,27 @@ async function getUserQuotaSnapshot(env: Env, userId: string): Promise<UserQuota
   };
 }
 
+async function loadEmailConfig(env: Env): Promise<{
+  emailSender: string;
+  emailSenderName: string;
+  notificationEmail: string | null;
+}> {
+  const configs = await env.DB.prepare(
+    'SELECT key, value FROM system_configs WHERE key IN (?, ?, ?)'
+  ).bind('email_sender', 'email_sender_name', 'email_recipient').all();
+
+  const configMap: Record<string, string> = {};
+  configs.results.forEach((row: any) => {
+    configMap[row.key] = row.value;
+  });
+
+  return {
+    emailSender: configMap.email_sender || 'onboarding@resend.dev',
+    emailSenderName: configMap.email_sender_name || 'Memoraid',
+    notificationEmail: configMap.email_recipient?.trim() || null,
+  };
+}
+
 async function sendRechargeSuccessEmail(
   env: Env,
   order: PaymentOrderRow,
@@ -165,17 +186,7 @@ async function sendRechargeSuccessEmail(
   const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(order.user_id).first<{ email?: string }>();
   if (!user?.email) return;
 
-  const configs = await env.DB.prepare(
-    'SELECT key, value FROM system_configs WHERE key IN (?, ?)'
-  ).bind('email_sender', 'email_sender_name').all();
-
-  const configMap: Record<string, string> = {};
-  configs.results.forEach((row: any) => {
-    configMap[row.key] = row.value;
-  });
-
-  const emailSender = configMap.email_sender || 'onboarding@resend.dev';
-  const emailSenderName = configMap.email_sender_name || 'Memoraid';
+  const { emailSender, emailSenderName } = await loadEmailConfig(env);
 
   const emailResult = await sendEmailViaResend(env.RESEND_API_KEY, {
     from: emailSender,
@@ -275,6 +286,82 @@ async function sendRechargeSuccessEmail(
   }
 }
 
+async function sendAdminRechargeNotificationEmail(
+  env: Env,
+  order: PaymentOrderRow,
+  quotaSnapshot: UserQuotaSnapshot
+): Promise<void> {
+  if (!env.RESEND_API_KEY) return;
+
+  const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(order.user_id).first<{ email?: string }>();
+  const { emailSender, emailSenderName, notificationEmail } = await loadEmailConfig(env);
+  if (!notificationEmail) return;
+
+  // 支付自动到账后，额外给管理员发一封纯通知邮件，不再包含任何审核操作。
+  const emailResult = await sendEmailViaResend(env.RESEND_API_KEY, {
+    from: emailSender,
+    fromName: emailSenderName,
+    to: notificationEmail,
+    subject: `💰 用户充值成功通知 - ${order.amount}元`,
+    text:
+      `有用户完成了充值并已自动到账。\n\n` +
+      `用户邮箱：${user?.email || '未绑定邮箱'}\n用户 ID：${order.user_id}\n订单号：${order.id}\n` +
+      `充值金额：¥${order.amount}\n增加额度：${order.quota_amount} 次\n` +
+      `当前总额度：${quotaSnapshot.totalQuota} 次\n支付时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n\n` +
+      `本邮件仅作通知，无需审核。`,
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background-color:#f3f4f6;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f4f6;padding:40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+          <tr>
+            <td style="background:linear-gradient(135deg,#0f766e 0%,#0ea5e9 100%);padding:36px 40px 28px 40px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:30px;font-weight:700;">💰 用户充值成功</h1>
+              <p style="margin:12px 0 0 0;color:rgba(255,255,255,0.95);font-size:16px;">订单已自动到账，仅作管理员通知</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:40px;">
+              <p style="margin:0 0 24px 0;color:#374151;font-size:16px;line-height:1.6;">有用户完成了充值，系统已自动入账。</p>
+              <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f8fafc;border-radius:12px;margin-bottom:24px;border:1px solid #e2e8f0;">
+                <tr>
+                  <td style="padding:24px;">
+                    <h2 style="margin:0 0 16px 0;color:#111827;font-size:18px;font-weight:600;">📋 订单信息</h2>
+                    <table width="100%" cellpadding="8" cellspacing="0">
+                      <tr><td style="color:#6b7280;font-size:14px;padding:10px 0;">用户邮箱</td><td style="color:#111827;font-size:14px;font-weight:600;text-align:right;padding:10px 0;">${user?.email || '未绑定邮箱'}</td></tr>
+                      <tr><td style="color:#6b7280;font-size:14px;padding:10px 0;">订单号</td><td style="color:#111827;font-size:14px;font-weight:600;text-align:right;padding:10px 0;">${order.id}</td></tr>
+                      <tr><td style="color:#6b7280;font-size:14px;padding:10px 0;">充值金额</td><td style="color:#0f766e;font-size:16px;font-weight:700;text-align:right;padding:10px 0;">¥${order.amount}</td></tr>
+                      <tr><td style="color:#6b7280;font-size:14px;padding:10px 0;">增加额度</td><td style="color:#0f766e;font-size:16px;font-weight:700;text-align:right;padding:10px 0;">+${order.quota_amount} 次</td></tr>
+                      <tr><td style="color:#6b7280;font-size:14px;padding:10px 0;">当前总额度</td><td style="color:#111827;font-size:14px;font-weight:600;text-align:right;padding:10px 0;">${quotaSnapshot.totalQuota} 次</td></tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0;color:#64748b;font-size:14px;line-height:1.7;">本邮件仅作到账通知，无需任何人工审核操作。</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+    `,
+  });
+
+  if (!emailResult.ok) {
+    const errorText = await emailResult.text();
+    console.error('发送管理员充值通知邮件失败:', emailResult.status, errorText);
+  }
+}
+
 function trackPaymentAnalytics(env: Env, order: PaymentOrderRow, result: 'paid'): void {
   try {
     env.Memoraid.writeDataPoint({
@@ -344,6 +431,12 @@ async function settleRechargeOrder(
     await sendRechargeSuccessEmail(env, latestOrder, quotaSnapshot);
   } catch (emailError) {
     console.error('发送支付成功邮件失败:', emailError);
+  }
+
+  try {
+    await sendAdminRechargeNotificationEmail(env, latestOrder, quotaSnapshot);
+  } catch (emailError) {
+    console.error('发送管理员充值通知邮件失败:', emailError);
   }
 
   trackPaymentAnalytics(env, latestOrder, settleStatus);
@@ -4985,11 +5078,11 @@ export default {
                 <div class="section">
                     <h2 class="section-title">⚙️ 系统设置</h2>
                     <div class="card" style="padding: 24px; max-width: 600px;">
-                        <h3 style="margin-bottom: 12px; font-size: 1.1rem;">📧 支付成功邮件配置</h3>
+                        <h3 style="margin-bottom: 12px; font-size: 1.1rem;">📧 支付邮件配置</h3>
                         <div style="background: linear-gradient(135deg, rgba(16,185,129,0.1) 0%, rgba(167,139,250,0.1) 100%); padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; border-left: 3px solid var(--accent-secondary);">
                             <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">
                                 <strong>💡 提示：</strong>本系统使用 <strong>Resend</strong> 邮件服务，无需配置 SMTP。<br>
-                                测试邮件会发送到当前发件人邮箱，可先使用 <code style="background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 4px;">onboarding@resend.dev</code> 验证。
+                                用户支付成功后会给用户发成功通知；如配置通知邮箱，也会同时给管理员发到账提醒。
                             </p>
                         </div>
                         
@@ -5005,6 +5098,11 @@ export default {
                                 <label class="form-label">发件人名称 (Sender Name)</label>
                                 <input type="text" id="email_sender_name" class="form-input" style="width:100%" placeholder="Memoraid" value="Memoraid">
                                 <p style="font-size:0.8rem;color:var(--text-muted);margin-top:4px">邮件中显示的发件人名称</p>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">管理员通知邮箱 (Notification Email)</label>
+                                <input type="email" id="email_recipient" class="form-input" style="width:100%" placeholder="admin@yourdomain.com">
+                                <p style="font-size:0.8rem;color:var(--text-muted);margin-top:4px">用户充值成功后，会额外发送一封到账通知到这个邮箱</p>
                             </div>
 
                             <div style="margin-top: 24px;">
@@ -6711,6 +6809,7 @@ export default {
                     if (data) {
                         document.getElementById('email_sender').value = data.email_sender || '';
                         document.getElementById('email_sender_name').value = data.email_sender_name || 'Memoraid';
+                        document.getElementById('email_recipient').value = data.email_recipient || '';
                     }
                 }
             } catch (e) {
@@ -6729,7 +6828,8 @@ export default {
                 const token = localStorage.getItem('memoraid_admin_token');
                 const body = {
                     email_sender: document.getElementById('email_sender').value,
-                    email_sender_name: document.getElementById('email_sender_name').value
+                    email_sender_name: document.getElementById('email_sender_name').value,
+                    email_recipient: document.getElementById('email_recipient').value
                 };
                 
                 const res = await fetch('/api/admin/config/email', {
@@ -6741,9 +6841,8 @@ export default {
                     body: JSON.stringify(body)
                 });
                 
-                if (res.ok) {
-                    alert('配置保存成功');
-                } else {
+                // 保存成功时静默结束，避免后台频繁配置时反复弹窗打断操作。
+                if (!res.ok) {
                     alert('保存失败');
                 }
             } catch (e) {
@@ -6769,7 +6868,7 @@ export default {
                 
                 const data = await res.json();
                 if (res.ok) {
-                    alert('测试邮件已发送到发件人邮箱，请检查收件箱（包括垃圾邮件文件夹）');
+                    alert('测试邮件已发送，请检查通知邮箱或发件人邮箱（包括垃圾邮件文件夹）');
                 } else {
                     alert('测试失败: ' + (data.error || '未知错误'));
                 }
@@ -6954,8 +7053,8 @@ export default {
             if (!admin) return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
 
             const body = await request.json() as any;
-            // 自动到账后这里只保留用户成功通知所需的发件配置。
-            const keys = ['email_sender', 'email_sender_name'];
+            // 支付成功邮件和管理员到账通知共用这组邮箱配置。
+            const keys = ['email_sender', 'email_sender_name', 'email_recipient'];
             
             const stmt = env.DB.prepare(`
                 INSERT INTO system_configs (key, value, updated_at) VALUES (?, ?, ?)
@@ -6986,12 +7085,9 @@ export default {
             const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
             if (!admin) return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
 
-            // 从数据库加载邮件配置
-            const configs = await env.DB.prepare('SELECT * FROM system_configs WHERE key LIKE "email_%"').all();
-            const configMap: any = {};
-            configs.results.forEach((row: any) => configMap[row.key] = row.value);
+            const { emailSender, emailSenderName, notificationEmail } = await loadEmailConfig(env);
 
-            if (!configMap.email_sender) {
+            if (!emailSender) {
                 return new Response(JSON.stringify({ error: '请先保存发件人邮箱配置' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
             }
 
@@ -7003,11 +7099,11 @@ export default {
                 }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
             }
 
-            // 测试邮件直接发到当前发件人邮箱，避免再维护单独的通知收件箱。
+            // 优先把测试邮件发到管理员通知邮箱，便于直接验证到账提醒链路。
             const emailResponse = await sendEmailViaResend(env.RESEND_API_KEY, {
-                from: configMap.email_sender,
-                fromName: configMap.email_sender_name || 'Memoraid',
-                to: configMap.email_sender,
+                from: emailSender,
+                fromName: emailSenderName,
+                to: notificationEmail || emailSender,
                 subject: '[Memoraid] 测试邮件',
                 text: '这是一封测试邮件，证明邮件配置正确。\n\n如果您收到此邮件，说明邮件发送功能正常工作。\n\n本邮件通过Resend服务发送。',
                 html: `
@@ -7399,9 +7495,41 @@ export default {
             padding: 6px 12px;
             background: var(--bg-subtle);
             border: 1px solid var(--border);
-            border-radius: 8px;
+            border-radius: 12px;
             font-size: 0.85rem;
             color: var(--text-secondary);
+            flex-wrap: wrap;
+        }
+        .user-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .user-name {
+            font-weight: 600;
+            color: var(--text);
+        }
+        .quota-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 10px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            line-height: 1;
+            border: 1px solid transparent;
+        }
+        .quota-chip.free {
+            background: rgba(16, 185, 129, 0.1);
+            color: #047857;
+            border-color: rgba(16, 185, 129, 0.18);
+        }
+        .quota-chip.paid {
+            background: rgba(15, 23, 42, 0.08);
+            color: #0f172a;
+            border-color: rgba(15, 23, 42, 0.12);
         }
         .user-avatar {
             width: 28px; height: 28px;
@@ -7435,54 +7563,6 @@ export default {
             letter-spacing: -0.02em; margin-bottom: 8px;
         }
         .page-subtitle { color: var(--text-muted); font-size: 1rem; }
-        
-        /* 统计卡片网格 */
-        .stats-row {
-            display: grid;
-            grid-template-columns: repeat(6, 1fr);
-            gap: 16px;
-            margin-bottom: 40px;
-        }
-        .stat-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 20px;
-            transition: all 0.25s ease;
-            position: relative;
-            overflow: hidden;
-        }
-        .stat-card:hover {
-            border-color: var(--accent);
-            box-shadow: var(--shadow-lg);
-            transform: translateY(-2px);
-        }
-        .stat-card .stat-icon {
-            width: 40px; height: 40px;
-            border-radius: 12px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.25rem;
-            margin-bottom: 16px;
-        }
-        .stat-card .stat-icon.articles { background: rgba(251, 191, 36, 0.15); }
-        .stat-card .stat-icon.reads { background: rgba(56, 189, 248, 0.15); }
-        .stat-card .stat-icon.likes { background: rgba(244, 63, 94, 0.15); }
-        .stat-card .stat-icon.comments { background: rgba(52, 211, 153, 0.15); }
-        .stat-card .stat-icon.shares { background: rgba(167, 139, 250, 0.15); }
-        .stat-card .stat-icon.collects { background: rgba(251, 191, 36, 0.15); }
-        .stat-card .stat-value {
-            font-size: 1.75rem; font-weight: 700;
-            color: var(--text); letter-spacing: -0.02em;
-            line-height: 1.2;
-            background: var(--gradient-1);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-        .stat-card .stat-label {
-            font-size: 0.8rem; color: var(--text-muted);
-            margin-top: 4px; font-weight: 500;
-        }
         
         /* 筛选标签 */
         .filter-section { margin-bottom: 32px; }
@@ -7519,61 +7599,6 @@ export default {
             background: var(--border-light);
             padding: 2px 10px; border-radius: 100px;
             font-size: 0.75rem; color: var(--text-muted);
-        }
-        
-        /* 账号卡片 */
-        .accounts-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 16px;
-        }
-        .account-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            padding: 24px;
-            transition: all 0.25s ease;
-        }
-        .account-card:hover {
-            box-shadow: var(--shadow-lg);
-            transform: translateY(-3px);
-        }
-        .account-top {
-            display: flex; align-items: center; gap: 14px;
-            margin-bottom: 20px;
-        }
-        .account-avatar {
-            width: 48px; height: 48px;
-            border-radius: 14px;
-            background: var(--gradient-2);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.5rem;
-            box-shadow: 0 0 20px rgba(34, 211, 238, 0.2);
-        }
-        .account-meta h3 {
-            font-size: 1rem; font-weight: 600; color: var(--text);
-            margin-bottom: 2px;
-        }
-        .account-meta .platform-tag {
-            font-size: 0.75rem; color: var(--text-muted);
-            display: flex; align-items: center; gap: 4px;
-        }
-        .account-metrics {
-            display: grid; grid-template-columns: repeat(3, 1fr);
-            gap: 12px; padding-top: 16px;
-            border-top: 1px solid var(--border-light);
-        }
-        .metric {
-            text-align: center; padding: 12px 8px;
-            background: var(--bg-subtle); border-radius: 10px;
-        }
-        .metric-value {
-            font-size: 1.25rem; font-weight: 700;
-            color: var(--accent);
-        }
-        .metric-label {
-            font-size: 0.7rem; color: var(--text-muted);
-            margin-top: 2px; font-weight: 500;
         }
         
         /* 文章表格 */
@@ -7616,10 +7641,6 @@ export default {
             font-size: 0.8rem; font-weight: 500;
             background: var(--bg-muted);
         }
-        .stat-pill.read { color: var(--sky); }
-        .stat-pill.like { color: var(--rose); }
-        .stat-pill.comment { color: var(--emerald); }
-        .stat-pill.share { color: var(--violet); }
         .time-cell { color: var(--text-muted); font-size: 0.85rem; }
         
         /* 空状态 */
@@ -7690,52 +7711,20 @@ export default {
         .delay-3 { animation-delay: 0.3s; opacity: 0; }
         
         /* 响应式 */
-        @media (max-width: 1200px) {
-            .stats-row { grid-template-columns: repeat(3, 1fr); }
-        }
         @media (max-width: 768px) {
-            .stats-row { grid-template-columns: repeat(2, 1fr); }
-            .accounts-grid { grid-template-columns: 1fr; }
+            .topbar-inner {
+                height: auto;
+                min-height: 64px;
+                padding: 12px 0;
+                align-items: flex-start;
+            }
+            .topbar-actions {
+                justify-content: flex-end;
+                flex-wrap: wrap;
+            }
             .table-wrapper { overflow-x: auto; }
-            .data-table { min-width: 800px; }
-            .topbar-inner { padding: 0 16px; }
+            .data-table { min-width: 640px; }
             .container { padding: 24px 16px; }
-        }
-
-        /* 额度卡片 */
-        .quota-row {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-        .quota-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            position: relative;
-            overflow: hidden;
-            transition: all 0.25s ease;
-        }
-        .quota-card:hover {
-            border-color: var(--accent);
-            box-shadow: var(--shadow-lg);
-            transform: translateY(-2px);
-        }
-        .quota-info h3 {
-            font-size: 0.875rem; color: var(--text-muted); font-weight: 500; margin-bottom: 8px;
-        }
-        .quota-value {
-            font-size: 2rem; font-weight: 700; color: var(--text);
-            line-height: 1;
-        }
-        .quota-card .icon-bg {
-            position: absolute; right: -10px; bottom: -10px;
-            font-size: 5rem; opacity: 0.05; pointer-events: none;
         }
         .btn-recharge {
             background: var(--gradient-2);
@@ -7893,6 +7882,18 @@ export default {
             min-height: 44px;
         }
         .btn-confirm-pay:hover { opacity: 0.9; }
+
+        @media (max-width: 768px) {
+            .user-info {
+                max-width: calc(100vw - 144px);
+            }
+            .user-meta {
+                gap: 6px;
+            }
+            .quota-chip {
+                font-size: 0.7rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -7918,8 +7919,13 @@ export default {
             <div class="topbar-actions">
                 <div class="user-info" id="userInfo" style="display:none;">
                     <div class="user-avatar" id="userAvatar" onclick="changeAvatar()" title="点击更换头像" style="cursor: pointer; padding: 0; overflow: hidden; background: transparent;"></div>
-                    <span id="userEmail">user</span>
+                    <div class="user-meta">
+                        <span class="user-name" id="userEmail">user</span>
+                        <span class="quota-chip free">免费 <strong id="freeQuotaInline">-</strong></span>
+                        <span class="quota-chip paid">付费 <strong id="paidQuotaInline">-</strong></span>
+                    </div>
                 </div>
+                <button class="btn-recharge" onclick="openRechargeModal()">充值</button>
                 <button class="btn btn-ghost" onclick="loadData()">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
                     刷新
@@ -7936,86 +7942,17 @@ export default {
         <!-- 页面标题 -->
         <div class="page-header fade-in">
             <h1 class="page-title">内容数据中心</h1>
-            <p class="page-subtitle">跨平台内容发布数据一站式管理</p>
-        </div>
-        
-        <!-- 额度信息 -->
-        <div class="quota-row fade-in delay-1">
-            <div class="quota-card">
-                <div class="quota-info">
-                    <h3>免费额度 (次)</h3>
-                    <div class="quota-value" id="freeQuota">-</div>
-                </div>
-                <div class="icon-bg">🎁</div>
-            </div>
-            <div class="quota-card">
-                <div class="quota-info">
-                    <h3>付费额度 (次)</h3>
-                    <div class="quota-value" id="paidQuota">-</div>
-                </div>
-                <div class="icon-bg">💎</div>
-                <button class="btn-recharge" onclick="openRechargeModal()">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg>
-                    充值
-                </button>
-            </div>
-        </div>
-
-        <!-- 统计卡片 -->
-        <div class="stats-row fade-in delay-1">
-            <div class="stat-card">
-                <div class="stat-icon articles">📝</div>
-                <div class="stat-value" id="totalArticles">-</div>
-                <div class="stat-label">文章总数</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon reads">👁</div>
-                <div class="stat-value" id="totalReads">-</div>
-                <div class="stat-label">累计阅读</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon likes">❤️</div>
-                <div class="stat-value" id="totalLikes">-</div>
-                <div class="stat-label">获得点赞</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon comments">💬</div>
-                <div class="stat-value" id="totalComments">-</div>
-                <div class="stat-label">收到评论</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon shares">🔗</div>
-                <div class="stat-value" id="totalShares">-</div>
-                <div class="stat-label">被转发</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon collects">⭐</div>
-                <div class="stat-value" id="totalCollects">-</div>
-                <div class="stat-label">被收藏</div>
-            </div>
+            <p class="page-subtitle">专注文章与额度管理，去掉无效统计干扰。</p>
         </div>
         
         <!-- 平台筛选 -->
-        <div class="filter-section fade-in delay-2">
+        <div class="filter-section fade-in delay-1">
             <div class="filter-label">按平台筛选</div>
             <div class="filter-tags" id="platformFilters"></div>
         </div>
         
-        <!-- 账号概览 -->
-        <section class="content-section fade-in delay-2">
-            <div class="section-header">
-                <h2 class="section-title">
-                    账号概览
-                    <span class="count" id="accountCount">0</span>
-                </h2>
-            </div>
-            <div class="accounts-grid" id="accountsGrid">
-                <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
-            </div>
-        </section>
-        
         <!-- 文章列表 -->
-        <section class="content-section fade-in delay-3">
+        <section class="content-section fade-in delay-2">
             <div class="section-header">
                 <h2 class="section-title">
                     文章列表
@@ -8199,36 +8136,25 @@ export default {
                 const query = currentPlatform !== 'all' ? '?platform=' + currentPlatform : '';
                 const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
                 
-                // 并行加载所有数据
-                const [statsRes, platformsRes, accountsRes, articlesRes, quotaRes] = await Promise.all([
-                    fetch(API_BASE + '/api/user/stats' + query, { headers }),
+                // 用户页只保留实际可用的数据请求，避免无效统计反复拉取。
+                const [platformsRes, articlesRes, quotaRes] = await Promise.all([
                     fetch(API_BASE + '/api/platforms', { headers }),
-                    fetch(API_BASE + '/api/accounts' + query, { headers }),
                     fetch(API_BASE + '/api/user/articles' + query, { headers }),
                     fetch(API_BASE + '/api/user/quota', { headers })
                 ]);
                 
-                const [stats, platforms, accounts, articles, quota] = await Promise.all([
-                    statsRes.json(), platformsRes.json(), accountsRes.json(), articlesRes.json(), quotaRes.json()
+                const [platforms, articles, quota] = await Promise.all([
+                    platformsRes.json(), articlesRes.json(), quotaRes.json()
                 ]);
                 
-                // 更新额度
+                // 额度直接贴着用户名展示，减少页面中部重复卡片。
                 if (quota && !quota.error) {
-                    document.getElementById('freeQuota').textContent = quota.free_quota_remaining ?? 0;
-                    document.getElementById('paidQuota').textContent = quota.paid_quota_remaining ?? 0;
+                    document.getElementById('freeQuotaInline').textContent = quota.free_quota_remaining ?? 0;
+                    document.getElementById('paidQuotaInline').textContent = quota.paid_quota_remaining ?? 0;
                 }
-                
-                // 更新统计数据
-                document.getElementById('totalArticles').textContent = formatNum(stats.totalArticles);
-                document.getElementById('totalReads').textContent = formatNum(stats.totalReads);
-                document.getElementById('totalLikes').textContent = formatNum(stats.totalLikes);
-                document.getElementById('totalComments').textContent = formatNum(stats.totalComments);
-                document.getElementById('totalShares').textContent = formatNum(stats.totalShares);
-                document.getElementById('totalCollects').textContent = formatNum(stats.totalCollects);
                 
                 // 渲染各部分
                 renderPlatformFilters(platforms.platforms || []);
-                renderAccounts(accounts.accounts || []);
                 renderArticles(articles.articles || []);
                 
             } catch (e) {
@@ -8238,42 +8164,16 @@ export default {
         
         // 渲染平台筛选标签
         function renderPlatformFilters(platforms) {
+            const visiblePlatforms = platforms.filter(p => p && p.name && p.name !== 'test');
+            if (currentPlatform !== 'all' && !visiblePlatforms.some(p => p.name === currentPlatform)) {
+                currentPlatform = 'all';
+            }
             let html = '<button class="filter-tag ' + (currentPlatform === 'all' ? 'active' : '') + '" onclick="filterPlatform(\\'all\\')">全部</button>';
-            html += platforms.map(p => 
+            html += visiblePlatforms.map(p => 
                 '<button class="filter-tag ' + (currentPlatform === p.name ? 'active' : '') + '" onclick="filterPlatform(\\'' + p.name + '\\')">' + 
                 (p.icon || '') + ' ' + p.display_name + '</button>'
             ).join('');
             document.getElementById('platformFilters').innerHTML = html;
-        }
-        
-        // 渲染账号卡片
-        function renderAccounts(accounts) {
-            document.getElementById('accountCount').textContent = accounts.length;
-            
-            if (!accounts.length) {
-                document.getElementById('accountsGrid').innerHTML = 
-                    '<div class="empty-state"><div class="empty-icon">📭</div><p class="empty-text">暂无账号数据</p></div>';
-                return;
-            }
-            
-            const html = accounts.map(a => 
-                '<div class="account-card">' +
-                    '<div class="account-top">' +
-                        '<div class="account-avatar">' + (a.platform_icon || '👤') + '</div>' +
-                        '<div class="account-meta">' +
-                            '<h3>' + (a.account_name || '未知账号') + '</h3>' +
-                            '<div class="platform-tag">' + (a.platform_display_name || a.platform_name || '') + '</div>' +
-                        '</div>' +
-                    '</div>' +
-                    '<div class="account-metrics">' +
-                        '<div class="metric"><div class="metric-value">' + formatNum(a.article_count) + '</div><div class="metric-label">文章</div></div>' +
-                        '<div class="metric"><div class="metric-value">' + formatNum(a.total_reads) + '</div><div class="metric-label">阅读</div></div>' +
-                        '<div class="metric"><div class="metric-value">' + formatNum(a.total_likes) + '</div><div class="metric-label">点赞</div></div>' +
-                    '</div>' +
-                '</div>'
-            ).join('');
-            
-            document.getElementById('accountsGrid').innerHTML = html;
         }
         
         // 渲染文章表格
@@ -8295,10 +8195,6 @@ export default {
                     '<td><a href="' + (a.article_url || '#') + '" target="_blank" class="article-title">' + (a.title || '无标题') + '</a></td>' +
                     '<td><div class="platform-cell">' + (a.platform_icon || '') + ' ' + (a.platform_display_name || '') + '</div></td>' +
                     '<td>' + (a.account_name || '-') + '</td>' +
-                    '<td><span class="stat-pill read">' + formatNum(a.read_count) + '</span></td>' +
-                    '<td><span class="stat-pill like">' + formatNum(a.like_count) + '</span></td>' +
-                    '<td><span class="stat-pill comment">' + formatNum(a.comment_count) + '</span></td>' +
-                    '<td><span class="stat-pill share">' + formatNum(a.share_count) + '</span></td>' +
                     // 新增 Token 列
                     '<td>' + tokenCell + '</td>' +
                     '<td class="time-cell">' + formatTime(a.publish_time) + '</td>' +
@@ -8309,7 +8205,6 @@ export default {
                 '<table class="data-table">' +
                     '<thead><tr>' +
                         '<th>标题</th><th>平台</th><th>账号</th>' +
-                        '<th>阅读</th><th>点赞</th><th>评论</th><th>转发</th>' +
                         '<th>Token</th><th>发布时间</th>' +
                     '</tr></thead>' +
                     '<tbody>' + rows + '</tbody>' +
@@ -8501,12 +8396,28 @@ export default {
       return new Response(html, { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
     }
 
-    // 7.2 GET /api/platforms - 获取所有平台
+    // 7.2 GET /api/platforms - 获取平台列表
     if (url.pathname === '/api/platforms' && request.method === 'GET') {
       try {
-        const platforms = await env.DB.prepare(
-          'SELECT id, name, display_name, icon FROM platforms ORDER BY id'
-        ).all();
+        const userId = getUserIdFromRequest(request);
+        let platforms;
+
+        if (userId) {
+          // 用户页只展示当前用户实际有文章的平台，并排除测试平台。
+          platforms = await env.DB.prepare(`
+            SELECT DISTINCT p.id, p.name, p.display_name, p.icon
+            FROM platforms p
+            JOIN accounts a ON a.platform_id = p.id
+            JOIN articles art ON art.account_id = a.id
+            WHERE a.user_id = ? AND p.name != 'test'
+            ORDER BY p.id
+          `).bind(userId).all();
+        } else {
+          platforms = await env.DB.prepare(
+            "SELECT id, name, display_name, icon FROM platforms WHERE name != 'test' ORDER BY id"
+          ).all();
+        }
+
         return new Response(JSON.stringify({ platforms: platforms.results }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
