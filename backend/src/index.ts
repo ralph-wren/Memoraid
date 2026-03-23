@@ -3791,13 +3791,14 @@ export default {
         }
 
         const search = url.searchParams.get('q') || '';
-        const platform = url.searchParams.get('platform') || '';
+        const platform = url.searchParams.get('platform') || ''; // 单个平台（兼容旧版）
+        const platforms = url.searchParams.get('platforms') || ''; // 多个平台（逗号分隔）
         const limit = parseInt(url.searchParams.get('limit') || '50');
         const offset = parseInt(url.searchParams.get('offset') || '0');
 
         let query = `
           SELECT a.id, a.title, a.publish_time, a.article_url, a.status, a.extra_info,
-            ac.account_name, p.display_name as platform_name, p.icon as platform_icon
+            ac.account_name, p.display_name as platform_name, p.icon as platform_icon, p.name as platform_code
           FROM articles a 
           JOIN accounts ac ON a.account_id = ac.id 
           JOIN platforms p ON ac.platform_id = p.id 
@@ -3810,7 +3811,16 @@ export default {
           params.push(`%${search}%`);
         }
 
-        if (platform) {
+        // 支持多平台筛选（优先使用platforms参数）
+        if (platforms) {
+          const platformList = platforms.split(',').filter(p => p.trim());
+          if (platformList.length > 0) {
+            const placeholders = platformList.map(() => '?').join(',');
+            query += ` AND p.name IN (${placeholders})`;
+            params.push(...platformList);
+          }
+        } else if (platform) {
+          // 兼容旧版单平台筛选
           query += ` AND p.name = ?`;
           params.push(platform);
         }
@@ -3835,7 +3845,16 @@ export default {
           countParams.push(`%${search}%`);
         }
         
-        if (platform) {
+        // 支持多平台筛选（优先使用platforms参数）
+        if (platforms) {
+          const platformList = platforms.split(',').filter(p => p.trim());
+          if (platformList.length > 0) {
+            const placeholders = platformList.map(() => '?').join(',');
+            countQuery += ` AND p.name IN (${placeholders})`;
+            countParams.push(...platformList);
+          }
+        } else if (platform) {
+          // 兼容旧版单平台筛选
           countQuery += ` AND p.name = ?`;
           countParams.push(platform);
         }
@@ -7345,7 +7364,7 @@ export default {
         }
     }
 
-    // 7.0.8.4 GET /api/task-execution-logs - 获取定时任务执行记录（分页）
+    // 7.0.8.4 GET /api/task-execution-logs - 获取定时任务执行记录（分页，支持按task_id筛选）
     if (url.pathname === '/api/task-execution-logs' && request.method === 'GET') {
         try {
             const userId = getUserIdFromRequest(request);
@@ -7358,17 +7377,27 @@ export default {
 
             const limit = parseInt(url.searchParams.get('limit') || '20');
             const offset = parseInt(url.searchParams.get('offset') || '0');
+            const taskId = url.searchParams.get('task_id'); // 可选：按任务ID筛选
+
+            // 构建查询条件
+            let whereClause = 'WHERE user_id = ?';
+            const params = [userId];
+            
+            if (taskId) {
+                whereClause += ' AND task_id = ?';
+                params.push(taskId);
+            }
 
             // 获取总数
             const countResult = await env.DB.prepare(
-                'SELECT COUNT(*) as total FROM task_execution_logs WHERE user_id = ?'
-            ).bind(userId).first<{ total: number }>();
+                `SELECT COUNT(*) as total FROM task_execution_logs ${whereClause}`
+            ).bind(...params).first<{ total: number }>();
             const total = countResult?.total || 0;
 
             // 获取记录列表
             const logs = await env.DB.prepare(
-                'SELECT id, task_id, task_name, status, started_at, completed_at, duration, articles_generated, articles_published, error_message FROM task_execution_logs WHERE user_id = ? ORDER BY started_at DESC LIMIT ? OFFSET ?'
-            ).bind(userId, limit, offset).all();
+                `SELECT id, task_id, task_name, status, started_at, completed_at, duration, articles_generated, articles_published, error_message FROM task_execution_logs ${whereClause} ORDER BY started_at DESC LIMIT ? OFFSET ?`
+            ).bind(...params, limit, offset).all();
 
             return new Response(JSON.stringify({
                 logs: logs.results || [],
@@ -7387,6 +7416,7 @@ export default {
     }
 
     // 7.0.8.5 GET /api/scheduled-tasks/list - 获取用户的定时任务列表
+    // 注意：此接口与 /api/scheduled-tasks 返回相同格式的数据，保持兼容性
     if (url.pathname === '/api/scheduled-tasks/list' && request.method === 'GET') {
         try {
             const userId = getUserIdFromRequest(request);
@@ -7399,12 +7429,37 @@ export default {
 
             // 获取用户的所有定时任务
             const tasks = await env.DB.prepare(
-                'SELECT id, name, enabled, schedule_type, hour, minute, weekdays, interval_minutes, platforms, last_run_time, last_run_status, last_run_error, created_at, updated_at FROM scheduled_tasks WHERE user_id = ? ORDER BY created_at DESC'
+                'SELECT * FROM scheduled_tasks WHERE user_id = ? ORDER BY created_at DESC'
             ).bind(userId).all();
 
+            // 将数据库字段转换为前端需要的格式（与 /api/scheduled-tasks 保持一致）
+            const formattedTasks = (tasks.results || []).map((task: any) => ({
+                id: task.id,
+                enabled: task.enabled === 1,
+                name: task.name,
+                scheduleType: task.schedule_type,
+                hour: task.hour,
+                minute: task.minute,
+                executionTimes: task.execution_times ? JSON.parse(task.execution_times) : undefined,
+                weekdays: task.weekdays ? JSON.parse(task.weekdays) : undefined,
+                intervalMinutes: task.interval_minutes,
+                newsSourceType: task.news_source_type,
+                newsSourceUrl: task.news_source_url,
+                tophubNodeId: task.tophub_node_id,
+                categories: JSON.parse(task.categories || '[]'),
+                platforms: JSON.parse(task.platforms || '[]'),
+                articleCount: task.article_count || 1,
+                customPrompt: task.custom_prompt || '',
+                notificationEmail: task.notification_email || '',
+                lastRunTime: task.last_run_time,
+                lastRunStatus: task.last_run_status,
+                lastRunError: task.last_run_error,
+                createdAt: task.created_at,
+            }));
+
             return new Response(JSON.stringify({
-                tasks: tasks.results || [],
-                total: tasks.results?.length || 0
+                tasks: formattedTasks,
+                total: formattedTasks.length
             }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }
             });
@@ -7683,7 +7738,7 @@ export default {
         
         /* 主容器 */
         .container { 
-            max-width: 1440px; 
+            max-width: 1800px; /* 增加最大宽度以容纳更多列 */
             margin: 0 auto; 
             padding: 32px 24px; 
             height: calc(100vh - 64px);
@@ -7976,6 +8031,26 @@ export default {
             background: var(--bg-muted);
         }
         .time-cell { color: var(--text-muted); font-size: 0.85rem; }
+        
+        /* 操作按钮 */
+        .action-btn {
+            padding: 6px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .action-btn:hover {
+            background: var(--bg-muted);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
         
         /* 空状态 */
         .empty-state {
@@ -8310,20 +8385,11 @@ export default {
             <!-- 右侧主内容区 -->
             <div class="main-content">
                 <div class="content-body">
-                    <!-- 筛选工具栏（仅文章列表显示） -->
-                    <div class="filter-toolbar" id="filterToolbar" style="display:none; margin-bottom: 24px;">
-                        <div class="filter-section">
-                            <div class="filter-label">平台筛选（可多选）</div>
-                            <div class="filter-tags" id="platformFilters">
-                                <div class="loading-text">加载中...</div>
-                            </div>
-                        </div>
-                        <div class="filter-section">
-                            <div class="filter-label">排序方式</div>
-                            <div class="filter-tags">
-                                <button class="filter-tag active" onclick="changeSortBy('time')">发布时间 ↓</button>
-                                <button class="filter-tag" onclick="changeSortBy('token')">Token消耗</button>
-                            </div>
+                    <!-- 平台筛选（在表格上方，支持多选） -->
+                    <div class="platform-filter-bar" id="platformFilterBar" style="display:none; margin-bottom: 20px;">
+                        <div class="filter-label" style="margin-bottom: 12px;">平台筛选（可多选）</div>
+                        <div class="filter-tags" id="platformFilters">
+                            <div class="loading-text">加载中...</div>
                         </div>
                     </div>
                     
@@ -8540,16 +8606,20 @@ export default {
                 content.classList.remove('active');
             });
             
-            // 显示/隐藏筛选工具栏（仅文章列表显示）
-            const filterToolbar = document.getElementById('filterToolbar');
+            // 显示/隐藏平台筛选栏
+            const platformFilterBar = document.getElementById('platformFilterBar');
+            
             if (tab === 'articles') {
-                filterToolbar.style.display = 'flex';
+                // 文章列表：显示平台筛选
+                platformFilterBar.style.display = 'block';
                 document.getElementById('articlesContent').classList.add('active');
                 if (document.getElementById('articlesTable').innerHTML.includes('加载中')) {
                     loadArticles();
                 }
             } else {
-                filterToolbar.style.display = 'none';
+                // 其他Tab：隐藏平台筛选
+                platformFilterBar.style.display = 'none';
+                
                 if (tab === 'tasks') {
                     document.getElementById('tasksContent').classList.add('active');
                     if (document.getElementById('tasksTable').innerHTML.includes('加载中')) {
@@ -8585,24 +8655,6 @@ export default {
                 currentSortOrder = 'desc'; // 新列默认降序
             }
             articlesPage = 1; // 重置到第一页
-            
-            // 更新按钮状态
-            const sortButtons = document.querySelectorAll('.filter-toolbar .filter-tag');
-            sortButtons.forEach(btn => {
-                btn.classList.remove('active');
-                // 根据sortBy激活对应按钮，并显示排序方向
-                if ((sortBy === 'time' && btn.textContent.includes('发布时间')) ||
-                    (sortBy === 'token' && btn.textContent.includes('Token'))) {
-                    btn.classList.add('active');
-                    // 更新按钮文本显示排序方向
-                    const arrow = currentSortOrder === 'desc' ? ' ↓' : ' ↑';
-                    if (sortBy === 'time') {
-                        btn.textContent = '发布时间' + arrow;
-                    } else {
-                        btn.textContent = 'Token消耗' + arrow;
-                    }
-                }
-            });
             
             loadArticles();
         }
@@ -8796,7 +8848,7 @@ export default {
                 '</table>';
         }
         
-        // 渲染充值记录
+        // 渲染充值记录（去掉状态字段）
         function renderRechargeHistory(records) {
             if (!records.length) {
                 document.getElementById('rechargeTable').innerHTML = 
@@ -8805,14 +8857,10 @@ export default {
             }
             
             const rows = records.map(r => {
-                const statusText = r.status === 'paid' ? '已支付' : r.status === 'pending' ? '待支付' : '已取消';
-                const statusColor = r.status === 'paid' ? '#10b981' : r.status === 'pending' ? '#f59e0b' : '#ef4444';
-                
                 return '<tr>' +
                     '<td><span style="font-family:monospace;font-size:0.85rem;color:var(--text-muted)">' + (r.id || '-') + '</span></td>' +
                     '<td><span style="font-weight:600;color:var(--text)">¥' + (r.amount || 0) + '</span></td>' +
                     '<td><span class="stat-pill" style="background:#f0fdf4;color:#16a34a">' + (r.quota_amount || 0) + ' 次</span></td>' +
-                    '<td><span class="stat-pill" style="background:' + statusColor + '20;color:' + statusColor + '">' + statusText + '</span></td>' +
                     '<td class="time-cell">' + formatTime(r.created_at) + '</td>' +
                 '</tr>';
             }).join('');
@@ -8820,13 +8868,13 @@ export default {
             document.getElementById('rechargeTable').innerHTML = 
                 '<table class="data-table">' +
                     '<thead><tr>' +
-                        '<th>订单号</th><th>金额</th><th>额度</th><th>状态</th><th>时间</th>' +
+                        '<th>订单号</th><th>金额</th><th>额度</th><th>时间</th>' +
                     '</tr></thead>' +
                     '<tbody>' + rows + '</tbody>' +
                 '</table>';
         }
         
-        // 渲染定时任务列表（当前配置的任务）
+        // 渲染定时任务列表（显示所有创建的任务）
         function renderScheduledTasks(tasks) {
             // 注意：taskCount元素在新布局中已移除，不再需要更新
             
@@ -8836,41 +8884,201 @@ export default {
                 return;
             }
             
+            // 格式化调度描述（支持多个执行时间）
+            function formatScheduleDesc(task) {
+                // 获取执行时间列表（优先使用 executionTimes，否则使用 hour/minute）
+                const executionTimes = task.executionTimes && task.executionTimes.length > 0
+                    ? task.executionTimes
+                    : [{ hour: task.hour, minute: task.minute }];
+                
+                // 格式化时间列表
+                const timeStrs = executionTimes.map(t => 
+                    String(t.hour).padStart(2, '0') + ':' + String(t.minute).padStart(2, '0')
+                );
+                
+                if (task.scheduleType === 'daily') {
+                    // 每天模式：显示所有时间点
+                    return '每天 ' + timeStrs.join('、');
+                }
+                
+                if (task.scheduleType === 'weekly') {
+                    // 每周模式：显示周几和所有时间点
+                    const weekdayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+                    const days = (task.weekdays || []).map(d => weekdayNames[d]).join('、');
+                    return '每' + days + ' ' + timeStrs.join('、');
+                }
+                
+                // 间隔模式：不使用时间点
+                return '每 ' + (task.intervalMinutes || 60) + ' 分钟';
+            }
+            
             const rows = tasks.map(task => {
                 // 状态显示
                 const isEnabled = task.enabled !== false;
-                const statusText = isEnabled ? '启用' : '禁用';
+                const statusText = isEnabled ? '运行中' : '已停止';
                 const statusColor = isEnabled ? '#10b981' : '#9ca3af';
                 
-                // 平台显示
+                // 平台显示（转换平台代码为中文名称）
+                const platformMap = {
+                    'weixin': '公众号',
+                    'toutiao': '头条号',
+                    'zhihu': '知乎',
+                    'xiaohongshu': '小红书'
+                };
                 const platformNames = task.platforms && task.platforms.length > 0 
-                    ? task.platforms.join(', ') 
+                    ? task.platforms.map(p => platformMap[p] || p).join('、') 
                     : '全部';
                 
-                // Cron表达式显示
-                const cronText = task.cron_expression || '-';
+                // 执行周期描述
+                const scheduleDesc = formatScheduleDesc(task);
                 
-                // 下次执行时间（简化显示）
-                const nextRunText = task.next_run_time 
-                    ? formatTime(Math.floor(new Date(task.next_run_time).getTime() / 1000))
-                    : '-';
+                // 文章数量
+                const articleCount = task.articleCount || 1;
+                
+                // Node ID（不截取，使用等宽字体）
+                const nodeId = task.tophubNodeId || '-';
+                
+                // 通知邮箱（不截取）
+                const email = task.notificationEmail || '-';
+                
+                // 自定义提示词（截取前20个字符，鼠标悬停显示完整）
+                const customPrompt = task.customPrompt || '-';
+                const promptDisplay = customPrompt.length > 20 ? customPrompt.substring(0, 20) + '...' : customPrompt;
+                
+                // 上次执行时间和状态
+                let lastRunText = '-';
+                if (task.lastRunTime) {
+                    const statusEmoji = task.lastRunStatus === 'success' ? '✅' : 
+                                       task.lastRunStatus === 'failed' ? '❌' : '⏳';
+                    lastRunText = formatTime(Math.floor(task.lastRunTime / 1000)) + ' ' + statusEmoji;
+                }
                 
                 return '<tr>' +
-                    '<td><span style="font-weight:500;color:var(--text)">' + (task.name || '未命名任务') + '</span></td>' +
-                    '<td><span class="stat-pill" style="background:' + statusColor + '20;color:' + statusColor + '">' + statusText + '</span></td>' +
-                    '<td><span style="color:var(--text-secondary);font-size:0.85rem">' + platformNames + '</span></td>' +
-                    '<td><span style="color:var(--text-muted);font-family:monospace;font-size:0.85rem">' + cronText + '</span></td>' +
-                    '<td class="time-cell">' + nextRunText + '</td>' +
+                    '<td style="min-width:100px"><span style="font-weight:500;color:var(--text)">' + (task.name || '未命名任务') + '</span></td>' +
+                    '<td style="min-width:70px"><span class="stat-pill" style="background:' + statusColor + '20;color:' + statusColor + '">' + statusText + '</span></td>' +
+                    '<td style="min-width:90px"><span style="color:var(--text-secondary);font-size:0.85rem">' + platformNames + '</span></td>' +
+                    '<td style="min-width:130px"><span style="color:var(--text-muted);font-size:0.85rem">' + scheduleDesc + '</span></td>' +
+                    '<td style="min-width:70px;text-align:center"><span style="color:var(--text);font-size:0.85rem">' + articleCount + ' 篇</span></td>' +
+                    '<td style="min-width:90px"><span style="color:var(--text-muted);font-size:0.85rem;font-family:monospace">' + nodeId + '</span></td>' +
+                    '<td style="min-width:140px"><span style="color:var(--text-muted);font-size:0.85rem">' + email + '</span></td>' +
+                    '<td style="width:150px;max-width:150px"><span style="color:var(--text-muted);font-size:0.85rem;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + customPrompt.replace(/"/g, '&quot;') + '">' + promptDisplay + '</span></td>' +
+                    '<td style="min-width:140px" class="time-cell">' + lastRunText + '</td>' +
+                    '<td style="min-width:70px"><button class="action-btn" onclick="viewTaskLogs(&quot;' + task.id + '&quot;, &quot;' + (task.name || '未命名任务').replace(/"/g, '&quot;') + '&quot;)" title="查看执行记录">📋 记录</button></td>' +
                 '</tr>';
             }).join('');
             
             document.getElementById('tasksTable').innerHTML = 
-                '<table class="data-table">' +
+                '<div style="overflow-x:auto"><table class="data-table" style="width:100%">' +
                     '<thead><tr>' +
-                        '<th>任务名称</th><th>状态</th><th>目标平台</th><th>执行周期</th><th>下次执行</th>' +
+                        '<th style="min-width:100px">任务名称</th>' +
+                        '<th style="min-width:70px">状态</th>' +
+                        '<th style="min-width:90px">目标平台</th>' +
+                        '<th style="min-width:130px">执行周期</th>' +
+                        '<th style="min-width:70px">文章数量</th>' +
+                        '<th style="min-width:90px">Node ID</th>' +
+                        '<th style="min-width:140px">通知邮箱</th>' +
+                        '<th style="width:150px;max-width:150px">自定义提示词</th>' +
+                        '<th style="min-width:140px">上次执行</th>' +
+                        '<th style="min-width:70px">操作</th>' +
                     '</tr></thead>' +
                     '<tbody>' + rows + '</tbody>' +
-                '</table>';
+                '</table></div>';
+        }
+        
+        // 查看任务执行记录
+        async function viewTaskLogs(taskId, taskName) {
+            try {
+                const token = localStorage.getItem('memoraid_token');
+                if (!token) return;
+                
+                const headers = { 'Authorization': 'Bearer ' + token };
+                const res = await fetch(API_BASE + '/api/task-execution-logs?task_id=' + encodeURIComponent(taskId) + '&limit=20', { headers });
+                const data = await res.json();
+                
+                const logs = data.logs || [];
+                
+                // 构建弹窗内容
+                let modalContent = '<div style="padding:20px">';
+                modalContent += '<h3 style="margin:0 0 16px;font-size:18px;color:var(--text)">📋 ' + taskName + ' - 执行记录</h3>';
+                
+                if (logs.length === 0) {
+                    modalContent += '<div class="empty-state"><div class="empty-icon">📝</div><p class="empty-text">暂无执行记录</p></div>';
+                } else {
+                    modalContent += '<div style="max-height:500px;overflow-y:auto">';
+                    modalContent += '<table class="data-table" style="margin:0">';
+                    modalContent += '<thead><tr><th>执行时间</th><th>状态</th><th>生成</th><th>发布</th><th>耗时</th></tr></thead>';
+                    modalContent += '<tbody>';
+                    
+                    logs.forEach(log => {
+                        const statusColor = log.status === 'success' ? '#10b981' : 
+                                          log.status === 'failed' ? '#ef4444' : '#f59e0b';
+                        const statusText = log.status === 'success' ? '✅ 成功' : 
+                                         log.status === 'failed' ? '❌ 失败' : '⏳ 执行中';
+                        const duration = log.duration ? Math.round(log.duration / 1000) + 's' : '-';
+                        
+                        modalContent += '<tr>';
+                        modalContent += '<td class="time-cell">' + formatTime(Math.floor(log.started_at / 1000)) + '</td>';
+                        modalContent += '<td><span class="stat-pill" style="background:' + statusColor + '20;color:' + statusColor + '">' + statusText + '</span></td>';
+                        modalContent += '<td>' + (log.articles_generated || 0) + ' 篇</td>';
+                        modalContent += '<td>' + (log.articles_published || 0) + ' 篇</td>';
+                        modalContent += '<td>' + duration + '</td>';
+                        modalContent += '</tr>';
+                        
+                        // 如果有错误信息，显示在下一行
+                        if (log.error_message) {
+                            modalContent += '<tr><td colspan="5" style="padding:8px 12px;background:#fef2f2;border-left:3px solid #ef4444">';
+                            modalContent += '<span style="color:#dc2626;font-size:0.85rem">⚠️ ' + log.error_message + '</span>';
+                            modalContent += '</td></tr>';
+                        }
+                    });
+                    
+                    modalContent += '</tbody></table></div>';
+                }
+                
+                modalContent += '<div style="margin-top:20px;text-align:right">';
+                modalContent += '<button class="btn-primary" onclick="closeModal()" style="padding:8px 20px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer">关闭</button>';
+                modalContent += '</div></div>';
+                
+                // 显示弹窗
+                showModal(modalContent);
+                
+            } catch (e) {
+                console.error('加载执行记录失败:', e);
+                alert('加载执行记录失败，请稍后重试');
+            }
+        }
+        
+        // 显示模态框
+        function showModal(content) {
+            // 创建遮罩层
+            let overlay = document.getElementById('modalOverlay');
+            if (!overlay) {
+                overlay = document.createElement('div');
+                overlay.id = 'modalOverlay';
+                overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+                overlay.onclick = function(e) {
+                    if (e.target === overlay) closeModal();
+                };
+                document.body.appendChild(overlay);
+            }
+            
+            // 创建弹窗
+            const modal = document.createElement('div');
+            modal.id = 'modalContent';
+            modal.style.cssText = 'background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:800px;width:90%;max-height:80vh;overflow:hidden';
+            modal.innerHTML = content;
+            
+            overlay.innerHTML = '';
+            overlay.appendChild(modal);
+            overlay.style.display = 'flex';
+        }
+        
+        // 关闭模态框
+        function closeModal() {
+            const overlay = document.getElementById('modalOverlay');
+            if (overlay) {
+                overlay.style.display = 'none';
+            }
         }
         
         // 渲染文章分页
@@ -9130,6 +9338,8 @@ export default {
         async function init() {
             const isAuth = await checkAuth();
             if (isAuth) {
+                // 默认显示文章列表Tab，立即显示平台筛选区域（显示加载状态）
+                document.getElementById('platformFilterBar').style.display = 'block';
                 loadData();
             }
         }
