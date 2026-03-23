@@ -7304,6 +7304,118 @@ export default {
         }
     }
 
+    // 7.0.8.3 GET /api/payment/history - 获取用户充值记录（分页）
+    if (url.pathname === '/api/payment/history' && request.method === 'GET') {
+        try {
+            const userId = getUserIdFromRequest(request);
+            if (!userId) {
+                return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+                    status: 401,
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                });
+            }
+
+            const limit = parseInt(url.searchParams.get('limit') || '20');
+            const offset = parseInt(url.searchParams.get('offset') || '0');
+
+            // 获取总数
+            const countResult = await env.DB.prepare(
+                'SELECT COUNT(*) as total FROM payment_orders WHERE user_id = ?'
+            ).bind(userId).first<{ total: number }>();
+            const total = countResult?.total || 0;
+
+            // 获取记录列表
+            const records = await env.DB.prepare(
+                'SELECT id, amount, quota_amount, status, created_at, paid_at FROM payment_orders WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
+            ).bind(userId, limit, offset).all();
+
+            return new Response(JSON.stringify({
+                records: records.results || [],
+                total,
+                limit,
+                offset
+            }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), {
+                status: 500,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+    }
+
+    // 7.0.8.4 GET /api/task-execution-logs - 获取定时任务执行记录（分页）
+    if (url.pathname === '/api/task-execution-logs' && request.method === 'GET') {
+        try {
+            const userId = getUserIdFromRequest(request);
+            if (!userId) {
+                return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+                    status: 401,
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                });
+            }
+
+            const limit = parseInt(url.searchParams.get('limit') || '20');
+            const offset = parseInt(url.searchParams.get('offset') || '0');
+
+            // 获取总数
+            const countResult = await env.DB.prepare(
+                'SELECT COUNT(*) as total FROM task_execution_logs WHERE user_id = ?'
+            ).bind(userId).first<{ total: number }>();
+            const total = countResult?.total || 0;
+
+            // 获取记录列表
+            const logs = await env.DB.prepare(
+                'SELECT id, task_id, task_name, status, started_at, completed_at, duration, articles_generated, articles_published, error_message FROM task_execution_logs WHERE user_id = ? ORDER BY started_at DESC LIMIT ? OFFSET ?'
+            ).bind(userId, limit, offset).all();
+
+            return new Response(JSON.stringify({
+                logs: logs.results || [],
+                total,
+                limit,
+                offset
+            }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), {
+                status: 500,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+    }
+
+    // 7.0.8.5 GET /api/scheduled-tasks/list - 获取用户的定时任务列表
+    if (url.pathname === '/api/scheduled-tasks/list' && request.method === 'GET') {
+        try {
+            const userId = getUserIdFromRequest(request);
+            if (!userId) {
+                return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+                    status: 401,
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                });
+            }
+
+            // 获取用户的所有定时任务
+            const tasks = await env.DB.prepare(
+                'SELECT id, name, enabled, schedule_type, hour, minute, weekdays, interval_minutes, platforms, last_run_time, last_run_status, last_run_error, created_at, updated_at FROM scheduled_tasks WHERE user_id = ? ORDER BY created_at DESC'
+            ).bind(userId).all();
+
+            return new Response(JSON.stringify({
+                tasks: tasks.results || [],
+                total: tasks.results?.length || 0
+            }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), {
+                status: 500,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+    }
+
     // 7.0.10 GET /payment/return - 虎皮椒支付同步跳转页
     if (url.pathname === '/payment/return' && request.method === 'GET') {
         const orderId = url.searchParams.get('orderId') || '';
@@ -7487,8 +7599,24 @@ export default {
             display: flex; align-items: center; justify-content: center;
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            flex-shrink: 0;
         }
         .logo-icon img { width: 40px; height: 40px; object-fit: cover; }
+        .logo-text {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .logo-name {
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: var(--text);
+        }
+        .logo-subtitle {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
         .topbar-actions { display: flex; align-items: center; gap: 12px; }
         .user-info {
             display: flex; align-items: center; gap: 10px;
@@ -7554,7 +7682,213 @@ export default {
         .btn-logout:hover { background: rgba(244, 63, 94, 0.1); }
         
         /* 主容器 */
-        .container { max-width: 1440px; margin: 0 auto; padding: 32px 24px; }
+        .container { 
+            max-width: 1440px; 
+            margin: 0 auto; 
+            padding: 32px 24px; 
+            height: calc(100vh - 64px);
+        }
+        
+        /* 主布局：左侧导航 + 右侧内容 */
+        .layout { 
+            display: flex; 
+            height: 100%; 
+        }
+        
+        /* 侧边栏 */
+        .sidebar { 
+            width: 260px; 
+            background: var(--surface); 
+            border-right: 1px solid var(--border); 
+            display: flex; 
+            flex-direction: column; 
+            flex-shrink: 0; 
+            z-index: 10;
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+        }
+        .sidebar-nav { 
+            padding: 24px 16px; 
+            flex: 1; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 8px; 
+            overflow-y: auto; 
+        }
+        .nav-item { 
+            display: flex; 
+            align-items: center; 
+            gap: 12px; 
+            padding: 12px 16px; 
+            border-radius: 8px; 
+            color: var(--text-secondary); 
+            cursor: pointer; 
+            text-decoration: none; 
+            font-weight: 500; 
+            transition: all 0.2s; 
+        }
+        .nav-item:hover { 
+            background: var(--bg-muted); 
+            color: var(--text); 
+        }
+        .nav-item.active { 
+            background: var(--bg-subtle); 
+            color: var(--accent); 
+            font-weight: 600; 
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05); 
+        }
+        
+        /* 内容区 */
+        .main-content { 
+            flex: 1; 
+            overflow-y: auto; 
+            background: var(--bg-subtle); 
+            position: relative; 
+            border-radius: var(--radius-lg);
+            margin-left: 24px;
+        }
+        .content-body { 
+            padding: 32px; 
+            max-width: 1600px; 
+            margin: 0 auto; 
+            width: 100%; 
+        }
+        
+        /* Tab切换 */
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0;
+        }
+        .tab-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 20px;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-bottom: 2px solid transparent;
+            position: relative;
+            top: 1px;
+        }
+        .tab-item:hover {
+            color: var(--text);
+            background: var(--bg-subtle);
+        }
+        .tab-item.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+        .tab-badge {
+            background: var(--bg-muted);
+            padding: 2px 8px;
+            border-radius: 100px;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+        .tab-item.active .tab-badge {
+            background: rgba(17, 24, 39, 0.1);
+            color: var(--accent);
+        }
+        
+        /* Tab内容 */
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        
+        /* 分页 */
+        .pagination {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 24px;
+        }
+        .pagination-btn {
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .pagination-btn:hover:not(:disabled) {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+        .pagination-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .pagination-btn.active {
+            background: var(--gradient-2);
+            color: white;
+            border-color: transparent;
+        }
+        .pagination-info {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            padding: 0 12px;
+        }
+        
+        /* 筛选工具栏 */
+        .filter-toolbar {
+            display: flex;
+            gap: 32px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+        .filter-section {
+            flex: 1;
+            min-width: 200px;
+        }
+        .filter-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 12px;
+        }
+        .filter-tags {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .filter-tag {
+            padding: 8px 16px;
+            border-radius: 100px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-secondary);
+        }
+        .filter-tag:hover {
+            border-color: var(--accent);
+            color: var(--text);
+        }
+        .filter-tag.active {
+            background: var(--gradient-2);
+            color: white;
+            border-color: transparent;
+        }
         
         /* 页面标题区 */
         .page-header { margin-bottom: 40px; }
@@ -7721,6 +8055,21 @@ export default {
             .topbar-actions {
                 justify-content: flex-end;
                 flex-wrap: wrap;
+            }
+            .logo-subtitle {
+                display: none;
+            }
+            .layout {
+                flex-direction: column;
+            }
+            .sidebar {
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+                margin-bottom: 16px;
+            }
+            .main-content {
+                margin-left: 0;
             }
             .table-wrapper { overflow-x: auto; }
             .data-table { min-width: 640px; }
@@ -7914,7 +8263,10 @@ export default {
                 <div class="logo-icon">
                     <img src="${ASSETS_BASE}/icon-128.png" alt="M">
                 </div>
-                <span>Memoraid</span>
+                <div class="logo-text">
+                    <span class="logo-name">Memoraid</span>
+                    <span class="logo-subtitle">内容数据中心 · 专注文章与额度管理</span>
+                </div>
             </a>
             <div class="topbar-actions">
                 <div class="user-info" id="userInfo" style="display:none;">
@@ -7939,30 +8291,67 @@ export default {
     </nav>
     
     <main class="container">
-        <!-- 页面标题 -->
-        <div class="page-header fade-in">
-            <h1 class="page-title">内容数据中心</h1>
-            <p class="page-subtitle">专注文章与额度管理，去掉无效统计干扰。</p>
-        </div>
-        
-        <!-- 平台筛选 -->
-        <div class="filter-section fade-in delay-1">
-            <div class="filter-label">按平台筛选</div>
-            <div class="filter-tags" id="platformFilters"></div>
-        </div>
-        
-        <!-- 文章列表 -->
-        <section class="content-section fade-in delay-2">
-            <div class="section-header">
-                <h2 class="section-title">
-                    文章列表
-                    <span class="count" id="articleCount">0</span>
-                </h2>
+        <div class="layout">
+            <!-- 左侧导航菜单 -->
+            <aside class="sidebar">
+                <nav class="sidebar-nav" style="padding-top: 24px;">
+                    <a href="#articles" class="nav-item active" id="nav-articles" onclick="switchTab('articles')">
+                        <span>📝</span> 文章列表
+                    </a>
+                    <a href="#tasks" class="nav-item" id="nav-tasks" onclick="switchTab('tasks')">
+                        <span>⏰</span> 定时任务
+                    </a>
+                    <a href="#recharge" class="nav-item" id="nav-recharge" onclick="switchTab('recharge')">
+                        <span>�</span> 充值记录
+                    </a>
+                </nav>
+            </aside>
+            
+            <!-- 右侧主内容区 -->
+            <div class="main-content">
+                <div class="content-body">
+                    <!-- 筛选工具栏（仅文章列表显示） -->
+                    <div class="filter-toolbar" id="filterToolbar" style="display:none; margin-bottom: 24px;">
+                        <div class="filter-section">
+                            <div class="filter-label">平台筛选（可多选）</div>
+                            <div class="filter-tags" id="platformFilters">
+                                <div class="loading-text">加载中...</div>
+                            </div>
+                        </div>
+                        <div class="filter-section">
+                            <div class="filter-label">排序方式</div>
+                            <div class="filter-tags">
+                                <button class="filter-tag active" onclick="changeSortBy('time')">发布时间 ↓</button>
+                                <button class="filter-tag" onclick="changeSortBy('token')">Token消耗</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 文章列表内容 -->
+                    <section class="tab-content active" id="articlesContent">
+                        <div class="table-wrapper" id="articlesTable">
+                            <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+                        </div>
+                        <div class="pagination" id="articlesPagination"></div>
+                    </section>
+                    
+                    <!-- 定时任务内容 -->
+                    <section class="tab-content" id="tasksContent">
+                        <div class="table-wrapper" id="tasksTable">
+                            <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+                        </div>
+                    </section>
+                    
+                    <!-- 充值记录内容 -->
+                    <section class="tab-content" id="rechargeContent">
+                        <div class="table-wrapper" id="rechargeTable">
+                            <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+                        </div>
+                        <div class="pagination" id="rechargePagination"></div>
+                    </section>
+                </div>
             </div>
-            <div class="table-wrapper" id="articlesTable">
-                <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
-            </div>
-        </section>
+        </div>
     </main>
 
     <!-- 充值弹窗 -->
@@ -8020,9 +8409,21 @@ export default {
     
     <script>
         const API_BASE = '';
-        let currentPlatform = 'all';
+        let currentPlatform = []; // 改为数组，支持多选
+        let currentSortBy = 'time'; // 排序方式：time 或 token
+        let currentSortOrder = 'desc'; // 排序顺序：desc 或 asc
+        let currentTab = 'articles'; // 当前Tab：articles、tasks 或 recharge
         let userEmail = '';
         let selectedAmount = 10;
+        
+        // 分页状态（仅文章列表和充值记录需要分页）
+        let articlesPage = 1;
+        let articlesPageSize = 20;
+        let articlesTotalCount = 0;
+        let rechargePage = 1;
+        let rechargePageSize = 20;
+        let rechargeTotalCount = 0;
+        let tasksTotalCount = 0; // 定时任务总数（不需要分页）
         
         // 检查登录状态
         async function checkAuth() {
@@ -8111,74 +8512,259 @@ export default {
             return n.toLocaleString();
         }
         
-        // 格式化时间 - 相对时间
+        // 格式化时间 - 精确到秒
         function formatTime(ts) {
             if (!ts) return '-';
-            const now = Date.now();
-            const diff = now - ts * 1000;
-            const minutes = Math.floor(diff / 60000);
-            const hours = Math.floor(diff / 3600000);
-            const days = Math.floor(diff / 86400000);
-            
-            if (minutes < 1) return '刚刚';
-            if (minutes < 60) return minutes + ' 分钟前';
-            if (hours < 24) return hours + ' 小时前';
-            if (days < 7) return days + ' 天前';
-            
             const d = new Date(ts * 1000);
-            return d.getFullYear() + '/' + (d.getMonth()+1) + '/' + d.getDate();
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const hour = String(d.getHours()).padStart(2, '0');
+            const minute = String(d.getMinutes()).padStart(2, '0');
+            const second = String(d.getSeconds()).padStart(2, '0');
+            return year + '-' + month + '-' + day + ' ' + hour + ':' + minute + ':' + second;
+        }
+        
+        // Tab切换
+        function switchTab(tab) {
+            currentTab = tab;
+            
+            // 更新导航项状态
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            document.getElementById('nav-' + tab).classList.add('active');
+            
+            // 更新内容显示
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // 显示/隐藏筛选工具栏（仅文章列表显示）
+            const filterToolbar = document.getElementById('filterToolbar');
+            if (tab === 'articles') {
+                filterToolbar.style.display = 'flex';
+                document.getElementById('articlesContent').classList.add('active');
+                if (document.getElementById('articlesTable').innerHTML.includes('加载中')) {
+                    loadArticles();
+                }
+            } else {
+                filterToolbar.style.display = 'none';
+                if (tab === 'tasks') {
+                    document.getElementById('tasksContent').classList.add('active');
+                    if (document.getElementById('tasksTable').innerHTML.includes('加载中')) {
+                        loadScheduledTasks(); // 加载定时任务列表
+                    }
+                } else if (tab === 'recharge') {
+                    document.getElementById('rechargeContent').classList.add('active');
+                    if (document.getElementById('rechargeTable').innerHTML.includes('加载中')) {
+                        loadRechargeHistory();
+                    }
+                }
+            }
+        }
+        
+        // 刷新当前Tab数据
+        function loadCurrentTabData() {
+            if (currentTab === 'articles') {
+                loadArticles();
+            } else if (currentTab === 'tasks') {
+                loadScheduledTasks();
+            } else if (currentTab === 'recharge') {
+                loadRechargeHistory();
+            }
+        }
+        
+        // 切换排序方式
+        function changeSortBy(sortBy) {
+            // 如果点击同一列，切换排序顺序；如果点击不同列，默认降序
+            if (currentSortBy === sortBy) {
+                currentSortOrder = currentSortOrder === 'desc' ? 'asc' : 'desc';
+            } else {
+                currentSortBy = sortBy;
+                currentSortOrder = 'desc'; // 新列默认降序
+            }
+            articlesPage = 1; // 重置到第一页
+            
+            // 更新按钮状态
+            const sortButtons = document.querySelectorAll('.filter-toolbar .filter-tag');
+            sortButtons.forEach(btn => {
+                btn.classList.remove('active');
+                // 根据sortBy激活对应按钮，并显示排序方向
+                if ((sortBy === 'time' && btn.textContent.includes('发布时间')) ||
+                    (sortBy === 'token' && btn.textContent.includes('Token'))) {
+                    btn.classList.add('active');
+                    // 更新按钮文本显示排序方向
+                    const arrow = currentSortOrder === 'desc' ? ' ↓' : ' ↑';
+                    if (sortBy === 'time') {
+                        btn.textContent = '发布时间' + arrow;
+                    } else {
+                        btn.textContent = 'Token消耗' + arrow;
+                    }
+                }
+            });
+            
+            loadArticles();
         }
         
         // 加载数据
         async function loadData() {
             const token = localStorage.getItem('memoraid_token');
             try {
-                const query = currentPlatform !== 'all' ? '?platform=' + currentPlatform : '';
                 const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
                 
-                // 用户页只保留实际可用的数据请求，避免无效统计反复拉取。
-                const [platformsRes, articlesRes, quotaRes] = await Promise.all([
+                const [platformsRes, quotaRes] = await Promise.all([
                     fetch(API_BASE + '/api/platforms', { headers }),
-                    fetch(API_BASE + '/api/user/articles' + query, { headers }),
                     fetch(API_BASE + '/api/user/quota', { headers })
                 ]);
                 
-                const [platforms, articles, quota] = await Promise.all([
-                    platformsRes.json(), articlesRes.json(), quotaRes.json()
+                const [platforms, quota] = await Promise.all([
+                    platformsRes.json(),
+                    quotaRes.json()
                 ]);
                 
-                // 额度直接贴着用户名展示，减少页面中部重复卡片。
+                // 更新额度显示
                 if (quota && !quota.error) {
                     document.getElementById('freeQuotaInline').textContent = quota.free_quota_remaining ?? 0;
                     document.getElementById('paidQuotaInline').textContent = quota.paid_quota_remaining ?? 0;
                 }
                 
-                // 渲染各部分
+                // 渲染平台筛选
                 renderPlatformFilters(platforms.platforms || []);
-                renderArticles(articles.articles || []);
+                
+                // 加载当前Tab的数据
+                if (currentTab === 'articles') {
+                    await loadArticles();
+                } else if (currentTab === 'recharge') {
+                    await loadRechargeHistory();
+                }
                 
             } catch (e) {
                 console.error('加载数据失败:', e);
             }
         }
         
-        // 渲染平台筛选标签
+        // 加载文章列表
+        async function loadArticles() {
+            const token = localStorage.getItem('memoraid_token');
+            if (!token) return;
+            
+            try {
+                const headers = { 'Authorization': 'Bearer ' + token };
+                const offset = (articlesPage - 1) * articlesPageSize;
+                let query = '?limit=' + articlesPageSize + '&offset=' + offset;
+                
+                // 添加平台筛选（支持多选）
+                if (currentPlatform.length > 0) {
+                    query += '&platforms=' + currentPlatform.join(',');
+                }
+                
+                const res = await fetch(API_BASE + '/api/user/articles' + query, { headers });
+                const data = await res.json();
+                
+                let articles = data.articles || [];
+                articlesTotalCount = data.total || 0;
+                
+                // 前端排序
+                if (currentSortBy === 'token') {
+                    articles.sort((a, b) => {
+                        const diff = (b.totalTokens || 0) - (a.totalTokens || 0);
+                        return currentSortOrder === 'desc' ? diff : -diff;
+                    });
+                } else {
+                    // 按时间排序
+                    articles.sort((a, b) => {
+                        const diff = (b.publish_time || 0) - (a.publish_time || 0);
+                        return currentSortOrder === 'desc' ? diff : -diff;
+                    });
+                }
+                
+                renderArticles(articles);
+                renderArticlesPagination();
+                
+            } catch (e) {
+                console.error('加载文章失败:', e);
+            }
+        }
+        
+        // 加载充值记录
+        async function loadRechargeHistory() {
+            const token = localStorage.getItem('memoraid_token');
+            if (!token) return;
+            
+            try {
+                const headers = { 'Authorization': 'Bearer ' + token };
+                const offset = (rechargePage - 1) * rechargePageSize;
+                const query = '?limit=' + rechargePageSize + '&offset=' + offset;
+                
+                const res = await fetch(API_BASE + '/api/payment/history' + query, { headers });
+                const data = await res.json();
+                
+                const records = data.records || [];
+                rechargeTotalCount = data.total || records.length;
+                
+                renderRechargeHistory(records);
+                renderRechargePagination();
+                
+                // 注意：rechargeCount元素在新布局中已移除，不再需要更新
+                
+            } catch (e) {
+                console.error('加载充值记录失败:', e);
+                // 如果接口不存在，显示空状态
+                document.getElementById('rechargeTable').innerHTML = 
+                    '<div class="empty-state"><div class="empty-icon">💳</div><p class="empty-text">暂无充值记录</p></div>';
+            }
+        }
+        
+        // 加载定时任务列表（当前配置的任务）
+        async function loadScheduledTasks() {
+            const token = localStorage.getItem('memoraid_token');
+            if (!token) return;
+            
+            try {
+                const headers = { 'Authorization': 'Bearer ' + token };
+                
+                const res = await fetch(API_BASE + '/api/scheduled-tasks/list', { headers });
+                const data = await res.json();
+                
+                const tasks = data.tasks || [];
+                tasksTotalCount = tasks.length;
+                
+                renderScheduledTasks(tasks);
+                
+                // 注意：taskCount元素在新布局中已移除，不再需要更新
+                
+            } catch (e) {
+                console.error('加载定时任务失败:', e);
+                // 如果接口不存在，显示空状态
+                document.getElementById('tasksTable').innerHTML = 
+                    '<div class="empty-state"><div class="empty-icon">⏰</div><p class="empty-text">暂无定时任务</p></div>';
+            }
+        }
+        
+        // 渲染平台筛选标签（支持多选）
         function renderPlatformFilters(platforms) {
             const visiblePlatforms = platforms.filter(p => p && p.name && p.name !== 'test');
-            if (currentPlatform !== 'all' && !visiblePlatforms.some(p => p.name === currentPlatform)) {
-                currentPlatform = 'all';
-            }
-            let html = '<button class="filter-tag ' + (currentPlatform === 'all' ? 'active' : '') + '" onclick="filterPlatform(\\'all\\')">全部</button>';
-            html += visiblePlatforms.map(p => 
-                '<button class="filter-tag ' + (currentPlatform === p.name ? 'active' : '') + '" onclick="filterPlatform(\\'' + p.name + '\\')">' + 
-                (p.icon || '') + ' ' + p.display_name + '</button>'
-            ).join('');
+            
+            let html = '';
+            
+            // 全部平台按钮
+            const allActive = currentPlatform.length === 0;
+            html += '<button class="filter-tag ' + (allActive ? 'active' : '') + '" onclick="filterPlatform(&quot;all&quot;)">全部平台</button>';
+            
+            // 各平台按钮（支持多选）
+            html += visiblePlatforms.map(p => {
+                const isActive = currentPlatform.includes(p.name);
+                return '<button class="filter-tag ' + (isActive ? 'active' : '') + '" onclick="filterPlatform(&quot;' + p.name + '&quot;)">' + 
+                    (p.icon || '📄') + ' ' + p.display_name + '</button>';
+            }).join('');
+            
             document.getElementById('platformFilters').innerHTML = html;
         }
         
-        // 渲染文章表格
+        // 渲染文章表格（移除账号列）
         function renderArticles(articles) {
-            document.getElementById('articleCount').textContent = articles.length;
+            // 注意：articleCount元素在新布局中已移除，不再需要更新
             
             if (!articles.length) {
                 document.getElementById('articlesTable').innerHTML = 
@@ -8189,13 +8775,11 @@ export default {
             const rows = articles.map(a => {
                 // 显示 token 消耗，鼠标悬停显示输入/输出明细
                 const tokenCell = a.totalTokens != null
-                    ? '<span class="stat-pill" style="background:#eef2ff;color:#4f46e5" title="输入:' + a.promptTokens + ' 输出:' + a.completionTokens + '">' + a.totalTokens.toLocaleString() + '</span>'
+                    ? '<span class="stat-pill" style="background:#eef2ff;color:#4f46e5" title="输入:' + (a.promptTokens || 0) + ' 输出:' + (a.completionTokens || 0) + '">' + a.totalTokens.toLocaleString() + '</span>'
                     : '<span style="color:#9ca3af">-</span>';
                 return '<tr>' +
                     '<td><a href="' + (a.article_url || '#') + '" target="_blank" class="article-title">' + (a.title || '无标题') + '</a></td>' +
-                    '<td><div class="platform-cell">' + (a.platform_icon || '') + ' ' + (a.platform_display_name || '') + '</div></td>' +
-                    '<td>' + (a.account_name || '-') + '</td>' +
-                    // 新增 Token 列
+                    '<td><div class="platform-cell">' + (a.platform_icon || '📄') + ' ' + (a.platform_name || '') + '</div></td>' +
                     '<td>' + tokenCell + '</td>' +
                     '<td class="time-cell">' + formatTime(a.publish_time) + '</td>' +
                 '</tr>';
@@ -8204,17 +8788,178 @@ export default {
             document.getElementById('articlesTable').innerHTML = 
                 '<table class="data-table">' +
                     '<thead><tr>' +
-                        '<th>标题</th><th>平台</th><th>账号</th>' +
-                        '<th>Token</th><th>发布时间</th>' +
+                        '<th>标题</th><th>平台</th>' +
+                        '<th style="cursor:pointer" onclick="changeSortBy(&quot;token&quot;)">Token ' + (currentSortBy === 'token' ? (currentSortOrder === 'desc' ? '↓' : '↑') : '') + '</th>' +
+                        '<th style="cursor:pointer" onclick="changeSortBy(&quot;time&quot;)">发布时间 ' + (currentSortBy === 'time' ? (currentSortOrder === 'desc' ? '↓' : '↑') : '') + '</th>' +
                     '</tr></thead>' +
                     '<tbody>' + rows + '</tbody>' +
                 '</table>';
         }
         
-        // 平台筛选
+        // 渲染充值记录
+        function renderRechargeHistory(records) {
+            if (!records.length) {
+                document.getElementById('rechargeTable').innerHTML = 
+                    '<div class="empty-state"><div class="empty-icon">💳</div><p class="empty-text">暂无充值记录</p></div>';
+                return;
+            }
+            
+            const rows = records.map(r => {
+                const statusText = r.status === 'paid' ? '已支付' : r.status === 'pending' ? '待支付' : '已取消';
+                const statusColor = r.status === 'paid' ? '#10b981' : r.status === 'pending' ? '#f59e0b' : '#ef4444';
+                
+                return '<tr>' +
+                    '<td><span style="font-family:monospace;font-size:0.85rem;color:var(--text-muted)">' + (r.id || '-') + '</span></td>' +
+                    '<td><span style="font-weight:600;color:var(--text)">¥' + (r.amount || 0) + '</span></td>' +
+                    '<td><span class="stat-pill" style="background:#f0fdf4;color:#16a34a">' + (r.quota_amount || 0) + ' 次</span></td>' +
+                    '<td><span class="stat-pill" style="background:' + statusColor + '20;color:' + statusColor + '">' + statusText + '</span></td>' +
+                    '<td class="time-cell">' + formatTime(r.created_at) + '</td>' +
+                '</tr>';
+            }).join('');
+            
+            document.getElementById('rechargeTable').innerHTML = 
+                '<table class="data-table">' +
+                    '<thead><tr>' +
+                        '<th>订单号</th><th>金额</th><th>额度</th><th>状态</th><th>时间</th>' +
+                    '</tr></thead>' +
+                    '<tbody>' + rows + '</tbody>' +
+                '</table>';
+        }
+        
+        // 渲染定时任务列表（当前配置的任务）
+        function renderScheduledTasks(tasks) {
+            // 注意：taskCount元素在新布局中已移除，不再需要更新
+            
+            if (!tasks.length) {
+                document.getElementById('tasksTable').innerHTML = 
+                    '<div class="empty-state"><div class="empty-icon">⏰</div><p class="empty-text">暂无定时任务</p></div>';
+                return;
+            }
+            
+            const rows = tasks.map(task => {
+                // 状态显示
+                const isEnabled = task.enabled !== false;
+                const statusText = isEnabled ? '启用' : '禁用';
+                const statusColor = isEnabled ? '#10b981' : '#9ca3af';
+                
+                // 平台显示
+                const platformNames = task.platforms && task.platforms.length > 0 
+                    ? task.platforms.join(', ') 
+                    : '全部';
+                
+                // Cron表达式显示
+                const cronText = task.cron_expression || '-';
+                
+                // 下次执行时间（简化显示）
+                const nextRunText = task.next_run_time 
+                    ? formatTime(Math.floor(new Date(task.next_run_time).getTime() / 1000))
+                    : '-';
+                
+                return '<tr>' +
+                    '<td><span style="font-weight:500;color:var(--text)">' + (task.name || '未命名任务') + '</span></td>' +
+                    '<td><span class="stat-pill" style="background:' + statusColor + '20;color:' + statusColor + '">' + statusText + '</span></td>' +
+                    '<td><span style="color:var(--text-secondary);font-size:0.85rem">' + platformNames + '</span></td>' +
+                    '<td><span style="color:var(--text-muted);font-family:monospace;font-size:0.85rem">' + cronText + '</span></td>' +
+                    '<td class="time-cell">' + nextRunText + '</td>' +
+                '</tr>';
+            }).join('');
+            
+            document.getElementById('tasksTable').innerHTML = 
+                '<table class="data-table">' +
+                    '<thead><tr>' +
+                        '<th>任务名称</th><th>状态</th><th>目标平台</th><th>执行周期</th><th>下次执行</th>' +
+                    '</tr></thead>' +
+                    '<tbody>' + rows + '</tbody>' +
+                '</table>';
+        }
+        
+        // 渲染文章分页
+        function renderArticlesPagination() {
+            const totalPages = Math.ceil(articlesTotalCount / articlesPageSize);
+            if (totalPages <= 1) {
+                document.getElementById('articlesPagination').innerHTML = '';
+                return;
+            }
+            
+            let html = '<button class="pagination-btn" onclick="changeArticlesPage(' + (articlesPage - 1) + ')" ' + (articlesPage === 1 ? 'disabled' : '') + '>上一页</button>';
+            html += '<span class="pagination-info">第 ' + articlesPage + ' / ' + totalPages + ' 页</span>';
+            html += '<button class="pagination-btn" onclick="changeArticlesPage(' + (articlesPage + 1) + ')" ' + (articlesPage === totalPages ? 'disabled' : '') + '>下一页</button>';
+            
+            document.getElementById('articlesPagination').innerHTML = html;
+        }
+        
+        // 渲染充值记录分页
+        function renderRechargePagination() {
+            const totalPages = Math.ceil(rechargeTotalCount / rechargePageSize);
+            if (totalPages <= 1) {
+                document.getElementById('rechargePagination').innerHTML = '';
+                return;
+            }
+            
+            let html = '<button class="pagination-btn" onclick="changeRechargePage(' + (rechargePage - 1) + ')" ' + (rechargePage === 1 ? 'disabled' : '') + '>上一页</button>';
+            html += '<span class="pagination-info">第 ' + rechargePage + ' / ' + totalPages + ' 页</span>';
+            html += '<button class="pagination-btn" onclick="changeRechargePage(' + (rechargePage + 1) + ')" ' + (rechargePage === totalPages ? 'disabled' : '') + '>下一页</button>';
+            
+            document.getElementById('rechargePagination').innerHTML = html;
+        }
+        
+        // 切换文章页码
+        function changeArticlesPage(page) {
+            const totalPages = Math.ceil(articlesTotalCount / articlesPageSize);
+            if (page < 1 || page > totalPages) return;
+            articlesPage = page;
+            loadArticles();
+        }
+        
+        // 切换充值记录页码
+        function changeRechargePage(page) {
+            const totalPages = Math.ceil(rechargeTotalCount / rechargePageSize);
+            if (page < 1 || page > totalPages) return;
+            rechargePage = page;
+            loadRechargeHistory();
+        }
+        
+        // 平台筛选（支持多选）
         function filterPlatform(platform) {
-            currentPlatform = platform;
-            loadData();
+            if (platform === 'all') {
+                // 点击"全部平台"，清空筛选
+                currentPlatform = [];
+            } else {
+                // 切换平台选中状态
+                const index = currentPlatform.indexOf(platform);
+                if (index > -1) {
+                    // 已选中，取消选中
+                    currentPlatform.splice(index, 1);
+                } else {
+                    // 未选中，添加选中
+                    currentPlatform.push(platform);
+                }
+            }
+            articlesPage = 1; // 重置到第一页
+            loadArticles();
+            
+            // 手动更新按钮状态（因为loadArticles是异步的）
+            setTimeout(() => {
+                const buttons = document.querySelectorAll('#platformFilters .filter-tag');
+                buttons.forEach(btn => {
+                    const btnText = btn.textContent.trim();
+                    if (btnText === '全部平台') {
+                        if (currentPlatform.length === 0) {
+                            btn.classList.add('active');
+                        } else {
+                            btn.classList.remove('active');
+                        }
+                    } else {
+                        // 检查按钮对应的平台是否在选中列表中
+                        const isSelected = currentPlatform.some(p => btnText.includes(p) || btn.getAttribute('onclick').includes(p));
+                        if (isSelected) {
+                            btn.classList.add('active');
+                        } else {
+                            btn.classList.remove('active');
+                        }
+                    }
+                });
+            }, 100);
         }
         
         function openRechargeModal() {
