@@ -1638,6 +1638,36 @@ function getUserIdFromRequest(request: Request): string | null {
   }
 }
 
+// 验证系统管理员权限（检查token的role字段）
+function verifyAdminToken(request: Request): { valid: boolean; error?: string } {
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader) {
+    return { valid: false, error: 'Unauthorized' };
+  }
+  
+  const token = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
+  if (!token.startsWith('mock_jwt_')) {
+    return { valid: false, error: 'Unauthorized' };
+  }
+  
+  try {
+    const tokenPart = token.split('mock_jwt_')[1];
+    const payload = JSON.parse(atob(tokenPart));
+    
+    if (payload.exp && payload.exp < Date.now()) {
+      return { valid: false, error: 'Token expired' };
+    }
+    
+    if (payload.role !== 'system_admin') {
+      return { valid: false, error: 'Forbidden' };
+    }
+    
+    return { valid: true };
+  } catch (e) {
+    return { valid: false, error: 'Invalid token' };
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -4764,7 +4794,7 @@ export default {
         /* Modal Styles */
         .modal-overlay {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center;
             z-index: 1000; backdrop-filter: blur(4px);
         }
         .modal {
@@ -5100,28 +5130,46 @@ export default {
             <!-- 用户反馈 Tab -->
             <div id="tab-feedback" class="tab-content" style="display:none">
                 <div class="section">
-                    <h2 class="section-title">� 用户反馈</h2>
+                    <h2 class="section-title">💬 用户反馈（工单系统）</h2>
                     <div class="toolbar">
-                        <!-- 反馈类型筛选 -->
-                        <select id="feedbackTypeFilter" class="form-select" onchange="fetchFeedback(true)" style="max-width:150px">
-                            <option value="all">全部类型</option>
-                            <option value="experience">使用体验</option>
-                            <option value="suggestion">优化建议</option>
-                            <option value="bug">问题反馈</option>
-                        </select>
-                        <!-- 反馈状态筛选 -->
-                        <select id="feedbackStatusFilter" class="form-select" onchange="fetchFeedback(true)" style="max-width:150px">
+                        <!-- 工单状态筛选 -->
+                        <select id="ticketStatusFilter" class="form-select" onchange="loadAdminTickets()" style="max-width:150px">
                             <option value="all">全部状态</option>
-                            <option value="pending">待处理</option>
-                            <option value="resolved">已解决</option>
-                            <option value="ignored">已忽略</option>
+                            <option value="open">待处理</option>
+                            <option value="replied">已回复</option>
+                            <option value="closed">已关闭</option>
                         </select>
-                        <button onclick="fetchFeedback(true)" class="btn-sm btn-outline">🔄 刷新</button>
+                        <button onclick="loadAdminTickets()" class="btn-sm btn-outline">🔄 刷新</button>
                     </div>
-                    <div id="feedbackList" class="card" style="margin-top:16px">
+                    <div id="adminTicketsList" class="card" style="margin-top:16px">
                         <div style="text-align:center;padding:40px;color:var(--text-muted)">加载中...</div>
                     </div>
-                    <div id="feedbackPagination" class="pagination" style="margin-top:16px"></div>
+                </div>
+            </div>
+
+            <!-- 管理员工单详情弹窗 -->
+            <div class="modal-overlay" id="adminTicketDetailModal" onclick="if(event.target === this) closeAdminTicketDetailModal()">
+                <div class="modal" style="max-width: 900px; max-height: 85vh;">
+                    <div class="modal-header">
+                        <div class="modal-title">工单详情</div>
+                        <div class="close-btn" onclick="closeAdminTicketDetailModal()">×</div>
+                    </div>
+                    <div class="modal-body" style="max-height: calc(85vh - 120px); overflow-y: auto;">
+                        <div id="adminTicketDetailContent">
+                            <div style="text-align:center;padding:40px;color:var(--text-muted)">加载中...</div>
+                        </div>
+                        <div style="margin-top: 24px; padding-top: 24px; border-top: 2px solid var(--border);">
+                            <label style="display: block; margin-bottom: 12px; font-weight: 600; color: var(--text); font-size: 15px;">管理员回复</label>
+                            <textarea id="adminTicketReplyMessage" placeholder="输入您的回复..." rows="5" style="width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; resize: vertical; font-family: inherit;"></textarea>
+                            <div style="margin-top: 16px; display: flex; gap: 12px; justify-content: flex-end;">
+                                <select id="adminTicketStatusSelect" style="padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px;">
+                                    <option value="replied">标记为已回复</option>
+                                    <option value="closed">标记为已关闭</option>
+                                </select>
+                                <button class="btn btn-primary" onclick="submitAdminTicketReply()">发送回复</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -5516,7 +5564,7 @@ export default {
             \`}).join('');
             
             // colspan 改为 6，因为新增了"第几篇"列
-            document.getElementById('articlesTable').innerHTML = html || '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">暂无数据</td></tr>';
+            document.getElementById('articlesTable').innerHTML = html || '<tr><td colspan="6" style="text-align:center;padding:20px;color:#9ca3af">暂无数据</td></tr>';
         }
 
         // Pagination Controls
@@ -6449,9 +6497,9 @@ export default {
                 window.leaderboardsLoaded = true;
             }
             
-            // 加载用户反馈数据
+            // 加载用户反馈数据（工单系统）
             if (tabId === 'feedback' && !window.feedbackLoaded) {
-                fetchFeedback(true);
+                loadAdminTickets();
                 window.feedbackLoaded = true;
             }
             
@@ -6478,10 +6526,10 @@ export default {
             
             try {
                 const token = localStorage.getItem('memoraid_admin_token');
-                let url = \`/api/admin/orders?limit=\${ordersLimit}&offset=\${offset}\`;
-                if (status) url += \`&status=\${status}\`;
+                let url = '/api/admin/orders?limit=' + ordersLimit + '&offset=' + offset;
+                if (status) url += '&status=' + status;
                 // 传递搜索关键词
-                if (keyword) url += \`&keyword=\${encodeURIComponent(keyword)}\`;
+                if (keyword) url += '&keyword=' + encodeURIComponent(keyword);
                 
                 const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
                 if (res.status === 401) { showLogin(); return; }
@@ -6611,7 +6659,7 @@ export default {
                     \`;
                 }).join('');
             } else {
-                articlesEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据</div>';
+                articlesEl.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">暂无数据</div>';
             }
 
             // 2. 渲染 Token 消耗排行榜
@@ -6638,7 +6686,7 @@ export default {
                     \`;
                 }).join('');
             } else {
-                tokensEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据</div>';
+                tokensEl.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">暂无数据</div>';
             }
 
             // 3. 渲染充值金额排行榜
@@ -6673,7 +6721,7 @@ export default {
                     \`;
                 }).join('');
             } else {
-                rechargeEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据</div>';
+                rechargeEl.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">暂无数据</div>';
             }
         }
 
@@ -6696,7 +6744,7 @@ export default {
                     status: status
                 });
                 
-                const res = await fetch(\`/api/admin/feedback?\${params}\`, {
+                const res = await fetch('/api/admin/feedback?' + params, {
                     headers: { 'Authorization': 'Bearer ' + token }
                 });
                 
@@ -6717,7 +6765,7 @@ export default {
             const container = document.getElementById('feedbackList');
             
             if (!data.list || data.list.length === 0) {
-                container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">暂无反馈</div>';
+                container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">暂无反馈</div>';
                 return;
             }
             
@@ -6741,45 +6789,47 @@ export default {
                 const userEmail = item.user_email_from_users || item.user_email || '匿名用户';
                 const createdAt = new Date(item.created_at * 1000).toLocaleString('zh-CN');
                 
-                return \`
-                    <div style="border-bottom:1px solid var(--border);padding:16px;transition:background 0.2s" onmouseover="this.style.background='var(--bg-muted)'" onmouseout="this.style.background='transparent'">
-                        <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px">
-                            <div style="display:flex;gap:8px;align-items:center">
-                                <span style="font-size:1.25rem">\${typeInfo.icon}</span>
-                                <span style="padding:4px 12px;border-radius:12px;font-size:0.75rem;font-weight:500;color:\${typeInfo.color};background:\${typeInfo.color}20">
-                                    \${typeInfo.label}
-                                </span>
-                                <span style="padding:4px 12px;border-radius:12px;font-size:0.75rem;font-weight:500;color:\${statusInfo.color};background:\${statusInfo.bg}">
-                                    \${statusInfo.label}
-                                </span>
-                            </div>
-                            <span style="font-size:0.75rem;color:var(--text-muted)">\${createdAt}</span>
-                        </div>
-                        <div style="margin-bottom:8px">
-                            <span style="font-size:0.875rem;color:var(--text-secondary)">👤 \${userEmail}</span>
-                        </div>
-                        <div style="padding:12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:12px">
-                            <p style="margin:0;color:var(--text);line-height:1.6;white-space:pre-wrap">\${item.content}</p>
-                        </div>
-                        \${item.admin_reply ? \`
-                            <div style="padding:12px;background:var(--bg-subtle);border-left:3px solid var(--accent);border-radius:4px;margin-bottom:12px">
-                                <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px">管理员回复：</div>
-                                <p style="margin:0;color:var(--text);line-height:1.6;white-space:pre-wrap">\${item.admin_reply}</p>
-                            </div>
-                        \` : ''}
-                        <div style="display:flex;gap:8px">
-                            <button onclick="updateFeedbackStatus(\${item.id}, 'resolved')" class="btn-sm btn-success" \${item.status === 'resolved' ? 'disabled' : ''}>
-                                ✅ 标记已解决
-                            </button>
-                            <button onclick="updateFeedbackStatus(\${item.id}, 'ignored')" class="btn-sm btn-outline" \${item.status === 'ignored' ? 'disabled' : ''}>
-                                🚫 忽略
-                            </button>
-                            <button onclick="showReplyModal(\${item.id}, '\${item.content.replace(/'/g, "\\'")}', '\${item.admin_reply || ''}')" class="btn-sm btn-outline">
-                                💬 回复
-                            </button>
-                        </div>
-                    </div>
-                \`;
+                const adminReplyHtml = item.admin_reply ? 
+                    '<div style="padding:12px;background:#f8fafc;border-left:3px solid #10b981;border-radius:4px;margin-bottom:12px">' +
+                    '<div style="font-size:0.75rem;color:#9ca3af;margin-bottom:4px">管理员回复：</div>' +
+                    '<p style="margin:0;color:#0f172a;line-height:1.6;white-space:pre-wrap">' + item.admin_reply + '</p>' +
+                    '</div>' : '';
+                
+                const escapedContent = item.content.replace(/'/g, "\\\\'");
+                const escapedReply = (item.admin_reply || '').replace(/'/g, "\\\\'");
+                
+                return '<div style="border-bottom:1px solid #e2e8f0;padding:16px;transition:background 0.2s" onmouseover="this.style.background=&apos;#f1f5f9&apos;" onmouseout="this.style.background=&apos;transparent&apos;">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px">' +
+                    '<div style="display:flex;gap:8px;align-items:center">' +
+                    '<span style="font-size:1.25rem">' + typeInfo.icon + '</span>' +
+                    '<span style="padding:4px 12px;border-radius:12px;font-size:0.75rem;font-weight:500;color:' + typeInfo.color + ';background:' + typeInfo.color + '20">' +
+                    typeInfo.label +
+                    '</span>' +
+                    '<span style="padding:4px 12px;border-radius:12px;font-size:0.75rem;font-weight:500;color:' + statusInfo.color + ';background:' + statusInfo.bg + '">' +
+                    statusInfo.label +
+                    '</span>' +
+                    '</div>' +
+                    '<span style="font-size:0.75rem;color:#9ca3af">' + createdAt + '</span>' +
+                    '</div>' +
+                    '<div style="margin-bottom:8px">' +
+                    '<span style="font-size:0.875rem;color:#64748b">👤 ' + userEmail + '</span>' +
+                    '</div>' +
+                    '<div style="padding:12px;background:#f8fafc;border-radius:8px;margin-bottom:12px">' +
+                    '<p style="margin:0;color:#0f172a;line-height:1.6;white-space:pre-wrap">' + item.content + '</p>' +
+                    '</div>' +
+                    adminReplyHtml +
+                    '<div style="display:flex;gap:8px">' +
+                    '<button onclick="updateFeedbackStatus(' + item.id + ', &apos;resolved&apos;)" class="btn-sm btn-success" ' + (item.status === 'resolved' ? 'disabled' : '') + '>' +
+                    '✅ 标记已解决' +
+                    '</button>' +
+                    '<button onclick="updateFeedbackStatus(' + item.id + ', &apos;ignored&apos;)" class="btn-sm btn-outline" ' + (item.status === 'ignored' ? 'disabled' : '') + '>' +
+                    '🚫 忽略' +
+                    '</button>' +
+                    '<button onclick="showReplyModal(' + item.id + ', &apos;' + escapedContent + '&apos;, &apos;' + escapedReply + '&apos;)" class="btn-sm btn-outline">' +
+                    '💬 回复' +
+                    '</button>' +
+                    '</div>' +
+                    '</div>';
             }).join('');
         }
         
@@ -6795,15 +6845,15 @@ export default {
             
             // 上一页
             if (data.page > 1) {
-                html += \`<button onclick="currentFeedbackPage=\${data.page - 1};fetchFeedback()" class="btn-sm btn-outline">上一页</button>\`;
+                html += '<button onclick="currentFeedbackPage=' + (data.page - 1) + ';fetchFeedback()" class="btn-sm btn-outline">上一页</button>';
             }
             
             // 页码
-            html += \`<span style="color:var(--text-secondary)">第 \${data.page} / \${data.totalPages} 页</span>\`;
+            html += '<span style="color:#64748b">第 ' + data.page + ' / ' + data.totalPages + ' 页</span>';
             
             // 下一页
             if (data.page < data.totalPages) {
-                html += \`<button onclick="currentFeedbackPage=\${data.page + 1};fetchFeedback()" class="btn-sm btn-outline">下一页</button>\`;
+                html += '<button onclick="currentFeedbackPage=' + (data.page + 1) + ';fetchFeedback()" class="btn-sm btn-outline">下一页</button>';
             }
             
             html += '</div>';
@@ -6815,7 +6865,7 @@ export default {
             // 移除确认弹窗，直接执行
             try {
                 const token = localStorage.getItem('memoraid_admin_token');
-                const res = await fetch(\`/api/admin/feedback/\${feedbackId}/status\`, {
+                const res = await fetch('/api/admin/feedback/' + feedbackId + '/status', {
                     method: 'POST',
                     headers: {
                         'Authorization': 'Bearer ' + token,
@@ -6840,19 +6890,18 @@ export default {
             const modal = document.createElement('div');
             modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000';
             
-            modal.innerHTML = \`
-                <div style="background:white;border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto">
-                    <h3 style="margin:0 0 16px 0;font-size:1.25rem;font-weight:600">回复用户反馈</h3>
-                    <div style="padding:12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:16px">
-                        <p style="margin:0;color:var(--text);line-height:1.6;white-space:pre-wrap">\${content}</p>
-                    </div>
-                    <textarea id="replyContent" placeholder="输入回复内容..." style="width:100%;min-height:120px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:vertical;font-family:inherit" >\${existingReply}</textarea>
-                    <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
-                        <button onclick="this.closest('[style*=fixed]').remove()" class="btn-sm btn-outline">取消</button>
-                        <button onclick="submitReply(\${feedbackId})" class="btn-sm btn-primary">提交回复</button>
-                    </div>
-                </div>
-            \`;
+            modal.innerHTML = 
+                '<div style="background:white;border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto">' +
+                '<h3 style="margin:0 0 16px 0;font-size:1.25rem;font-weight:600">回复用户反馈</h3>' +
+                '<div style="padding:12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:16px">' +
+                '<p style="margin:0;color:var(--text);line-height:1.6;white-space:pre-wrap">' + content + '</p>' +
+                '</div>' +
+                '<textarea id="replyContent" placeholder="输入回复内容..." style="width:100%;min-height:120px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:vertical;font-family:inherit" >' + existingReply + '</textarea>' +
+                '<div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">' +
+                '<button onclick="this.closest(&apos;[style*=fixed]&apos;).remove()" class="btn-sm btn-outline">取消</button>' +
+                '<button onclick="submitReply(' + feedbackId + ')" class="btn-sm btn-primary">提交回复</button>' +
+                '</div>' +
+                '</div>';
             
             document.body.appendChild(modal);
         }
@@ -6868,7 +6917,7 @@ export default {
             
             try {
                 const token = localStorage.getItem('memoraid_admin_token');
-                const res = await fetch(\`/api/admin/feedback/\${feedbackId}/status\`, {
+                const res = await fetch('/api/admin/feedback/' + feedbackId + '/status', {
                     method: 'POST',
                     headers: {
                         'Authorization': 'Bearer ' + token,
@@ -6888,6 +6937,199 @@ export default {
             } catch (e) {
                 console.error('提交失败:', e);
                 // 移除alert，静默失败
+            }
+        }
+
+        // ========== 管理员工单管理函数 ==========
+        
+        // 加载管理员工单列表
+        async function loadAdminTickets() {
+            const container = document.getElementById('adminTicketsList');
+            container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">加载中...</div>';
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const statusFilter = document.getElementById('ticketStatusFilter').value;
+                
+                let url = '/api/admin/tickets';
+                const res = await fetch(url, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) {
+                    throw new Error(data.error || '加载工单列表失败');
+                }
+                
+                let tickets = data.tickets || [];
+                
+                // 前端筛选状态
+                if (statusFilter !== 'all') {
+                    tickets = tickets.filter(t => t.status === statusFilter);
+                }
+                
+                if (tickets.length === 0) {
+                    container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">暂无工单</div>';
+                    return;
+                }
+                
+                const statusMap = {
+                    'open': { text: '待处理', color: '#f59e0b' },
+                    'replied': { text: '已回复', color: '#10b981' },
+                    'closed': { text: '已关闭', color: '#6b7280' }
+                };
+                
+                let html = '<div class="table-wrapper"><table><thead><tr><th>工单编号</th><th>用户</th><th>主题</th><th>状态</th><th>消息数</th><th>创建时间</th><th>操作</th></tr></thead><tbody>';
+                
+                tickets.forEach(ticket => {
+                    const status = statusMap[ticket.status] || statusMap['open'];
+                    const hasNewMessage = ticket.message_count > ticket.admin_reply_count && ticket.status === 'open';
+                    
+                    html += '<tr>';
+                    html += '<td>#' + ticket.id + '</td>';
+                    html += '<td>' + (ticket.user_email || '未知用户') + '</td>';
+                    html += '<td>' + ticket.subject + (hasNewMessage ? ' <span style="color:#ef4444;font-weight:600">●</span>' : '') + '</td>';
+                    html += '<td><span style="padding:4px 12px;border-radius:12px;font-size:0.75rem;font-weight:500;color:' + status.color + ';background:' + status.color + '20">' + status.text + '</span></td>';
+                    html += '<td>' + ticket.message_count + ' 条</td>';
+                    html += '<td>' + new Date(ticket.created_at).toLocaleString('zh-CN') + '</td>';
+                    html += '<td><button class="btn-sm btn-outline" onclick="viewAdminTicketDetail(' + ticket.id + ')">查看详情</button></td>';
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table></div>';
+                container.innerHTML = html;
+            } catch (e) {
+                console.error('加载工单列表失败:', e);
+                container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">加载失败: ' + e.message + '</div>';
+            }
+        }
+        
+        let currentAdminTicketId = null;
+        
+        // 查看管理员工单详情
+        async function viewAdminTicketDetail(ticketId) {
+            currentAdminTicketId = ticketId;
+            document.getElementById('adminTicketDetailModal').style.display = 'flex';
+            document.getElementById('adminTicketReplyMessage').value = '';
+            
+            const container = document.getElementById('adminTicketDetailContent');
+            container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">加载中...</div>';
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch('/api/admin/tickets/' + ticketId, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) {
+                    throw new Error(data.error || '加载工单详情失败');
+                }
+                
+                const ticket = data.ticket;
+                const messages = data.messages || [];
+                
+                const statusMap = {
+                    'open': { text: '待处理', color: '#f59e0b' },
+                    'replied': { text: '已回复', color: '#10b981' },
+                    'closed': { text: '已关闭', color: '#6b7280' }
+                };
+                const status = statusMap[ticket.status] || statusMap['open'];
+                
+                let html = '<div style="margin-bottom: 24px; padding: 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;">';
+                html += '<div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 16px;">';
+                html += '<div><h3 style="margin: 0 0 8px; font-size: 20px; color: #0f172a;">工单 #' + ticket.id + ': ' + ticket.subject + '</h3>';
+                html += '<div style="font-size: 14px; color: #9ca3af;">用户: ' + (ticket.user_email || '未知用户') + '</div></div>';
+                html += '<span style="padding:6px 16px;border-radius:12px;font-size:0.875rem;font-weight:600;color:' + status.color + ';background:' + status.color + '20">' + status.text + '</span>';
+                html += '</div>';
+                html += '<div style="font-size: 13px; color: #9ca3af;">创建时间: ' + new Date(ticket.created_at).toLocaleString('zh-CN') + '</div>';
+                html += '</div>';
+                
+                html += '<div style="max-height: 450px; overflow-y: auto; padding: 4px;">';
+                messages.forEach(msg => {
+                    const isAdmin = msg.is_admin === 1;
+                    const bgColor = isAdmin ? '#dbeafe' : '#f3f4f6';
+                    const align = isAdmin ? 'left' : 'right';
+                    const label = isAdmin ? '👨‍💼 客服回复' : '👤 用户';
+                    const labelColor = isAdmin ? '#0284c7' : '#6b7280';
+                    
+                    html += '<div style="margin-bottom: 20px; text-align: ' + align + ';">';
+                    html += '<div style="display: inline-block; max-width: 75%; text-align: left;">';
+                    html += '<div style="font-size: 12px; color: ' + labelColor + '; margin-bottom: 6px; font-weight: 600;">' + label + '</div>';
+                    html += '<div style="padding: 14px; background: ' + bgColor + '; border-radius: 12px; word-wrap: break-word; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+                    html += msg.message.replace(/\\n/g, '<br>');
+                    html += '</div>';
+                    html += '<div style="font-size: 11px; color: #9ca3af; margin-top: 6px;">' + new Date(msg.created_at).toLocaleString('zh-CN') + '</div>';
+                    html += '</div></div>';
+                });
+                html += '</div>';
+                
+                container.innerHTML = html;
+                
+                // 设置状态选择器的当前值
+                document.getElementById('adminTicketStatusSelect').value = ticket.status === 'closed' ? 'closed' : 'replied';
+            } catch (e) {
+                console.error('加载工单详情失败:', e);
+                container.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">加载失败: ' + e.message + '</div>';
+            }
+        }
+        
+        // 关闭管理员工单详情弹窗
+        function closeAdminTicketDetailModal() {
+            document.getElementById('adminTicketDetailModal').style.display = 'none';
+            currentAdminTicketId = null;
+        }
+        
+        // 提交管理员工单回复
+        async function submitAdminTicketReply() {
+            if (!currentAdminTicketId) {
+                alert('工单ID未找到');
+                return;
+            }
+            
+            const message = document.getElementById('adminTicketReplyMessage').value.trim();
+            
+            if (!message) {
+                alert('请输入回复内容');
+                return;
+            }
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch('/api/admin/tickets/' + currentAdminTicketId + '/reply', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ message })
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) {
+                    throw new Error(data.error || '发送回复失败');
+                }
+                
+                // 更新工单状态
+                const newStatus = document.getElementById('adminTicketStatusSelect').value;
+                await fetch('/api/admin/tickets/' + currentAdminTicketId + '/status', {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ status: newStatus })
+                });
+                
+                document.getElementById('adminTicketReplyMessage').value = '';
+                viewAdminTicketDetail(currentAdminTicketId); // 重新加载工单详情
+                loadAdminTickets(); // 刷新工单列表
+            } catch (e) {
+                console.error('发送回复失败:', e);
+                alert('发送回复失败: ' + e.message);
             }
         }
 
@@ -9656,12 +9898,12 @@ export default {
                 };
                 const status = statusMap[ticket.status] || statusMap['open'];
                 
-                let html = '<div style="margin-bottom: 20px; padding: 16px; background: var(--bg-subtle); border-radius: 12px;">';
+                let html = '<div style="margin-bottom: 20px; padding: 16px; background: #f8fafc; border-radius: 12px;">';
                 html += '<div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">';
-                html += '<h3 style="margin: 0; font-size: 18px; color: var(--text);">工单 #' + ticket.id + ': ' + ticket.subject + '</h3>';
+                html += '<h3 style="margin: 0; font-size: 18px; color: #0f172a;">工单 #' + ticket.id + ': ' + ticket.subject + '</h3>';
                 html += '<span class="stat-pill" style="background:' + status.color + '20;color:' + status.color + '">' + status.text + '</span>';
                 html += '</div>';
-                html += '<div style="font-size: 14px; color: var(--text-muted);">创建时间: ' + formatTime(Math.floor(new Date(ticket.created_at).getTime() / 1000)) + '</div>';
+                html += '<div style="font-size: 14px; color: #9ca3af;">创建时间: ' + formatTime(Math.floor(new Date(ticket.created_at).getTime() / 1000)) + '</div>';
                 html += '</div>';
                 
                 html += '<div style="max-height: 400px; overflow-y: auto;">';
@@ -9676,9 +9918,9 @@ export default {
                     html += '<div style="display: inline-block; max-width: 80%; text-align: left;">';
                     html += '<div style="font-size: 12px; color: ' + labelColor + '; margin-bottom: 4px; font-weight: 600;">' + label + '</div>';
                     html += '<div style="padding: 12px; background: ' + bgColor + '; border-radius: 12px; word-wrap: break-word;">';
-                    html += msg.message.replace(/\n/g, '<br>');
+                    html += msg.message.replace(/\\n/g, '<br>');
                     html += '</div>';
-                    html += '<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">' + formatTime(Math.floor(new Date(msg.created_at).getTime() / 1000)) + '</div>';
+                    html += '<div style="font-size: 11px; color: #9ca3af; margin-top: 4px;">' + formatTime(Math.floor(new Date(msg.created_at).getTime() / 1000)) + '</div>';
                     html += '</div></div>';
                 });
                 html += '</div>';
@@ -11134,21 +11376,12 @@ ${body.logs.map(log => {
     // 9.5 GET /api/admin/tickets - 管理员获取所有工单
     if (url.pathname === '/api/admin/tickets' && request.method === 'GET') {
       try {
-        const userId = getUserIdFromRequest(request);
-        if (!userId) {
-          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          });
-        }
-
-        // 检查管理员权限
-        const user = await env.DB.prepare(
-          'SELECT is_admin FROM users WHERE id = ?'
-        ).bind(userId).first();
-        
-        if (!user || !user.is_admin) {
-          return new Response(JSON.stringify({ error: 'Forbidden' }), {
-            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        // 验证管理员权限
+        const adminCheck = verifyAdminToken(request);
+        if (!adminCheck.valid) {
+          const status = adminCheck.error === 'Forbidden' ? 403 : 401;
+          return new Response(JSON.stringify({ error: adminCheck.error }), {
+            status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         }
 
@@ -11175,21 +11408,12 @@ ${body.logs.map(log => {
     // 9.6 GET /api/admin/tickets/:id - 管理员获取工单详情
     if (url.pathname.startsWith('/api/admin/tickets/') && request.method === 'GET' && url.pathname.split('/').length === 5) {
       try {
-        const userId = getUserIdFromRequest(request);
-        if (!userId) {
-          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          });
-        }
-
-        // 检查管理员权限
-        const user = await env.DB.prepare(
-          'SELECT is_admin FROM users WHERE id = ?'
-        ).bind(userId).first();
-        
-        if (!user || !user.is_admin) {
-          return new Response(JSON.stringify({ error: 'Forbidden' }), {
-            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        // 验证管理员权限
+        const adminCheck = verifyAdminToken(request);
+        if (!adminCheck.valid) {
+          const status = adminCheck.error === 'Forbidden' ? 403 : 401;
+          return new Response(JSON.stringify({ error: adminCheck.error }), {
+            status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         }
 
@@ -11228,21 +11452,12 @@ ${body.logs.map(log => {
     // 9.7 POST /api/admin/tickets/:id/reply - 管理员回复工单
     if (url.pathname.match(/^\/api\/admin\/tickets\/\d+\/reply$/) && request.method === 'POST') {
       try {
-        const userId = getUserIdFromRequest(request);
-        if (!userId) {
-          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          });
-        }
-
-        // 检查管理员权限
-        const user = await env.DB.prepare(
-          'SELECT is_admin FROM users WHERE id = ?'
-        ).bind(userId).first();
-        
-        if (!user || !user.is_admin) {
-          return new Response(JSON.stringify({ error: 'Forbidden' }), {
-            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        // 验证管理员权限
+        const adminCheck = verifyAdminToken(request);
+        if (!adminCheck.valid) {
+          const status = adminCheck.error === 'Forbidden' ? 403 : 401;
+          return new Response(JSON.stringify({ error: adminCheck.error }), {
+            status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         }
 
@@ -11273,21 +11488,12 @@ ${body.logs.map(log => {
     // 9.8 PATCH /api/admin/tickets/:id/status - 管理员更新工单状态
     if (url.pathname.match(/^\/api\/admin\/tickets\/\d+\/status$/) && request.method === 'PATCH') {
       try {
-        const userId = getUserIdFromRequest(request);
-        if (!userId) {
-          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          });
-        }
-
-        // 检查管理员权限
-        const user = await env.DB.prepare(
-          'SELECT is_admin FROM users WHERE id = ?'
-        ).bind(userId).first();
-        
-        if (!user || !user.is_admin) {
-          return new Response(JSON.stringify({ error: 'Forbidden' }), {
-            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        // 验证管理员权限
+        const adminCheck = verifyAdminToken(request);
+        if (!adminCheck.valid) {
+          const status = adminCheck.error === 'Forbidden' ? 403 : 401;
+          return new Response(JSON.stringify({ error: adminCheck.error }), {
+            status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         }
 
