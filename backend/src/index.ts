@@ -8618,37 +8618,22 @@ export default {
                 <!-- 步骤2：展示虎皮椒支付二维码 -->
                 <div class="pay-step-2" id="payStep2" style="display:none;">
                     <div style="text-align: center; margin-bottom: 12px; font-weight: 600;">
-                        请使用虎皮椒支付完成付款
-                    </div>
-                    
-                    <div style="margin-bottom: 16px; padding: 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; color: #92400e; font-size: 0.9rem; line-height: 1.5;">
-                        ⚠️ <strong>支付说明：</strong><br>
-                        订单创建后请直接扫码或打开支付链接完成付款。支付成功后系统会自动到账，无需联系管理员审核。
+                        请使用微信支付完成付款
                     </div>
 
                     <div style="max-width: 200px; margin: 0 auto;">
                         <img id="payQrCode" src="" style="width: 100%; border-radius: 8px; border: 1px solid var(--border);">
                     </div>
-                    
-                    <div class="order-info">
-                        <p>订单号如下，可用于问题排查：</p>
-                        <div class="order-id" id="orderIdDisplay">ORDER-ID-HERE</div>
-                        <p style="font-size: 0.8rem; margin-top: 4px; color: var(--text-muted);">（点击订单号可复制）</p>
+
+                    <div id="paymentStatusText" style="text-align:center;color:var(--text-secondary);font-size:0.95rem;line-height:1.8;margin:20px 0 12px;">
+                        系统会自动检查付款状态，请稍等...
                     </div>
 
-                    <div id="paymentStatusText" style="text-align:center;color:var(--text-secondary);font-size:0.9rem;line-height:1.6;margin-bottom:12px;">
-                        正在等待支付完成...
-                    </div>
-
-                    <button class="btn-confirm-pay" id="openPaymentBtn" onclick="openCurrentPayment()">打开支付页面</button>
-                    <button class="btn-confirm-pay" id="checkPaymentBtn" style="margin-top:12px;background:linear-gradient(135deg,#0f172a 0%,#334155 100%)" onclick="checkPaymentStatus(this)">立即检查支付状态</button>
+                    <button class="btn-confirm-pay" id="checkPaymentBtn" style="margin-top:12px;background:linear-gradient(135deg,#0f172a 0%,#334155 100%)" onclick="checkPaymentStatus(this)">未自动到账？点此刷新状态</button>
                     <div style="text-align: center; margin-top: 12px;">
-                        <span onclick="resetPayment()" style="font-size: 0.8rem; color: var(--text-muted); cursor: pointer; text-decoration: underline;">重新选择</span>
+                        <span onclick="resetPayment()" style="font-size: 0.8rem; color: var(--text-muted); cursor: pointer; text-decoration: underline;">选择其他金额</span>
                     </div>
                 </div>
-            </div>
-            <div class="modal-footer" id="payFooter">
-                支付完成后通常会在 1 - 5 秒内自动到账，如未到账可稍后刷新状态
             </div>
         </div>
     </div>
@@ -8907,21 +8892,16 @@ export default {
         function resetPayment() {
             stopPaymentPolling();
             currentOrderId = null;
-            currentPaymentUrl = '';
             currentPaymentQrcode = '';
             document.getElementById('payStep0').style.display = 'block';
             document.getElementById('payStep2').style.display = 'none';
-            document.getElementById('payFooter').style.display = 'block';
             document.getElementById('payQrCode').src = '';
-            document.getElementById('orderIdDisplay').textContent = 'ORDER-ID-HERE';
-            document.getElementById('paymentStatusText').textContent = '正在等待支付完成...';
+            document.getElementById('paymentStatusText').textContent = '系统会自动检查付款状态，请稍等...';
             document.getElementById('paymentStatusText').style.color = 'var(--text-secondary)';
-            document.getElementById('openPaymentBtn').disabled = false;
             document.getElementById('checkPaymentBtn').disabled = false;
         }
 
         let currentOrderId = null;
-        let currentPaymentUrl = '';
         let currentPaymentQrcode = '';
         let paymentPollTimer = null;
 
@@ -8959,7 +8939,6 @@ export default {
             stopPaymentPolling();
             updatePaymentStatus('支付成功，额度已自动到账。', true);
             document.getElementById('checkPaymentBtn').disabled = true;
-            document.getElementById('openPaymentBtn').disabled = true;
             await loadData();
             setTimeout(() => {
                 closeRechargeModal();
@@ -8978,6 +8957,15 @@ export default {
                     console.error('轮询支付状态失败:', error);
                 }
             }, 3000);
+        }
+
+        function preloadPaymentQrcode(url) {
+            return new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onload = () => resolve(url);
+                image.onerror = () => reject(new Error('支付二维码加载失败'));
+                image.src = url;
+            });
         }
 
         async function createOrder(btn) {
@@ -9009,26 +8997,13 @@ export default {
                 }
 
                 currentOrderId = data.orderId;
-                currentPaymentUrl = data.paymentUrl || '';
-                currentPaymentQrcode = data.paymentQrcode || currentPaymentUrl;
+                currentPaymentQrcode = data.paymentQrcode || data.paymentUrl || '';
+                await preloadPaymentQrcode(currentPaymentQrcode);
 
                 document.getElementById('payQrCode').src = currentPaymentQrcode;
-                document.getElementById('orderIdDisplay').textContent = data.orderId;
                 document.getElementById('payStep0').style.display = 'none';
                 document.getElementById('payStep2').style.display = 'block';
-                document.getElementById('payFooter').style.display = 'block';
-                updatePaymentStatus('订单已创建，请完成支付。系统会自动检测到账。', false);
-                
-                // 点击复制订单号
-                const orderDisplay = document.getElementById('orderIdDisplay');
-                orderDisplay.onclick = function() {
-                    const textToCopy = this.textContent === '已复制!' ? data.orderId : this.textContent;
-                    navigator.clipboard.writeText(textToCopy).then(() => {
-                        const originalText = textToCopy;
-                        this.textContent = '已复制!';
-                        setTimeout(() => this.textContent = originalText, 1500);
-                    });
-                };
+                updatePaymentStatus('系统会自动检查付款状态，请稍等...', false);
 
                 startPaymentPolling();
             } catch (e) {
@@ -9038,15 +9013,6 @@ export default {
                 btn.disabled = false;
                 btn.style.opacity = '1';
             }
-        }
-
-        function openCurrentPayment() {
-            if (!currentPaymentUrl) {
-                alert('支付链接暂不可用，请重新创建订单');
-                return;
-            }
-
-            window.open(currentPaymentUrl, '_blank');
         }
 
         async function checkPaymentStatus(btn) {
@@ -9065,7 +9031,7 @@ export default {
                 if (data && data.isPaid) {
                     await handlePaidOrder(data);
                 } else {
-                    updatePaymentStatus('尚未检测到支付成功，请完成付款后稍后再试。', false);
+                    updatePaymentStatus('系统暂未检测到付款成功，正在继续自动检查，请稍等...', false);
                 }
             } catch (e) {
                 console.error('检查支付状态失败:', e);
