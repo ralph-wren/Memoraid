@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { D1Database, R2Bucket } from '@cloudflare/workers-types';
 
 export interface Env {
@@ -8,6 +9,9 @@ export interface Env {
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   RESEND_API_KEY: string; // Resend邮件服务API密钥
+  XUNHUPAY_APP_ID?: string; // 虎皮椒支付应用ID
+  XUNHUPAY_APP_SECRET?: string; // 虎皮椒支付签名密钥
+  XUNHUPAY_API_BASE?: string; // 虎皮椒支付网关地址
   Memoraid: AnalyticsEngineDataset; // Analytics Engine 数据集绑定
 }
 
@@ -20,6 +24,22 @@ interface SaveSettingsRequest {
   encryptedData: string;
   salt: string;
   iv: string;
+}
+
+interface PaymentOrderRow {
+  id: string;
+  user_id: string;
+  amount: number;
+  quota_amount: number;
+  status: string;
+  payment_url?: string | null;
+  paid_at?: number | null;
+}
+
+interface UserQuotaSnapshot {
+  freeQuota: number;
+  paidQuota: number;
+  totalQuota: number;
 }
 
 function buildHtmlResponse(html: string, extraHeaders?: Record<string, string>): Response {
@@ -121,6 +141,253 @@ function verifyApprovalToken(token: string): { orderId: string; action: string; 
   } catch (e) {
     return null;
   }
+}
+
+// 虎皮椒支付使用 MD5 作为签名算法，这里统一封装避免前后逻辑不一致。
+function buildMd5(input: string): string {
+  return createHash('md5').update(input).digest('hex');
+}
+
+function buildXunhupayHash(
+  params: Record<string, string | number | null | undefined>,
+  appSecret: string
+): string {
+  const raw = Object.entries(params)
+    .filter(([key, value]) => key !== 'hash' && value !== undefined && value !== null && String(value) !== '')
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('&');
+
+  return buildMd5(raw + appSecret);
+}
+
+function getXunhupayConfig(env: Env): { appId: string; appSecret: string; gatewayUrl: string } | null {
+  const appId = env.XUNHUPAY_APP_ID?.trim();
+  const appSecret = env.XUNHUPAY_APP_SECRET?.trim();
+  if (!appId || !appSecret) return null;
+
+  const rawGateway = (env.XUNHUPAY_API_BASE?.trim() || 'https://api.xunhupay.com').replace(/\/$/, '');
+  const gatewayUrl = rawGateway.endsWith('.html') ? rawGateway : `${rawGateway}/payment/do.html`;
+
+  return { appId, appSecret, gatewayUrl };
+}
+
+async function getUserQuotaSnapshot(env: Env, userId: string): Promise<UserQuotaSnapshot> {
+  const quotaRow = await env.DB.prepare(`
+    SELECT
+      COALESCE(free_quota_remaining, 0) as free_quota,
+      COALESCE(paid_quota_remaining, 0) as paid_quota
+    FROM user_quotas
+    WHERE user_id = ?
+  `).bind(userId).first<{ free_quota?: number; paid_quota?: number }>();
+
+  const freeQuota = Number(quotaRow?.free_quota || 0);
+  const paidQuota = Number(quotaRow?.paid_quota || 0);
+  return {
+    freeQuota,
+    paidQuota,
+    totalQuota: freeQuota + paidQuota,
+  };
+}
+
+async function sendRechargeSuccessEmail(
+  env: Env,
+  order: PaymentOrderRow,
+  quotaSnapshot: UserQuotaSnapshot
+): Promise<void> {
+  if (!env.RESEND_API_KEY) return;
+
+  const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(order.user_id).first<{ email?: string }>();
+  if (!user?.email) return;
+
+  const configs = await env.DB.prepare(
+    'SELECT key, value FROM system_configs WHERE key IN (?, ?)'
+  ).bind('email_sender', 'email_sender_name').all();
+
+  const configMap: Record<string, string> = {};
+  configs.results.forEach((row: any) => {
+    configMap[row.key] = row.value;
+  });
+
+  const emailSender = configMap.email_sender || 'onboarding@resend.dev';
+  const emailSenderName = configMap.email_sender_name || 'Memoraid';
+
+  const emailResult = await sendEmailViaResend(env.RESEND_API_KEY, {
+    from: emailSender,
+    fromName: emailSenderName,
+    to: user.email,
+    subject: '🎉 支付成功通知 - Memoraid',
+    text:
+      `您好！\n\n您的充值订单已支付成功，额度已自动充值到您的账户。\n\n` +
+      `订单号：${order.id}\n充值金额：¥${order.amount}\n增加额度：${order.quota_amount} 次\n\n` +
+      `当前账户额度：\n免费额度：${quotaSnapshot.freeQuota} 次\n付费额度：${quotaSnapshot.paidQuota} 次\n总额度：${quotaSnapshot.totalQuota} 次\n\n` +
+      `感谢您的支持！\n\nMemoraid 团队`,
+    html: `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background-color:#f3f4f6;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f4f6;padding:40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
+          <tr>
+            <td style="background:linear-gradient(135deg,#10b981 0%,#059669 100%);padding:40px 40px 30px 40px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:32px;font-weight:700;">🎉 支付成功</h1>
+              <p style="margin:12px 0 0 0;color:rgba(255,255,255,0.95);font-size:16px;">您的账户额度已自动充值</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:40px;">
+              <p style="margin:0 0 24px 0;color:#374151;font-size:16px;line-height:1.6;">您好！</p>
+              <p style="margin:0 0 32px 0;color:#374151;font-size:16px;line-height:1.6;">您的充值订单已支付成功，额度已自动充值到您的账户。现在您可以继续使用 Memoraid 的 AI 内容生成服务了！</p>
+              <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f9fafb;border-radius:12px;margin-bottom:24px;border:1px solid #e5e7eb;">
+                <tr>
+                  <td style="padding:24px;">
+                    <h2 style="margin:0 0 16px 0;color:#111827;font-size:18px;font-weight:600;">📋 充值信息</h2>
+                    <table width="100%" cellpadding="8" cellspacing="0">
+                      <tr>
+                        <td style="color:#6b7280;font-size:14px;padding:12px 0;">订单号</td>
+                        <td style="color:#111827;font-size:14px;font-weight:600;text-align:right;padding:12px 0;">${order.id}</td>
+                      </tr>
+                      <tr>
+                        <td style="color:#6b7280;font-size:14px;padding:12px 0;">充值金额</td>
+                        <td style="color:#10b981;font-size:16px;font-weight:700;text-align:right;padding:12px 0;">¥${order.amount}</td>
+                      </tr>
+                      <tr>
+                        <td style="color:#6b7280;font-size:14px;padding:12px 0;">增加额度</td>
+                        <td style="color:#10b981;font-size:16px;font-weight:700;text-align:right;padding:12px 0;">+${order.quota_amount} 次</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+              <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%);border-radius:12px;margin-bottom:32px;border:1px solid #bbf7d0;">
+                <tr>
+                  <td style="padding:24px;">
+                    <h2 style="margin:0 0 16px 0;color:#111827;font-size:18px;font-weight:600;">💰 当前账户额度</h2>
+                    <table width="100%" cellpadding="8" cellspacing="0">
+                      <tr>
+                        <td style="color:#059669;font-size:14px;padding:12px 0;">免费额度</td>
+                        <td style="color:#059669;font-size:16px;font-weight:700;text-align:right;padding:12px 0;">${quotaSnapshot.freeQuota} 次</td>
+                      </tr>
+                      <tr>
+                        <td style="color:#059669;font-size:14px;padding:12px 0;">付费额度</td>
+                        <td style="color:#059669;font-size:16px;font-weight:700;text-align:right;padding:12px 0;">${quotaSnapshot.paidQuota} 次</td>
+                      </tr>
+                      <tr>
+                        <td style="color:#047857;font-size:16px;font-weight:600;padding:12px 0;">总额度</td>
+                        <td style="color:#047857;font-size:20px;font-weight:700;text-align:right;padding:12px 0;">${quotaSnapshot.totalQuota} 次</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding:8px 0;">
+                    <a href="https://memoraid.dpdns.org/user" style="display:inline-block;background:linear-gradient(135deg,#10b981 0%,#059669 100%);color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:600;font-size:16px;box-shadow:0 4px 6px rgba(16,185,129,0.3);">前往内容中心</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+    `,
+  });
+
+  if (!emailResult.ok) {
+    const errorText = await emailResult.text();
+    console.error('发送支付成功邮件失败:', emailResult.status, errorText);
+  }
+}
+
+function trackPaymentAnalytics(env: Env, order: PaymentOrderRow, result: 'paid' | 'approved'): void {
+  try {
+    env.Memoraid.writeDataPoint({
+      indexes: [order.user_id, 'payment', result],
+      blobs: [`order_id:${order.id}`, `amount:${order.amount}`, `quota:${order.quota_amount}`],
+      doubles: [Number(order.amount), Number(order.quota_amount)],
+    });
+  } catch (analyticsError) {
+    console.error('Analytics write failed:', analyticsError);
+  }
+}
+
+// 支付回调和人工审批共用统一入账逻辑，确保重复回调也不会重复加额度。
+async function settleRechargeOrder(
+  env: Env,
+  orderId: string,
+  settleStatus: 'paid' | 'approved'
+): Promise<{ order: PaymentOrderRow; quotaSnapshot: UserQuotaSnapshot; alreadySettled: boolean }> {
+  const order = await env.DB.prepare('SELECT * FROM payment_orders WHERE id = ?').bind(orderId).first<PaymentOrderRow>();
+  if (!order) throw new Error('订单不存在');
+
+  if (order.status === 'paid' || order.status === 'approved') {
+    return {
+      order,
+      quotaSnapshot: await getUserQuotaSnapshot(env, order.user_id),
+      alreadySettled: true,
+    };
+  }
+
+  if (order.status !== 'pending') {
+    throw new Error(`订单状态不允许入账: ${order.status}`);
+  }
+
+  const paidAt = Math.floor(Date.now() / 1000);
+  const updateResult = await env.DB.prepare(
+    'UPDATE payment_orders SET status = ?, paid_at = ? WHERE id = ? AND status = ?'
+  ).bind(settleStatus, paidAt, orderId, 'pending').run();
+
+  const changes = Number((updateResult as any)?.meta?.changes || 0);
+  if (changes === 0) {
+    const latestOrder = await env.DB.prepare('SELECT * FROM payment_orders WHERE id = ?').bind(orderId).first<PaymentOrderRow>();
+    if (!latestOrder) throw new Error('订单状态更新失败');
+
+    return {
+      order: latestOrder,
+      quotaSnapshot: await getUserQuotaSnapshot(env, latestOrder.user_id),
+      alreadySettled: latestOrder.status === 'paid' || latestOrder.status === 'approved',
+    };
+  }
+
+  await env.DB.prepare(`
+    INSERT INTO user_quotas (user_id, paid_quota_remaining, updated_at)
+    VALUES (?, ?, strftime('%s', 'now'))
+    ON CONFLICT(user_id) DO UPDATE SET
+      paid_quota_remaining = paid_quota_remaining + ?,
+      updated_at = strftime('%s', 'now')
+  `).bind(order.user_id, order.quota_amount, order.quota_amount).run();
+
+  const latestOrder = await env.DB.prepare('SELECT * FROM payment_orders WHERE id = ?').bind(orderId).first<PaymentOrderRow>() || {
+    ...order,
+    status: settleStatus,
+    paid_at: paidAt,
+  };
+  const quotaSnapshot = await getUserQuotaSnapshot(env, order.user_id);
+
+  try {
+    await sendRechargeSuccessEmail(env, latestOrder, quotaSnapshot);
+  } catch (emailError) {
+    console.error('发送支付成功邮件失败:', emailError);
+  }
+
+  trackPaymentAnalytics(env, latestOrder, settleStatus);
+
+  return {
+    order: latestOrder,
+    quotaSnapshot,
+    alreadySettled: false,
+  };
 }
 
 function renderMarketingShell(args: {
@@ -7152,6 +7419,101 @@ export default {
         }
     }
 
+    // 7.0.8.1 POST /api/payment/callback/xunhupay - 虎皮椒支付异步回调
+    if (url.pathname === '/api/payment/callback/xunhupay' && request.method === 'POST') {
+        try {
+            const xunhupayConfig = getXunhupayConfig(env);
+            if (!xunhupayConfig) {
+                return new Response('config missing', { status: 500, headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
+            }
+
+            const formData = await request.formData();
+            const callbackPayload = Object.fromEntries(
+                Array.from(formData.entries()).map(([key, value]) => [key, String(value)])
+            ) as Record<string, string>;
+
+            const callbackHash = callbackPayload.hash;
+            const expectedHash = buildXunhupayHash(callbackPayload, xunhupayConfig.appSecret);
+            if (!callbackHash || callbackHash !== expectedHash) {
+                return new Response('invalid sign', { status: 400, headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
+            }
+
+            const orderId = callbackPayload.trade_order_id;
+            if (!orderId) {
+                return new Response('missing order id', { status: 400, headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
+            }
+
+            const order = await env.DB.prepare('SELECT * FROM payment_orders WHERE id = ?').bind(orderId).first<PaymentOrderRow>();
+            if (!order) {
+                return new Response('order not found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
+            }
+
+            const callbackAmount = Number(callbackPayload.total_fee || 0);
+            if (Math.abs(callbackAmount - Number(order.amount)) > 0.001) {
+                return new Response('amount mismatch', { status: 400, headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
+            }
+
+            if ((callbackPayload.status || '').toUpperCase() !== 'OD') {
+                console.log('忽略未完成支付回调:', callbackPayload);
+                return new Response('success', { headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
+            }
+
+            await settleRechargeOrder(env, orderId, 'paid');
+            return new Response('success', { headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
+        } catch (e: any) {
+            console.error('Xunhupay callback failed:', e);
+            return new Response('error', { status: 500, headers: { 'Content-Type': 'text/plain; charset=UTF-8' } });
+        }
+    }
+
+    // 7.0.8.2 GET /api/payment/status - 查询订单支付状态
+    if (url.pathname === '/api/payment/status' && request.method === 'GET') {
+        try {
+            const orderId = url.searchParams.get('orderId');
+            if (!orderId) {
+                return new Response(JSON.stringify({ error: '缺少订单号' }), {
+                    status: 400,
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                });
+            }
+
+            const order = await env.DB.prepare('SELECT id, amount, quota_amount, status, created_at, paid_at FROM payment_orders WHERE id = ?')
+                .bind(orderId)
+                .first<{
+                    id: string;
+                    amount: number;
+                    quota_amount: number;
+                    status: string;
+                    created_at: number;
+                    paid_at?: number | null;
+                }>();
+
+            if (!order) {
+                return new Response(JSON.stringify({ error: '订单不存在' }), {
+                    status: 404,
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+                });
+            }
+
+            return new Response(JSON.stringify({
+                orderId: order.id,
+                amount: Number(order.amount),
+                quota: Number(order.quota_amount),
+                status: order.status,
+                isPaid: order.status === 'paid' || order.status === 'approved',
+                createdAt: order.created_at,
+                paidAt: order.paid_at || null,
+            }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), {
+                status: 500,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
+    }
+
     // 7.0.9 GET /api/payment/approve - 邮件一键审批
     // 通过邮件中的链接直接审批充值订单，无需登录
     if (url.pathname === '/api/payment/approve' && request.method === 'GET') {
@@ -7401,6 +7763,105 @@ export default {
             console.error('Approval failed:', e);
             return buildHtmlResponse(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>处理失败</title></head><body style="font-family: sans-serif; text-align: center; padding: 50px;"><h1>❌ 处理失败</h1><p>${e.message}</p><p style="margin-top: 20px;"><a href="https://memoraid.dpdns.org/admin" style="color: #10b981;">前往管理后台</a></p></body></html>`);
         }
+    }
+
+    // 7.0.10 GET /payment/return - 虎皮椒支付同步跳转页
+    if (url.pathname === '/payment/return' && request.method === 'GET') {
+        const orderId = url.searchParams.get('orderId') || '';
+        const safeOrderId = orderId.replace(/[^a-zA-Z0-9_-]/g, '');
+
+        return buildHtmlResponse(`<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>支付结果 - Memoraid</title>
+  <style>
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;background:linear-gradient(135deg,#ecfeff 0%,#f0fdf4 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+    .card{max-width:520px;width:100%;background:#fff;border-radius:24px;padding:32px;box-shadow:0 20px 60px rgba(15,23,42,.12);text-align:center}
+    .icon{font-size:56px;line-height:1;margin-bottom:20px}
+    .title{font-size:28px;font-weight:700;color:#0f172a;margin:0 0 12px}
+    .desc{font-size:15px;line-height:1.8;color:#475569;margin:0 0 20px}
+    .status{background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:16px 18px;margin-bottom:20px;color:#334155;font-size:14px}
+    .order{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#0f172a;font-size:13px;word-break:break-all}
+    .actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+    .btn{display:inline-flex;align-items:center;justify-content:center;padding:12px 20px;border-radius:999px;text-decoration:none;font-weight:600;font-size:14px}
+    .btn-primary{background:#10b981;color:#fff}
+    .btn-ghost{background:#fff;color:#0f172a;border:1px solid #cbd5e1}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">💳</div>
+    <h1 class="title">正在确认支付结果</h1>
+    <p class="desc">支付成功后，系统会自动为您的账户充值额度。通常 1 - 5 秒内完成，请不要重复支付。</p>
+    <div class="status" id="statusBox">
+      <div id="statusText">正在查询订单状态...</div>
+      <div class="order">订单号：${safeOrderId || '未提供'}</div>
+    </div>
+    <div class="actions">
+      <a class="btn btn-primary" href="/user">返回内容中心</a>
+      <button class="btn btn-ghost" id="refreshBtn" type="button">刷新状态</button>
+    </div>
+  </div>
+  <script>
+    const orderId = ${JSON.stringify(safeOrderId)};
+    const statusText = document.getElementById('statusText');
+    const refreshBtn = document.getElementById('refreshBtn');
+    let pollTimer = null;
+    let pollCount = 0;
+
+    function updateStatus(text, ok) {
+      statusText.textContent = text;
+      statusText.style.color = ok ? '#059669' : '#334155';
+    }
+
+    async function checkStatus() {
+      if (!orderId) {
+        updateStatus('缺少订单号，请返回内容中心查看。', false);
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/payment/status?orderId=' + encodeURIComponent(orderId));
+        const data = await res.json();
+        if (!res.ok) {
+          updateStatus(data.error || '订单查询失败，请稍后重试。', false);
+          return;
+        }
+
+        if (data.isPaid) {
+          updateStatus('支付成功，额度已自动到账。', true);
+          if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+          }
+          setTimeout(() => {
+            window.location.href = '/user';
+          }, 1800);
+          return;
+        }
+
+        updateStatus('订单已创建，正在等待支付完成...', false);
+      } catch (error) {
+        updateStatus('网络波动，暂时无法查询订单状态。', false);
+      }
+    }
+
+    refreshBtn.addEventListener('click', checkStatus);
+    checkStatus();
+    pollTimer = setInterval(() => {
+      pollCount += 1;
+      if (pollCount > 20) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        return;
+      }
+      checkStatus();
+    }, 3000);
+  </script>
+</body>
+</html>`);
     }
 
     // 7.1 GET /user - 内容数据中心 (深色主题，需要登录)
@@ -8151,36 +8612,18 @@ export default {
                             <div class="plan-quota">250次</div>
                         </div>
                     </div>
-                    <button class="btn-confirm-pay" style="margin-top:24px" onclick="goToPayMethod()">下一步</button>
+                    <button class="btn-confirm-pay" style="margin-top:24px" onclick="createOrder(this)">立即支付</button>
                 </div>
 
-                <!-- 步骤2：选择支付方式 -->
-                <div class="pay-step-1" id="payStep1" style="display:none;">
-                    <div style="margin-bottom:16px;font-weight:600;color:var(--text);display:flex;align-items:center;">
-                        <span onclick="resetPayment()" style="cursor:pointer;margin-right:8px;opacity:0.6">←</span>
-                        选择支付方式
-                    </div>
-                    <div class="pay-methods">
-                        <div class="pay-method-card" onclick="createOrder('wechat')">
-                            <img src="https://imgcdn.dpdns.org/memoraid/pay_wechat.jpg" alt="微信支付" class="qr-img">
-                            <div class="pay-method-name">微信支付</div>
-                        </div>
-                        <div class="pay-method-card" onclick="createOrder('alipay')">
-                            <img src="https://imgcdn.dpdns.org/memoraid/pay_alipay.jpg" alt="支付宝" class="qr-img">
-                            <div class="pay-method-name">支付宝</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 步骤3：扫码支付 -->
+                <!-- 步骤2：展示虎皮椒支付二维码 -->
                 <div class="pay-step-2" id="payStep2" style="display:none;">
                     <div style="text-align: center; margin-bottom: 12px; font-weight: 600;">
-                        请使用<span id="payMethodName"></span>扫码支付
+                        请使用虎皮椒支付完成付款
                     </div>
                     
                     <div style="margin-bottom: 16px; padding: 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; color: #92400e; font-size: 0.9rem; line-height: 1.5;">
-                        ⚠️ <strong>重要提示：</strong><br>
-                        付款时请务必在备注中填写下方的<span style="font-weight:700">订单号</span>或您的<span style="font-weight:700">用户名</span>，以便管理员快速审核入账。
+                        ⚠️ <strong>支付说明：</strong><br>
+                        订单创建后请直接扫码或打开支付链接完成付款。支付成功后系统会自动到账，无需联系管理员审核。
                     </div>
 
                     <div style="max-width: 200px; margin: 0 auto;">
@@ -8188,19 +8631,24 @@ export default {
                     </div>
                     
                     <div class="order-info">
-                        <p>请在付款备注中填写以下订单号：</p>
+                        <p>订单号如下，可用于问题排查：</p>
                         <div class="order-id" id="orderIdDisplay">ORDER-ID-HERE</div>
                         <p style="font-size: 0.8rem; margin-top: 4px; color: var(--text-muted);">（点击订单号可复制）</p>
                     </div>
-                    
-                    <button class="btn-confirm-pay" onclick="confirmPayment(this)">我已支付</button>
+
+                    <div id="paymentStatusText" style="text-align:center;color:var(--text-secondary);font-size:0.9rem;line-height:1.6;margin-bottom:12px;">
+                        正在等待支付完成...
+                    </div>
+
+                    <button class="btn-confirm-pay" id="openPaymentBtn" onclick="openCurrentPayment()">打开支付页面</button>
+                    <button class="btn-confirm-pay" id="checkPaymentBtn" style="margin-top:12px;background:linear-gradient(135deg,#0f172a 0%,#334155 100%)" onclick="checkPaymentStatus(this)">立即检查支付状态</button>
                     <div style="text-align: center; margin-top: 12px;">
                         <span onclick="resetPayment()" style="font-size: 0.8rem; color: var(--text-muted); cursor: pointer; text-decoration: underline;">重新选择</span>
                     </div>
                 </div>
             </div>
             <div class="modal-footer" id="payFooter">
-                扫码支付后请截图联系管理员，备注"Memoraid充值"
+                支付完成后通常会在 1 - 5 秒内自动到账，如未到账可稍后刷新状态
             </div>
         </div>
     </div>
@@ -8457,13 +8905,25 @@ export default {
         }
 
         function resetPayment() {
+            stopPaymentPolling();
+            currentOrderId = null;
+            currentPaymentUrl = '';
+            currentPaymentQrcode = '';
             document.getElementById('payStep0').style.display = 'block';
-            document.getElementById('payStep1').style.display = 'none';
             document.getElementById('payStep2').style.display = 'none';
             document.getElementById('payFooter').style.display = 'block';
+            document.getElementById('payQrCode').src = '';
+            document.getElementById('orderIdDisplay').textContent = 'ORDER-ID-HERE';
+            document.getElementById('paymentStatusText').textContent = '正在等待支付完成...';
+            document.getElementById('paymentStatusText').style.color = 'var(--text-secondary)';
+            document.getElementById('openPaymentBtn').disabled = false;
+            document.getElementById('checkPaymentBtn').disabled = false;
         }
 
         let currentOrderId = null;
+        let currentPaymentUrl = '';
+        let currentPaymentQrcode = '';
+        let paymentPollTimer = null;
 
         function selectPlan(amount, el) {
             selectedAmount = amount;
@@ -8471,12 +8931,56 @@ export default {
             el.classList.add('active');
         }
 
-        function goToPayMethod() {
-            document.getElementById('payStep0').style.display = 'none';
-            document.getElementById('payStep1').style.display = 'block';
+        function stopPaymentPolling() {
+            if (paymentPollTimer) {
+                clearInterval(paymentPollTimer);
+                paymentPollTimer = null;
+            }
         }
 
-        async function createOrder(type) {
+        function updatePaymentStatus(text, isSuccess) {
+            const statusEl = document.getElementById('paymentStatusText');
+            statusEl.textContent = text;
+            statusEl.style.color = isSuccess ? '#059669' : 'var(--text-secondary)';
+        }
+
+        async function fetchPaymentStatus() {
+            if (!currentOrderId) return null;
+
+            const res = await fetch(API_BASE + '/api/payment/status?orderId=' + encodeURIComponent(currentOrderId));
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || '查询支付状态失败');
+            }
+            return data;
+        }
+
+        async function handlePaidOrder(data) {
+            stopPaymentPolling();
+            updatePaymentStatus('支付成功，额度已自动到账。', true);
+            document.getElementById('checkPaymentBtn').disabled = true;
+            document.getElementById('openPaymentBtn').disabled = true;
+            await loadData();
+            setTimeout(() => {
+                closeRechargeModal();
+            }, 1500);
+        }
+
+        function startPaymentPolling() {
+            stopPaymentPolling();
+            paymentPollTimer = setInterval(async () => {
+                try {
+                    const data = await fetchPaymentStatus();
+                    if (data && data.isPaid) {
+                        await handlePaidOrder(data);
+                    }
+                } catch (error) {
+                    console.error('轮询支付状态失败:', error);
+                }
+            }, 3000);
+        }
+
+        async function createOrder(btn) {
             const token = localStorage.getItem('memoraid_token');
             if (!token) {
                 showLoginRequired();
@@ -8484,12 +8988,9 @@ export default {
             }
 
             try {
-                // 显示加载状态
-                const methodCard = event.currentTarget;
-                if (methodCard) {
-                    methodCard.style.opacity = '0.7';
-                    methodCard.style.pointerEvents = 'none';
-                }
+                btn.disabled = true;
+                btn.style.opacity = '0.7';
+                updatePaymentStatus('正在创建支付订单...', false);
 
                 const res = await fetch(API_BASE + '/api/payment/create', {
                     method: 'POST',
@@ -8497,33 +8998,26 @@ export default {
                         'Authorization': 'Bearer ' + token,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ paymentMethod: type, amount: selectedAmount })
+                    body: JSON.stringify({ amount: selectedAmount })
                 });
 
                 const data = await res.json();
                 
                 if (data.error) {
                     alert('创建订单失败: ' + data.error);
-                    if (methodCard) {
-                        methodCard.style.opacity = '1';
-                        methodCard.style.pointerEvents = 'auto';
-                    }
                     return;
                 }
 
-                // 切换到支付步骤
-                const imgUrl = type === 'wechat' ? 
-                    'https://imgcdn.dpdns.org/memoraid/pay_wechat.jpg' : 
-                    'https://imgcdn.dpdns.org/memoraid/pay_alipay.jpg';
-                
-                document.getElementById('payMethodName').textContent = type === 'wechat' ? '微信' : '支付宝';
-                document.getElementById('payQrCode').src = imgUrl;
-                document.getElementById('orderIdDisplay').textContent = data.orderId;
                 currentOrderId = data.orderId;
-                
-                document.getElementById('payStep1').style.display = 'none';
+                currentPaymentUrl = data.paymentUrl || '';
+                currentPaymentQrcode = data.paymentQrcode || currentPaymentUrl;
+
+                document.getElementById('payQrCode').src = currentPaymentQrcode;
+                document.getElementById('orderIdDisplay').textContent = data.orderId;
+                document.getElementById('payStep0').style.display = 'none';
                 document.getElementById('payStep2').style.display = 'block';
-                document.getElementById('payFooter').style.display = 'none';
+                document.getElementById('payFooter').style.display = 'block';
+                updatePaymentStatus('订单已创建，请完成支付。系统会自动检测到账。', false);
                 
                 // 点击复制订单号
                 const orderDisplay = document.getElementById('orderIdDisplay');
@@ -8536,60 +9030,47 @@ export default {
                     });
                 };
 
-                document.getElementById('payStep1').style.display = 'none';
-                document.getElementById('payStep2').style.display = 'block';
-                document.getElementById('payFooter').style.display = 'none'; // 隐藏底部提示，避免干扰
-
-                // 恢复按钮状态
-                if (methodCard) {
-                    methodCard.style.opacity = '1';
-                    methodCard.style.pointerEvents = 'auto';
-                }
-
+                startPaymentPolling();
             } catch (e) {
                 console.error('创建订单错误:', e);
                 alert('网络错误，请稍后重试');
+            } finally {
+                btn.disabled = false;
+                btn.style.opacity = '1';
             }
         }
 
-        async function confirmPayment(btn) {
+        function openCurrentPayment() {
+            if (!currentPaymentUrl) {
+                alert('支付链接暂不可用，请重新创建订单');
+                return;
+            }
+
+            window.open(currentPaymentUrl, '_blank');
+        }
+
+        async function checkPaymentStatus(btn) {
             if (!currentOrderId) {
                 alert('订单号未找到，请刷新重试');
                 return;
             }
-            
+
             const originalText = btn.textContent;
-            btn.textContent = '提交中...';
+            btn.textContent = '检查中...';
             btn.disabled = true;
             btn.style.opacity = '0.7';
             
             try {
-                const token = localStorage.getItem('memoraid_token');
-                const res = await fetch(API_BASE + '/api/payment/notify', {
-                    method: 'POST',
-                    headers: { 
-                        'Authorization': 'Bearer ' + token,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ orderId: currentOrderId })
-                });
-                
-                if (res.ok) {
-                    btn.textContent = '已提交！管理员将在审核后为您充值额度。';
-                    setTimeout(() => {
-                        closeRechargeModal();
-                        btn.textContent = '我已完成支付';
-                        btn.disabled = false;
-                        btn.style.opacity = '1';
-                        // 移除alert通知,直接关闭弹窗即可
-                    }, 2000);
+                const data = await fetchPaymentStatus();
+                if (data && data.isPaid) {
+                    await handlePaidOrder(data);
                 } else {
-                    const data = await res.json();
-                    throw new Error(data.error || '提交失败');
+                    updatePaymentStatus('尚未检测到支付成功，请完成付款后稍后再试。', false);
                 }
             } catch (e) {
-                console.error('支付确认失败:', e);
-                alert('提交失败: ' + e.message);
+                console.error('检查支付状态失败:', e);
+                alert('检查失败: ' + e.message);
+            } finally {
                 btn.textContent = originalText;
                 btn.disabled = false;
                 btn.style.opacity = '1';
@@ -8829,25 +9310,100 @@ export default {
         if (!userId) {
           return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
-        
-        const body = await request.json() as any;
-        const { paymentMethod, amount: reqAmount } = body; // 'wechat' | 'alipay', amount
-        
-        if (!paymentMethod) {
-          return new Response(JSON.stringify({ error: '请选择支付方式' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+        const xunhupayConfig = getXunhupayConfig(env);
+        if (!xunhupayConfig) {
+          return new Response(JSON.stringify({ error: '虎皮椒支付尚未配置，请先设置 XUNHUPAY_APP_ID 和 XUNHUPAY_APP_SECRET' }), {
+            status: 503,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
         }
 
-        const orderId = crypto.randomUUID();
-        const amount = reqAmount || 10;
+        const body = await request.json() as any;
+        const amount = Number(body.amount || 10);
+        if (![10, 30, 50].includes(amount)) {
+          return new Response(JSON.stringify({ error: '仅支持 10 / 30 / 50 元套餐' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const orderId = crypto.randomUUID().replace(/-/g, '');
         let quota = 50;
         if (amount === 30) quota = 150;
         if (amount === 50) quota = 250;
-        
+
+        const totalFee = amount.toFixed(2);
+        const nonceStr = crypto.randomUUID().replace(/-/g, '');
+        const title = 'Memoraid付费额度充值';
+        const time = Math.floor(Date.now() / 1000);
+        const notifyUrl = `${effectiveOrigin}/api/payment/callback/xunhupay`;
+        const returnUrl = `${effectiveOrigin}/payment/return?orderId=${orderId}`;
+        const requestPayload: Record<string, string | number> = {
+          version: '1.1',
+          appid: xunhupayConfig.appId,
+          trade_order_id: orderId,
+          total_fee: totalFee,
+          title,
+          time,
+          notify_url: notifyUrl,
+          return_url: returnUrl,
+          callback_url: `${effectiveOrigin}/user`,
+          nonce_str: nonceStr,
+        };
+        const hash = buildXunhupayHash(requestPayload, xunhupayConfig.appSecret);
+
         await env.DB.prepare(
           'INSERT INTO payment_orders (id, user_id, amount, quota_amount, status, payment_url) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(orderId, userId, amount, quota, 'pending', paymentMethod).run();
-        
-        return new Response(JSON.stringify({ orderId, amount, quota, paymentMethod }), {
+        ).bind(orderId, userId, amount, quota, 'pending', '').run();
+
+        const xunhupayResponse = await fetch(xunhupayConfig.gatewayUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            ...Object.fromEntries(Object.entries(requestPayload).map(([key, value]) => [key, String(value)])),
+            hash,
+          }).toString(),
+        });
+
+        const responseText = await xunhupayResponse.text();
+        let responseData: Record<string, any>;
+        try {
+          responseData = JSON.parse(responseText);
+        } catch {
+          console.error('虎皮椒支付返回非JSON:', responseText);
+          return new Response(JSON.stringify({ error: '支付平台返回异常，请稍后重试' }), {
+            status: 502,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const responseHash = responseData.hash;
+        if (!responseHash || responseHash !== buildXunhupayHash(responseData, xunhupayConfig.appSecret)) {
+          console.error('虎皮椒响应验签失败:', responseData);
+          return new Response(JSON.stringify({ error: '支付平台响应验签失败' }), {
+            status: 502,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        if (!xunhupayResponse.ok || Number(responseData.errcode) !== 0) {
+          console.error('虎皮椒下单失败:', responseData);
+          return new Response(JSON.stringify({ error: responseData.errmsg || '创建支付订单失败' }), {
+            status: 502,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const paymentUrl = String(responseData.url || '');
+        const paymentQrcode = String(responseData.url_qrcode || paymentUrl || '');
+        await env.DB.prepare('UPDATE payment_orders SET payment_url = ? WHERE id = ?')
+          .bind(paymentUrl, orderId)
+          .run();
+
+        return new Response(JSON.stringify({ orderId, amount, quota, paymentUrl, paymentQrcode, provider: 'xunhupay' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       } catch (e: any) {
