@@ -957,9 +957,9 @@ function renderMarketingHome(origin: string): string {
   <div class="container">
     <div class="hero-grid">
       <div>
-        <div class="pill">AI 自动化写作 · 一键发布到多平台</div>
-        <h1>把素材变成文章，把文章变成发布</h1>
-        <p>Memoraid 是一款为自媒体工作流优化的浏览器扩展：从网页/对话/资料里提炼要点，生成结构化成稿，并自动发布到头条号、知乎专栏、微信公众号。</p>
+        <div class="pill">AI 自媒体运营插件 · 全流程自动化</div>
+        <h1>自动选题 · 自动生成 · 自动发布</h1>
+        <p>Memoraid 是一款专为自媒体运营打造的浏览器插件：自动化选择热门话题、AI 智能生成优质文章、一键发布到小红书、公众号、知乎等多个平台。让你的自媒体账号 24 小时不间断运营。</p>
         <div class="hero-actions">
           <a class="btn btn-chrome" href="https://chromewebstore.google.com/detail/memoraid/leonoilddlplhmmahjmnendflfnlnlmg" target="_blank" rel="noreferrer">
             <span class="btn-icon">${chromeIcon}</span>
@@ -968,9 +968,9 @@ function renderMarketingHome(origin: string): string {
           <a class="btn btn-ghost" href="/pricing">查看定价</a>
         </div>
         <div class="hero-badges">
-          <span><span class="badge-dot"></span>一键生成自媒体文章</span>
-          <span><span class="badge-dot"></span>自动发布 · 头条/知乎/公众号</span>
-          <span><span class="badge-dot"></span>智能配图 · 图片存储在 R2</span>
+          <span><span class="badge-dot"></span>定时任务自动选择热门话题</span>
+          <span><span class="badge-dot"></span>AI 智能生成优质文章</span>
+          <span><span class="badge-dot"></span>一键发布到多个自媒体平台</span>
         </div>
         <div class="platforms" aria-label="支持发布平台">
           <div class="platforms-title">支持发布平台</div>
@@ -1009,6 +1009,60 @@ function renderMarketingHome(origin: string): string {
     </div>
   </div>
 </section>
+
+<section class="section soft">
+  <div class="container">
+    <div class="section-head">
+      <h2>真实运营效果</h2>
+      <p>使用 Memoraid 自动化运营的真实数据</p>
+    </div>
+    <div style="max-width:900px;margin:0 auto">
+      <div style="margin-bottom:48px">
+        <div style="text-align:center;margin-bottom:16px">
+          <h3 style="margin:0 0 8px;font-size:24px;color:var(--text)">📱 小红书运营一周</h3>
+          <p style="margin:0;font-size:18px;color:#10b981;font-weight:600">200万+ 曝光 · 60万+ 阅读</p>
+        </div>
+        <img src="${ASSETS_BASE}/xiaohongshu-result.png" alt="小红书运营一周效果" style="width:100%;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);cursor:pointer" onclick="openImageModal(this.src)">
+      </div>
+      <div>
+        <div style="text-align:center;margin-bottom:16px">
+          <h3 style="margin:0 0 8px;font-size:24px;color:var(--text)">💰 公众号运营效果</h3>
+          <p style="margin:0;font-size:18px;color:#10b981;font-weight:600">每篇文章都有广告收入，实现睡后收入</p>
+        </div>
+        <img src="${ASSETS_BASE}/weixin-result.png" alt="公众号运营效果" style="width:100%;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);cursor:pointer" onclick="openImageModal(this.src)">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 图片放大查看的lightbox -->
+<div id="imageLightbox" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:9999;align-items:center;justify-content:center;padding:20px" onclick="closeImageModal()">
+  <img id="lightboxImage" src="" style="max-width:90%;max-height:90%;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.5)">
+  <div style="position:absolute;top:20px;right:20px;color:#fff;font-size:32px;cursor:pointer;width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);border-radius:50%;backdrop-filter:blur(10px)" onclick="closeImageModal()">×</div>
+</div>
+
+<script>
+function openImageModal(src) {
+  const lightbox = document.getElementById('imageLightbox');
+  const img = document.getElementById('lightboxImage');
+  img.src = src;
+  lightbox.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeImageModal() {
+  const lightbox = document.getElementById('imageLightbox');
+  lightbox.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+// ESC键关闭
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    closeImageModal();
+  }
+});
+</script>
 
 <section class="section" id="showcase">
   <div class="container">
@@ -1377,63 +1431,83 @@ ${footer}`;
 function renderMarketingPricing(origin: string): string {
   const nav = renderMarketingNav(origin);
   const footer = renderMarketingFooter(origin);
+  const ASSETS_BASE = `${origin}/assets/memoraid`;
 
   const body = `${nav}
 <main class="hero">
   <div class="container">
     <div class="section-head" style="margin-bottom:18px">
-      <h2 style="font-size:34px;margin:0;letter-spacing:-.03em">定价</h2>
-      <p style="margin-top:10px">从个人到团队，选择最适合你的计划。需要更多能力可随时升级。</p>
+      <h2 style="font-size:34px;margin:0;letter-spacing:-.03em">按需充值 · 灵活使用</h2>
+      <p style="margin-top:10px">按额度充值，用多少充多少。无需订阅，永久有效。</p>
     </div>
 
     <div class="grid" style="grid-template-columns:repeat(3,1fr);gap:16px">
       <div class="card">
-        <div class="pill" style="display:inline-flex">Free</div>
-        <h3 style="margin:12px 0 6px;font-size:22px">¥0</h3>
-        <p style="margin:0 0 14px;color:var(--text-3)">入门体验，适合轻量使用。</p>
-        <a class="btn btn-ghost" href="https://chromewebstore.google.com/detail/memoraid/leonoilddlplhmmahjmnendflfnlnlmg" target="_blank" rel="noreferrer">安装扩展</a>
+        <div class="pill" style="display:inline-flex">体验套餐</div>
+        <h3 style="margin:12px 0 6px;font-size:22px">¥9.9</h3>
+        <p style="margin:0 0 14px;color:var(--text-3)">30 额度 · 适合新手体验</p>
+        <a class="btn btn-ghost" href="/user" rel="noreferrer">立即充值</a>
         <div style="height:14px"></div>
         <div style="color:var(--text-2);font-weight:800;font-size:13px;margin-bottom:8px">包含</div>
         <div style="color:var(--text-3);font-size:13px">
-          <div>• 基础网页总结与提炼</div>
-          <div>• 基础写作辅助</div>
-          <div>• 基础设置同步（密文）</div>
+          <div>• 30 额度（可生成 30 篇文章）</div>
+          <div>• 支持所有平台发布</div>
+          <div>• 永久有效，用完再充</div>
         </div>
       </div>
 
       <div class="card" style="border-color:rgba(16,185,129,.40);background:linear-gradient(180deg,#fff, rgba(16,185,129,.05))">
-        <div class="pill" style="display:inline-flex;border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.08);color:var(--text)">Pro</div>
-        <h3 style="margin:12px 0 6px;font-size:22px">¥29<span style="font-size:13px;color:var(--text-3);font-weight:800">/月</span></h3>
-        <p style="margin:0 0 14px;color:var(--text-3)">高频使用者的效率方案。</p>
-        <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/memoraid/leonoilddlplhmmahjmnendflfnlnlmg" target="_blank" rel="noreferrer">开始使用</a>
+        <div class="pill" style="display:inline-flex;border-color:rgba(16,185,129,.35);background:rgba(16,185,129,.08);color:var(--text)">推荐</div>
+        <h3 style="margin:12px 0 6px;font-size:22px">¥29.9<span style="font-size:13px;color:var(--text-3);font-weight:800"></span></h3>
+        <p style="margin:0 0 14px;color:var(--text-3)">100 额度 · 高性价比</p>
+        <a class="btn btn-primary" href="/user" rel="noreferrer">立即充值</a>
         <div style="height:14px"></div>
         <div style="color:var(--text-2);font-weight:800;font-size:13px;margin-bottom:8px">包含</div>
         <div style="color:var(--text-3);font-size:13px">
-          <div>• 更强的总结与结构化输出</div>
-          <div>• 多平台内容工作流优化</div>
-          <div>• 更完善的提示与模板复用</div>
-          <div>• 优先体验新能力</div>
+          <div>• 100 额度（可生成 100 篇文章）</div>
+          <div>• 支持定时任务自动运营</div>
+          <div>• 永久有效，用完再充</div>
         </div>
       </div>
 
       <div class="card">
-        <div class="pill" style="display:inline-flex">Team</div>
-        <h3 style="margin:12px 0 6px;font-size:22px">联系报价</h3>
-        <p style="margin:0 0 14px;color:var(--text-3)">适合多人协作、统一模板与流程。</p>
-        <a class="btn btn-ghost" href="/privacy">了解隐私与数据</a>
+        <div class="pill" style="display:inline-flex">超值套餐</div>
+        <h3 style="margin:12px 0 6px;font-size:22px">¥49.9</h3>
+        <p style="margin:0 0 14px;color:var(--text-3)">200 额度 · 大量优惠</p>
+        <a class="btn btn-ghost" href="/user">立即充值</a>
         <div style="height:14px"></div>
         <div style="color:var(--text-2);font-weight:800;font-size:13px;margin-bottom:8px">包含</div>
         <div style="color:var(--text-3);font-size:13px">
-          <div>• 团队模板与提示规范</div>
-          <div>• 内容复盘与数据看板</div>
-          <div>• 协作流程与权限建议</div>
+          <div>• 200 额度（可生成 200 篇文章）</div>
+          <div>• 支持定时任务自动运营</div>
+          <div>• 永久有效，用完再充</div>
         </div>
       </div>
     </div>
+    
+    <div style="margin-top:24px;padding:16px;background:rgba(59,130,246,.05);border:1px solid rgba(59,130,246,.2);border-radius:12px;text-align:center">
+      <p style="margin:0;color:var(--text-2);font-size:14px">💡 <strong>大量额度购买</strong>：如需购买 500 额度以上，请<a href="/user#recharge" style="color:#3b82f6;text-decoration:none;margin-left:4px">联系客服</a>获取优惠价格</p>
+    </div>
   </div>
 </main>
+  document.body.style.overflow = 'hidden';
+}
 
-<section class="section soft">
+function closeImageModal() {
+  const lightbox = document.getElementById('imageLightbox');
+  lightbox.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+// ESC键关闭
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    closeImageModal();
+  }
+});
+</script>
+
+<section class="section">
   <div class="container">
     <div class="section-head">
       <h2>常见问题</h2>
@@ -1441,29 +1515,29 @@ function renderMarketingPricing(origin: string): string {
     </div>
     <div class="grid" style="grid-template-columns:repeat(2,1fr);gap:16px">
       <div class="card">
-        <h3 style="margin:0 0 8px;font-size:14px">数据会被服务器看到吗？</h3>
-        <p style="margin:0;color:var(--text-3)">设置与偏好使用客户端加密同步，服务器只存储密文。更多细节见隐私政策。</p>
+        <h3 style="margin:0 0 8px;font-size:14px">额度如何计算？</h3>
+        <p style="margin:0;color:var(--text-3)">1 额度 = 1 篇文章。充值 30 额度可以生成 30 篇文章，充值 100 额度可以生成 100 篇文章。</p>
       </div>
       <div class="card">
-        <h3 style="margin:0 0 8px;font-size:14px">可以随时升级/降级吗？</h3>
-        <p style="margin:0;color:var(--text-3)">可以。你可以按需要选择更适合的计划，保持工作流连续。</p>
+        <h3 style="margin:0 0 8px;font-size:14px">额度会过期吗？</h3>
+        <p style="margin:0;color:var(--text-3)">不会。充值的额度永久有效，用完再充，没有时间限制。</p>
       </div>
       <div class="card">
-        <h3 style="margin:0 0 8px;font-size:14px">定价页面会更新吗？</h3>
-        <p style="margin:0;color:var(--text-3)">会。这里先提供清晰的档位结构，后续可把具体权益与限制进一步细化。</p>
+        <h3 style="margin:0 0 8px;font-size:14px">可以开发票吗？</h3>
+        <p style="margin:0;color:var(--text-3)">可以。购买企业套餐（199元及以上）可以开具增值税普通发票，联系客服提供开票信息。</p>
       </div>
       <div class="card">
-        <h3 style="margin:0 0 8px;font-size:14px">我需要管理后台做什么？</h3>
-        <p style="margin:0;color:var(--text-3)">查看账号与文章数据、做复盘与筛选。若你只用扩展，后台不是必需。</p>
+        <h3 style="margin:0 0 8px;font-size:14px">支持哪些支付方式？</h3>
+        <p style="margin:0;color:var(--text-3)">目前支持支付宝、微信支付。企业套餐支持对公转账。</p>
       </div>
     </div>
 
     <div style="height:18px"></div>
     <div class="cta">
       <h3>现在就开始</h3>
-      <p>先从免费开始体验，感觉顺手再升级。</p>
+      <p>先安装插件体验，觉得好用再充值。</p>
       <div class="hero-actions">
-        <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/memoraid/leonoilddlplhmmahjmnendflfnlnlmg" target="_blank" rel="noreferrer">免费添加到 Chrome</a>
+        <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/memoraid/leonoilddlplhmmahjmnendflfnlnlmg" target="_blank" rel="noreferrer">免费安装插件</a>
         <a class="btn btn-ghost" href="/">返回首页</a>
       </div>
     </div>
@@ -1473,8 +1547,8 @@ ${footer}`;
 
   return renderMarketingShell({
     origin,
-    title: 'Memoraid 定价 - 选择适合你的计划',
-    description: 'Memoraid 定价与权益说明：从免费到 Pro，再到团队协作方案。',
+    title: 'Memoraid 定价 - 按需充值，灵活使用',
+    description: 'Memoraid 按额度充值，无需订阅。体验套餐 9.9 元起，大量充值享受优惠。',
     body,
   });
 }
@@ -8379,6 +8453,9 @@ export default {
                     <a href="#recharge" class="nav-item" id="nav-recharge">
                         <span>💰</span> 充值记录
                     </a>
+                    <a href="#tickets" class="nav-item" id="nav-tickets">
+                        <span>💬</span> 工单反馈
+                    </a>
                 </nav>
             </aside>
             
@@ -8415,10 +8492,72 @@ export default {
                         </div>
                         <div class="pagination" id="rechargePagination"></div>
                     </section>
+                    
+                    <!-- 工单反馈内容 -->
+                    <section class="tab-content" id="ticketsContent">
+                        <div style="margin-bottom: 20px;">
+                            <button class="btn btn-primary" onclick="showCreateTicketModal()" style="padding: 10px 20px; font-size: 14px;">
+                                <span>➕</span> 创建新工单
+                            </button>
+                        </div>
+                        <div class="table-wrapper" id="ticketsTable">
+                            <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+                        </div>
+                    </section>
                 </div>
             </div>
         </div>
     </main>
+
+    <!-- 创建工单弹窗 -->
+    <div class="modal-overlay" id="createTicketModal" onclick="if(event.target === this) closeCreateTicketModal()">
+        <div class="modal" style="max-width: 600px;">
+            <div class="modal-header">
+                <div class="modal-title">创建工单</div>
+                <div class="close-btn" onclick="closeCreateTicketModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 500; color: var(--text);">主题</label>
+                    <input type="text" id="ticketSubject" placeholder="请输入工单主题" style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px;">
+                </div>
+                <div style="margin-bottom: 20px;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 500; color: var(--text);">详细描述</label>
+                    <textarea id="ticketMessage" placeholder="请详细描述您的问题或建议" rows="6" style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; resize: vertical;"></textarea>
+                </div>
+                <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                    <button class="btn btn-ghost" onclick="closeCreateTicketModal()">取消</button>
+                    <button class="btn btn-primary" onclick="submitTicket()">提交工单</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 工单详情弹窗 -->
+    <div class="modal-overlay" id="ticketDetailModal" onclick="if(event.target === this) closeTicketDetailModal()">
+        <div class="modal" style="max-width: 800px; max-height: 80vh;">
+            <div class="modal-header">
+                <div class="modal-title">工单详情</div>
+                <div class="close-btn" onclick="closeTicketDetailModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                </div>
+            </div>
+            <div class="modal-body" style="max-height: calc(80vh - 120px); overflow-y: auto;">
+                <div id="ticketDetailContent">
+                    <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+                </div>
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border);">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 500; color: var(--text);">添加回复</label>
+                    <textarea id="ticketReplyMessage" placeholder="输入您的回复..." rows="4" style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; resize: vertical;"></textarea>
+                    <div style="margin-top: 12px; display: flex; justify-content: flex-end;">
+                        <button class="btn btn-primary" onclick="submitTicketReply()">发送回复</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- 充值弹窗 -->
     <div class="modal-overlay" id="rechargeModal" onclick="if(event.target === this) closeRechargeModal()">
@@ -8434,17 +8573,17 @@ export default {
                 <div id="payStep0" style="display:block;">
                     <div style="margin-bottom:16px;font-weight:600;color:var(--text)">选择充值套餐</div>
                     <div class="plan-grid">
-                        <div class="plan-card active" onclick="selectPlan(10, this)">
-                            <div class="plan-amount">¥10</div>
-                            <div class="plan-quota">50次</div>
+                        <div class="plan-card active" onclick="selectPlan(9.9, this)">
+                            <div class="plan-amount">¥9.9</div>
+                            <div class="plan-quota">30篇</div>
                         </div>
-                        <div class="plan-card" onclick="selectPlan(30, this)">
-                            <div class="plan-amount">¥30</div>
-                            <div class="plan-quota">150次</div>
+                        <div class="plan-card" onclick="selectPlan(29.9, this)">
+                            <div class="plan-amount">¥29.9</div>
+                            <div class="plan-quota">100篇</div>
                         </div>
-                        <div class="plan-card" onclick="selectPlan(50, this)">
-                            <div class="plan-amount">¥50</div>
-                            <div class="plan-quota">250次</div>
+                        <div class="plan-card" onclick="selectPlan(49.9, this)">
+                            <div class="plan-amount">¥49.9</div>
+                            <div class="plan-quota">200篇</div>
                         </div>
                     </div>
                     <button class="btn-confirm-pay" style="margin-top:24px" onclick="createOrder(this)">立即支付</button>
@@ -8629,6 +8768,11 @@ export default {
                     document.getElementById('rechargeContent').classList.add('active');
                     if (document.getElementById('rechargeTable').innerHTML.includes('加载中')) {
                         loadRechargeHistory();
+                    }
+                } else if (tab === 'tickets') {
+                    document.getElementById('ticketsContent').classList.add('active');
+                    if (document.getElementById('ticketsTable').innerHTML.includes('加载中')) {
+                        loadTickets(); // 加载工单列表
                     }
                 }
             }
@@ -9368,6 +9512,226 @@ export default {
                 btn.textContent = originalText;
                 btn.disabled = false;
                 btn.style.opacity = '1';
+            }
+        }
+
+        // ========== 工单相关函数 ==========
+        
+        // 显示创建工单弹窗
+        function showCreateTicketModal() {
+            document.getElementById('ticketSubject').value = '';
+            document.getElementById('ticketMessage').value = '';
+            document.getElementById('createTicketModal').classList.add('active');
+        }
+        
+        // 关闭创建工单弹窗
+        function closeCreateTicketModal() {
+            document.getElementById('createTicketModal').classList.remove('active');
+        }
+        
+        // 提交工单
+        async function submitTicket() {
+            const subject = document.getElementById('ticketSubject').value.trim();
+            const message = document.getElementById('ticketMessage').value.trim();
+            
+            if (!subject) {
+                alert('请输入工单主题');
+                return;
+            }
+            
+            if (!message) {
+                alert('请输入详细描述');
+                return;
+            }
+            
+            try {
+                const token = localStorage.getItem('memoraid_token');
+                const res = await fetch(API_BASE + '/api/tickets', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ subject, message })
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) {
+                    throw new Error(data.error || '创建工单失败');
+                }
+                
+                alert('工单创建成功！');
+                closeCreateTicketModal();
+                loadTickets(); // 重新加载工单列表
+            } catch (e) {
+                console.error('创建工单失败:', e);
+                alert('创建工单失败: ' + e.message);
+            }
+        }
+        
+        // 加载工单列表
+        async function loadTickets() {
+            const token = localStorage.getItem('memoraid_token');
+            if (!token) return;
+            
+            try {
+                const res = await fetch(API_BASE + '/api/tickets', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) {
+                    throw new Error(data.error || '加载工单列表失败');
+                }
+                
+                const tickets = data.tickets || [];
+                const container = document.getElementById('ticketsTable');
+                
+                if (tickets.length === 0) {
+                    container.innerHTML = '<div class="empty-state"><div class="empty-icon">💬</div><p class="empty-text">暂无工单记录</p><p class="empty-hint">点击上方按钮创建新工单</p></div>';
+                    return;
+                }
+                
+                let html = '<table class="data-table"><thead><tr><th>工单编号</th><th>主题</th><th>状态</th><th>消息数</th><th>创建时间</th><th>操作</th></tr></thead><tbody>';
+                
+                tickets.forEach(ticket => {
+                    const statusMap = {
+                        'open': { text: '待处理', color: '#f59e0b' },
+                        'replied': { text: '已回复', color: '#10b981' },
+                        'closed': { text: '已关闭', color: '#6b7280' }
+                    };
+                    const status = statusMap[ticket.status] || statusMap['open'];
+                    const hasNewReply = ticket.admin_reply_count > 0 && ticket.status === 'replied';
+                    
+                    html += '<tr>';
+                    html += '<td>#' + ticket.id + '</td>';
+                    html += '<td>' + ticket.subject + (hasNewReply ? ' <span style="color:#10b981;font-weight:600">●</span>' : '') + '</td>';
+                    html += '<td><span class="stat-pill" style="background:' + status.color + '20;color:' + status.color + '">' + status.text + '</span></td>';
+                    html += '<td>' + ticket.message_count + ' 条</td>';
+                    html += '<td class="time-cell">' + formatTime(Math.floor(new Date(ticket.created_at).getTime() / 1000)) + '</td>';
+                    html += '<td><button class="btn btn-sm btn-ghost" onclick="viewTicketDetail(' + ticket.id + ')">查看详情</button></td>';
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            } catch (e) {
+                console.error('加载工单列表失败:', e);
+                document.getElementById('ticketsTable').innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><p class="empty-text">加载失败: ' + e.message + '</p></div>';
+            }
+        }
+        
+        let currentTicketId = null;
+        
+        // 查看工单详情
+        async function viewTicketDetail(ticketId) {
+            currentTicketId = ticketId;
+            document.getElementById('ticketDetailModal').classList.add('active');
+            document.getElementById('ticketReplyMessage').value = '';
+            
+            const container = document.getElementById('ticketDetailContent');
+            container.innerHTML = '<div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>';
+            
+            try {
+                const token = localStorage.getItem('memoraid_token');
+                const res = await fetch(API_BASE + '/api/tickets/' + ticketId, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) {
+                    throw new Error(data.error || '加载工单详情失败');
+                }
+                
+                const ticket = data.ticket;
+                const messages = data.messages || [];
+                
+                const statusMap = {
+                    'open': { text: '待处理', color: '#f59e0b' },
+                    'replied': { text: '已回复', color: '#10b981' },
+                    'closed': { text: '已关闭', color: '#6b7280' }
+                };
+                const status = statusMap[ticket.status] || statusMap['open'];
+                
+                let html = '<div style="margin-bottom: 20px; padding: 16px; background: var(--bg-subtle); border-radius: 12px;">';
+                html += '<div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">';
+                html += '<h3 style="margin: 0; font-size: 18px; color: var(--text);">工单 #' + ticket.id + ': ' + ticket.subject + '</h3>';
+                html += '<span class="stat-pill" style="background:' + status.color + '20;color:' + status.color + '">' + status.text + '</span>';
+                html += '</div>';
+                html += '<div style="font-size: 14px; color: var(--text-muted);">创建时间: ' + formatTime(Math.floor(new Date(ticket.created_at).getTime() / 1000)) + '</div>';
+                html += '</div>';
+                
+                html += '<div style="max-height: 400px; overflow-y: auto;">';
+                messages.forEach(msg => {
+                    const isAdmin = msg.is_admin === 1;
+                    const bgColor = isAdmin ? '#e0f2fe' : '#f3f4f6';
+                    const align = isAdmin ? 'left' : 'right';
+                    const label = isAdmin ? '客服回复' : '我';
+                    const labelColor = isAdmin ? '#0284c7' : '#6b7280';
+                    
+                    html += '<div style="margin-bottom: 16px; text-align: ' + align + ';">';
+                    html += '<div style="display: inline-block; max-width: 80%; text-align: left;">';
+                    html += '<div style="font-size: 12px; color: ' + labelColor + '; margin-bottom: 4px; font-weight: 600;">' + label + '</div>';
+                    html += '<div style="padding: 12px; background: ' + bgColor + '; border-radius: 12px; word-wrap: break-word;">';
+                    html += msg.message.replace(/\n/g, '<br>');
+                    html += '</div>';
+                    html += '<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">' + formatTime(Math.floor(new Date(msg.created_at).getTime() / 1000)) + '</div>';
+                    html += '</div></div>';
+                });
+                html += '</div>';
+                
+                container.innerHTML = html;
+            } catch (e) {
+                console.error('加载工单详情失败:', e);
+                container.innerHTML = '<div class="empty-state"><div class="empty-icon">⚠️</div><p class="empty-text">加载失败: ' + e.message + '</p></div>';
+            }
+        }
+        
+        // 关闭工单详情弹窗
+        function closeTicketDetailModal() {
+            document.getElementById('ticketDetailModal').classList.remove('active');
+            currentTicketId = null;
+        }
+        
+        // 提交工单回复
+        async function submitTicketReply() {
+            if (!currentTicketId) {
+                alert('工单ID未找到');
+                return;
+            }
+            
+            const message = document.getElementById('ticketReplyMessage').value.trim();
+            
+            if (!message) {
+                alert('请输入回复内容');
+                return;
+            }
+            
+            try {
+                const token = localStorage.getItem('memoraid_token');
+                const res = await fetch(API_BASE + '/api/tickets/' + currentTicketId + '/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ message })
+                });
+                
+                const data = await res.json();
+                
+                if (!res.ok) {
+                    throw new Error(data.error || '发送回复失败');
+                }
+                
+                document.getElementById('ticketReplyMessage').value = '';
+                viewTicketDetail(currentTicketId); // 重新加载工单详情
+            } catch (e) {
+                console.error('发送回复失败:', e);
+                alert('发送回复失败: ' + e.message);
             }
         }
 
@@ -10606,6 +10970,340 @@ ${body.logs.map(log => {
         });
       } catch (e: any) {
         console.error('发送通知邮件错误:', e);
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 9.1 POST /api/tickets - 创建工单
+    if (url.pathname === '/api/tickets' && request.method === 'POST') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const body = await request.json() as { subject: string; message: string };
+        
+        // 创建工单
+        const ticketResult = await env.DB.prepare(
+          'INSERT INTO tickets (user_id, subject, status) VALUES (?, ?, ?)'
+        ).bind(userId, body.subject, 'open').run();
+        
+        const ticketId = ticketResult.meta.last_row_id;
+        
+        // 添加第一条消息
+        await env.DB.prepare(
+          'INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin) VALUES (?, ?, ?, ?)'
+        ).bind(ticketId, userId, body.message, 0).run();
+        
+        return new Response(JSON.stringify({ 
+          success: true,
+          ticketId 
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        console.error('创建工单错误:', e);
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 9.2 GET /api/tickets - 获取用户的工单列表
+    if (url.pathname === '/api/tickets' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const tickets = await env.DB.prepare(
+          `SELECT t.*, 
+           (SELECT COUNT(*) FROM ticket_messages WHERE ticket_id = t.id) as message_count,
+           (SELECT COUNT(*) FROM ticket_messages WHERE ticket_id = t.id AND is_admin = 1) as admin_reply_count
+           FROM tickets t 
+           WHERE t.user_id = ? 
+           ORDER BY t.updated_at DESC`
+        ).bind(userId).all();
+        
+        return new Response(JSON.stringify({ tickets: tickets.results }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        console.error('获取工单列表错误:', e);
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 9.3 GET /api/tickets/:id - 获取工单详情和消息
+    if (url.pathname.startsWith('/api/tickets/') && request.method === 'GET' && url.pathname.split('/').length === 4) {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const ticketId = url.pathname.split('/')[3];
+        
+        // 获取工单信息
+        const ticket = await env.DB.prepare(
+          'SELECT * FROM tickets WHERE id = ? AND user_id = ?'
+        ).bind(ticketId, userId).first();
+        
+        if (!ticket) {
+          return new Response(JSON.stringify({ error: 'Ticket not found' }), {
+            status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // 获取消息列表
+        const messages = await env.DB.prepare(
+          'SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC'
+        ).bind(ticketId).all();
+        
+        return new Response(JSON.stringify({ 
+          ticket,
+          messages: messages.results 
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        console.error('获取工单详情错误:', e);
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 9.4 POST /api/tickets/:id/messages - 添加工单消息
+    if (url.pathname.match(/^\/api\/tickets\/\d+\/messages$/) && request.method === 'POST') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const ticketId = url.pathname.split('/')[3];
+        const body = await request.json() as { message: string };
+        
+        // 验证工单所有权
+        const ticket = await env.DB.prepare(
+          'SELECT * FROM tickets WHERE id = ? AND user_id = ?'
+        ).bind(ticketId, userId).first();
+        
+        if (!ticket) {
+          return new Response(JSON.stringify({ error: 'Ticket not found' }), {
+            status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // 添加消息
+        await env.DB.prepare(
+          'INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin) VALUES (?, ?, ?, ?)'
+        ).bind(ticketId, userId, body.message, 0).run();
+        
+        // 更新工单时间
+        await env.DB.prepare(
+          'UPDATE tickets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).bind(ticketId).run();
+        
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        console.error('添加工单消息错误:', e);
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 9.5 GET /api/admin/tickets - 管理员获取所有工单
+    if (url.pathname === '/api/admin/tickets' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 检查管理员权限
+        const user = await env.DB.prepare(
+          'SELECT is_admin FROM users WHERE id = ?'
+        ).bind(userId).first();
+        
+        if (!user || !user.is_admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), {
+            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const tickets = await env.DB.prepare(
+          `SELECT t.*, u.email as user_email,
+           (SELECT COUNT(*) FROM ticket_messages WHERE ticket_id = t.id) as message_count,
+           (SELECT COUNT(*) FROM ticket_messages WHERE ticket_id = t.id AND is_admin = 1) as admin_reply_count
+           FROM tickets t 
+           LEFT JOIN users u ON t.user_id = u.id
+           ORDER BY t.updated_at DESC`
+        ).all();
+        
+        return new Response(JSON.stringify({ tickets: tickets.results }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        console.error('获取所有工单错误:', e);
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 9.6 GET /api/admin/tickets/:id - 管理员获取工单详情
+    if (url.pathname.startsWith('/api/admin/tickets/') && request.method === 'GET' && url.pathname.split('/').length === 5) {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 检查管理员权限
+        const user = await env.DB.prepare(
+          'SELECT is_admin FROM users WHERE id = ?'
+        ).bind(userId).first();
+        
+        if (!user || !user.is_admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), {
+            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const ticketId = url.pathname.split('/')[4];
+        
+        // 获取工单信息
+        const ticket = await env.DB.prepare(
+          'SELECT t.*, u.email as user_email FROM tickets t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?'
+        ).bind(ticketId).first();
+        
+        if (!ticket) {
+          return new Response(JSON.stringify({ error: 'Ticket not found' }), {
+            status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // 获取消息列表
+        const messages = await env.DB.prepare(
+          'SELECT * FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC'
+        ).bind(ticketId).all();
+        
+        return new Response(JSON.stringify({ 
+          ticket,
+          messages: messages.results 
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        console.error('管理员获取工单详情错误:', e);
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 9.7 POST /api/admin/tickets/:id/reply - 管理员回复工单
+    if (url.pathname.match(/^\/api\/admin\/tickets\/\d+\/reply$/) && request.method === 'POST') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 检查管理员权限
+        const user = await env.DB.prepare(
+          'SELECT is_admin FROM users WHERE id = ?'
+        ).bind(userId).first();
+        
+        if (!user || !user.is_admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), {
+            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const ticketId = url.pathname.split('/')[4];
+        const body = await request.json() as { message: string };
+        
+        // 添加管理员回复
+        await env.DB.prepare(
+          'INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin) VALUES (?, ?, ?, ?)'
+        ).bind(ticketId, userId, body.message, 1).run();
+        
+        // 更新工单状态和时间
+        await env.DB.prepare(
+          'UPDATE tickets SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).bind('replied', ticketId).run();
+        
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        console.error('管理员回复工单错误:', e);
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 9.8 PATCH /api/admin/tickets/:id/status - 管理员更新工单状态
+    if (url.pathname.match(/^\/api\/admin\/tickets\/\d+\/status$/) && request.method === 'PATCH') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 检查管理员权限
+        const user = await env.DB.prepare(
+          'SELECT is_admin FROM users WHERE id = ?'
+        ).bind(userId).first();
+        
+        if (!user || !user.is_admin) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), {
+            status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const ticketId = url.pathname.split('/')[4];
+        const body = await request.json() as { status: string };
+        
+        // 更新工单状态
+        await env.DB.prepare(
+          'UPDATE tickets SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).bind(body.status, ticketId).run();
+        
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        console.error('更新工单状态错误:', e);
         return new Response(JSON.stringify({ error: e.message }), {
           status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
