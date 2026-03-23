@@ -706,7 +706,21 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
                           className="w-full p-2 border rounded text-sm font-mono"
                           placeholder="3QeLwJEd7k"
                         />
-                  
+                      </div>
+
+                      {/* 通知邮箱 */}
+                      <div>
+                        <label className="text-xs font-medium text-gray-600 block mb-1">通知邮箱（可选）</label>
+                        <p className="text-xs text-gray-500 mb-2">
+                          任务完成后将发送邮件通知，包含执行状态、文章详情等信息
+                        </p>
+                        <input
+                          type="email"
+                          value={task.notificationEmail || ''}
+                          onChange={(e) => updateTaskLocal(task.id, { notificationEmail: e.target.value })}
+                          className="w-full p-2 border rounded text-sm"
+                          placeholder="your-email@example.com"
+                        />
                       </div>
 
                       {/* 自定义提示词（直接保存，不需要独立按钮） */}

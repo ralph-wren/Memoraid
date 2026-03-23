@@ -788,15 +788,16 @@ const selectRandomTemplate = async (): Promise<boolean> => {
         if (panelCards.length >= 3) cards = panelCards;
     }
 
-    // 随机选择一个
-    const randomIndex = Math.floor(Math.random() * cards.length);
+    // 随机选择一个（跳过第一个模板）
+    // 如果只有1个模板，则选择它；否则从第2个开始随机选择
+    const randomIndex = cards.length === 1 ? 0 : Math.floor(Math.random() * (cards.length - 1)) + 1;
     const target = cards[randomIndex];
 
     // 尝试提取模板名（如果有）
     const nameEl = target.querySelector('[class*="title"], [class*="name"], h4, h3, span');
     const templateName = (nameEl?.textContent || '').trim() || `第 ${randomIndex + 1} 个模板`;
 
-    logger.log(`找到 ${cards.length} 个模板，随机选择: ${templateName}`, 'action');
+    logger.log(`找到 ${cards.length} 个模板，随机选择: ${templateName}（跳过第1个）`, 'action');
 
     // 点击前确保在视口内
     try {
