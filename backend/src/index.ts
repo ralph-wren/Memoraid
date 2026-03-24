@@ -9176,6 +9176,7 @@ export default {
         let currentTab = 'articles'; // 当前Tab：articles、tasks 或 recharge
         let userEmail = '';
         let selectedAmount = 9.9; // 修复：默认选中第一个套餐9.9元
+        let logsAutoRefreshTimer = null; // 执行记录自动刷新定时器
         
         // 分页状态（仅文章列表和充值记录需要分页）
         let articlesPage = 1;
@@ -9716,6 +9717,9 @@ export default {
                 const logs = data.logs || [];
                 logsTotalCount = data.total || 0;
                 
+                // 检查是否有执行中的任务
+                const hasRunningTask = logs.some(log => log.status === 'running');
+                
                 // 构建弹窗内容
                 let modalContent = '<div style="padding:20px">';
                 modalContent += '<h3 style="margin:0 0 16px;font-size:18px;color:var(--text)">📋 ' + currentTaskName + ' - 执行记录</h3>';
@@ -9771,6 +9775,16 @@ export default {
                 // 显示弹窗
                 showModal(modalContent);
                 
+                // 如果有执行中的任务，5秒后自动刷新
+                if (hasRunningTask) {
+                    stopLogsAutoRefresh(); // 先停止之前的定时器
+                    logsAutoRefreshTimer = setTimeout(() => {
+                        loadTaskLogs();
+                    }, 5000);
+                } else {
+                    stopLogsAutoRefresh(); // 没有执行中的任务，停止自动刷新
+                }
+                
             } catch (e) {
                 console.error('加载执行记录失败:', e);
                 alert('加载执行记录失败，请稍后重试');
@@ -9783,6 +9797,14 @@ export default {
             if (page < 1 || page > totalPages) return;
             logsPage = page;
             loadTaskLogs();
+        }
+        
+        // 停止执行记录自动刷新
+        function stopLogsAutoRefresh() {
+            if (logsAutoRefreshTimer) {
+                clearTimeout(logsAutoRefreshTimer);
+                logsAutoRefreshTimer = null;
+            }
         }
         
         // 显示模态框
@@ -9816,6 +9838,8 @@ export default {
             if (overlay) {
                 overlay.style.display = 'none';
             }
+            // 停止执行记录自动刷新
+            stopLogsAutoRefresh();
         }
         
         // 渲染文章分页
