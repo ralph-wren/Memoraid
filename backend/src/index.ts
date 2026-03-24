@@ -577,6 +577,33 @@ function renderMarketingShell(args: {
       padding:10px 18px 10px 12px;
     }
     .btn-chrome:hover{transform:translateY(-1px);box-shadow:0 16px 32px rgba(2,6,23,.16)}
+    
+    /* GitHub 按钮样式 */
+    .btn-github{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width:40px;
+      height:40px;
+      border-radius:10px;
+      background:var(--bg-soft);
+      color:var(--text-3);
+      text-decoration:none;
+      transition:all 0.2s ease;
+      border:1px solid var(--border);
+    }
+    .btn-github:hover{
+      background:var(--bg);
+      color:var(--text);
+      transform:translateY(-1px);
+      box-shadow:0 4px 12px rgba(0,0,0,.08);
+    }
+    .btn-github svg{
+      width:20px;
+      height:20px;
+      display:block;
+    }
+    
     .btn-icon{
       width:28px;height:28px;border-radius:999px;
       display:inline-flex;align-items:center;justify-content:center;
@@ -586,6 +613,7 @@ function renderMarketingShell(args: {
     }
     .btn-icon svg{width:18px;height:18px;display:block}
     .btn-chrome:focus-visible,
+    .btn-github:focus-visible,
     .btn-ghost:focus-visible,
     .btn-primary:focus-visible,
     .nav-login:focus-visible,
@@ -877,6 +905,7 @@ function renderMarketingShell(args: {
 function renderMarketingNav(origin: string): string {
   const ASSETS_BASE = `${origin}/assets/memoraid`;
   const chromeIcon = renderChromeIconSvg();
+  const githubIcon = renderGithubIconSvg(); // 添加 GitHub 图标
   return `<header class="nav">
   <div class="container">
     <div class="nav-inner">
@@ -894,6 +923,9 @@ function renderMarketingNav(origin: string): string {
       <div class="nav-actions">
         <a class="nav-login" href="/login" data-auth-login>登录</a>
         <a class="nav-login" href="/user" data-auth-admin>个人中心</a>
+        <a class="btn-github" href="https://github.com/ralph-wren/Memoraid" target="_blank" rel="noreferrer" aria-label="访问 GitHub 仓库（新标签页打开）" title="GitHub 仓库">
+          ${githubIcon}
+        </a>
         <a class="btn btn-chrome" href="https://chromewebstore.google.com/detail/memoraid/leonoilddlplhmmahjmnendflfnlnlmg" target="_blank" rel="noreferrer" aria-label="免费添加到 Chrome（新标签页打开）">
           <span class="btn-icon">${chromeIcon}</span>
           <span>免费添加到 Chrome</span>
@@ -911,6 +943,13 @@ function renderChromeIconSvg(): string {
   <path fill="#34A853" d="M20.66 7A10 10 0 0 1 12 22l5.2-9.02A5 5 0 0 0 12 7h8.66z"/>
   <circle cx="12" cy="12" r="3.6" fill="#4285F4"/>
   <circle cx="12" cy="12" r="2" fill="#E8F0FE"/>
+</svg>`;
+}
+
+// GitHub 图标 SVG
+function renderGithubIconSvg(): string {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+  <path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
 </svg>`;
 }
 
