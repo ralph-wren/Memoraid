@@ -89,11 +89,66 @@ const CATEGORY_SOURCE_MAP: Record<ContentCategory, string[]> = {
 };
 
 /**
+ * 清理超时的任务（超过10分钟还在running状态的任务标记为失败）
+ */
+async function cleanupTimeoutTasks() {
+  try {
+    const settings = await getSettings();
+    const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+
+    // 构建认证 headers
+    const headers: Record<string, string> = {};
+    if (settings.sync?.token) {
+      headers['Authorization'] = `Bearer ${settings.sync.token}`;
+    } else if (settings.anonymousId) {
+      headers['X-Anonymous-ID'] = settings.anonymousId;
+    }
+
+    // 获取所有任务
+    const response = await fetch(`${backendUrl}/api/scheduled-tasks`, { headers });
+    if (!response.ok) return;
+
+    const data = await response.json();
+    const tasks = data.tasks || [];
+    const now = Date.now();
+    const TIMEOUT_MS = 10 * 60 * 1000; // 10分钟
+
+    // 检查每个任务，如果状态是running且超过10分钟，标记为失败
+    for (const task of tasks) {
+      if (task.lastRunStatus === 'running' && task.lastRunTime) {
+        const elapsed = now - task.lastRunTime;
+        if (elapsed > TIMEOUT_MS) {
+          console.log(`[Scheduler] 发现超时任务: ${task.name} (${task.id})，已运行 ${Math.round(elapsed / 1000 / 60)} 分钟`);
+          
+          // 更新任务状态为失败
+          await fetch(`${backendUrl}/api/scheduled-tasks/${task.id}/status`, {
+            method: 'PATCH',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              lastRunTime: task.lastRunTime,
+              lastRunStatus: 'failed',
+              lastRunError: '任务执行超时（超过10分钟未完成）',
+            }),
+          });
+
+          console.log(`[Scheduler] ✅ 已将超时任务标记为失败: ${task.name}`);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[Scheduler] 清理超时任务失败:', error);
+  }
+}
+
+/**
  * 初始化调度器
  * 在 background service worker 启动时调用
  */
 export async function initScheduler() {
   console.log('[Scheduler] 初始化定时任务调度器...');
+
+  // 先清理超时任务
+  await cleanupTimeoutTasks();
 
   // 创建一个每分钟触发的 alarm，用于检查是否有任务需要执行
   await chrome.alarms.create(CHECK_ALARM_NAME, {
@@ -120,6 +175,9 @@ async function handleAlarm(alarm: chrome.alarms.Alarm) {
   if (alarm.name !== CHECK_ALARM_NAME) return;
 
   console.log('[Scheduler] ⏰ Alarm 触发，开始检查任务...');
+
+  // 先清理超时任务
+  await cleanupTimeoutTasks();
 
   try {
     // 从后端 API 获取任务列表
@@ -398,9 +456,13 @@ async function executeTask(task: ScheduledTask) {
             
             if (!publishCompleted) {
               await taskLog(task.id, 'warn', `⚠️ ${platform} 发布超时（120秒），继续下一个平台`);
+              // 超时算作失败，抛出错误让外层catch处理
+              throw new Error(`${platform} 发布超时（可能需要重新登录）`);
             }
           } catch (e: any) {
             await taskLog(task.id, 'error', `❌ 发布到 ${platform} 失败: ${e.message}`);
+            // 发布失败，抛出错误让外层catch处理
+            throw e;
           }
         }
 

@@ -577,6 +577,33 @@ function renderMarketingShell(args: {
       padding:10px 18px 10px 12px;
     }
     .btn-chrome:hover{transform:translateY(-1px);box-shadow:0 16px 32px rgba(2,6,23,.16)}
+    
+    /* GitHub 按钮样式 */
+    .btn-github{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width:40px;
+      height:40px;
+      border-radius:10px;
+      background:var(--bg-soft);
+      color:var(--text-3);
+      text-decoration:none;
+      transition:all 0.2s ease;
+      border:1px solid var(--border);
+    }
+    .btn-github:hover{
+      background:var(--bg);
+      color:var(--text);
+      transform:translateY(-1px);
+      box-shadow:0 4px 12px rgba(0,0,0,.08);
+    }
+    .btn-github svg{
+      width:20px;
+      height:20px;
+      display:block;
+    }
+    
     .btn-icon{
       width:28px;height:28px;border-radius:999px;
       display:inline-flex;align-items:center;justify-content:center;
@@ -586,6 +613,7 @@ function renderMarketingShell(args: {
     }
     .btn-icon svg{width:18px;height:18px;display:block}
     .btn-chrome:focus-visible,
+    .btn-github:focus-visible,
     .btn-ghost:focus-visible,
     .btn-primary:focus-visible,
     .nav-login:focus-visible,
@@ -877,6 +905,7 @@ function renderMarketingShell(args: {
 function renderMarketingNav(origin: string): string {
   const ASSETS_BASE = `${origin}/assets/memoraid`;
   const chromeIcon = renderChromeIconSvg();
+  const githubIcon = renderGithubIconSvg(); // 添加 GitHub 图标
   return `<header class="nav">
   <div class="container">
     <div class="nav-inner">
@@ -894,6 +923,9 @@ function renderMarketingNav(origin: string): string {
       <div class="nav-actions">
         <a class="nav-login" href="/login" data-auth-login>登录</a>
         <a class="nav-login" href="/user" data-auth-admin>个人中心</a>
+        <a class="btn-github" href="https://github.com/ralph-wren/Memoraid" target="_blank" rel="noreferrer" aria-label="访问 GitHub 仓库（新标签页打开）" title="GitHub 仓库">
+          ${githubIcon}
+        </a>
         <a class="btn btn-chrome" href="https://chromewebstore.google.com/detail/memoraid/leonoilddlplhmmahjmnendflfnlnlmg" target="_blank" rel="noreferrer" aria-label="免费添加到 Chrome（新标签页打开）">
           <span class="btn-icon">${chromeIcon}</span>
           <span>免费添加到 Chrome</span>
@@ -911,6 +943,13 @@ function renderChromeIconSvg(): string {
   <path fill="#34A853" d="M20.66 7A10 10 0 0 1 12 22l5.2-9.02A5 5 0 0 0 12 7h8.66z"/>
   <circle cx="12" cy="12" r="3.6" fill="#4285F4"/>
   <circle cx="12" cy="12" r="2" fill="#E8F0FE"/>
+</svg>`;
+}
+
+// GitHub 图标 SVG
+function renderGithubIconSvg(): string {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+  <path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.17 6.839 9.49.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.167 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
 </svg>`;
 }
 
@@ -1528,32 +1567,174 @@ function renderMarketingPricing(origin: string): string {
   </div>
 </section>
 
+<!-- 充值弹窗样式 -->
+<style>
+/* 充值弹窗 - 与个人中心样式保持一致 */
+.modal-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    opacity: 0; pointer-events: none; transition: opacity 0.3s;
+}
+.modal-overlay.active { opacity: 1; pointer-events: auto; }
+
+.modal {
+    background: #ffffff;
+    padding: 0;
+    border-radius: 24px;
+    max-width: 480px;
+    width: 90%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    transform: translateY(20px);
+    transition: transform 0.3s;
+    overflow: hidden;
+}
+.modal-overlay.active .modal { transform: translateY(0); }
+
+.modal-header {
+    padding: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #eef2f7;
+    background: #f8fafc;
+}
+.modal-title {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: #111827;
+}
+.close-btn {
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 50%;
+    color: #9ca3af;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.close-btn:hover {
+    background: rgba(0,0,0,0.05);
+    color: #111827;
+}
+
+.modal-body {
+    padding: 24px;
+}
+
+.plan-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+}
+.plan-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 16px 8px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.plan-card:hover {
+    border-color: #2563eb;
+    background: rgba(37,99,235,0.05);
+}
+.plan-card.active {
+    border-color: #2563eb;
+    background: rgba(37,99,235,0.1);
+    box-shadow: 0 0 0 1px #2563eb;
+}
+.plan-amount {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #111827;
+    margin-bottom: 4px;
+}
+.plan-quota {
+    font-size: 0.9rem;
+    color: #6b7280;
+}
+
+.btn-confirm-pay {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #0f172a 0%, #334155 100%);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-confirm-pay:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(15,23,42,0.3);
+}
+.btn-confirm-pay:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.pay-step-2 {
+    text-align: center;
+}
+</style>
+
 <!-- 充值弹窗 -->
-<div id="pricingRechargeModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:9999;align-items:center;justify-content:center;padding:20px">
-  <div style="background:white;border-radius:16px;max-width:400px;width:100%;padding:32px;position:relative">
-    <div style="position:absolute;top:16px;right:16px;cursor:pointer;font-size:24px;color:#9ca3af" onclick="closePricingRecharge()">×</div>
-    
-    <div id="pricingPayStep1" style="display:block">
-      <h3 style="margin:0 0 8px;font-size:20px;font-weight:600">充值 <span id="pricingAmount"></span> 元</h3>
-      <p style="margin:0 0 24px;color:#6b7280;font-size:14px">获得 <span id="pricingQuota"></span> 额度</p>
-      
-      <div style="text-align:center;margin-bottom:24px">
-        <img id="pricingQrCode" src="" style="width:200px;height:200px;border:1px solid #e5e7eb;border-radius:8px">
+<div class="modal-overlay" id="pricingRechargeModal" onclick="if(event.target === this) closePricingRecharge()">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">充值付费额度</div>
+      <div class="close-btn" onclick="closePricingRecharge()">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </div>
-      
-      <div style="text-align:center;color:#6b7280;font-size:14px;margin-bottom:16px">
-        <p style="margin:0 0 8px">请使用微信扫码支付</p>
-        <p id="pricingPaymentStatus" style="margin:0;color:#10b981">系统会自动检查付款状态...</p>
-      </div>
-      
-      <button onclick="checkPricingPayment()" class="btn btn-primary" style="width:100%">我已完成支付</button>
     </div>
-    
-    <div id="pricingPayStep2" style="display:none;text-align:center">
-      <div style="font-size:48px;margin-bottom:16px">✅</div>
-      <h3 style="margin:0 0 8px;font-size:20px;font-weight:600">支付成功！</h3>
-      <p style="margin:0 0 24px;color:#6b7280">额度已到账，请<a href="/user" style="color:#3b82f6">登录</a>后使用</p>
-      <button onclick="closePricingRecharge()" class="btn btn-ghost" style="width:100%">关闭</button>
+    <div class="modal-body">
+      <!-- 步骤1：选择充值金额 -->
+      <div id="pricingPayStep0" style="display:block;">
+        <div style="margin-bottom:16px;font-weight:600;color:#111827;font-size:0.95rem;">选择充值套餐</div>
+        <div class="plan-grid">
+          <div class="plan-card active" onclick="selectPricingPlan(9.9, 30, this)">
+            <div class="plan-amount">¥9.9</div>
+            <div class="plan-quota">30篇</div>
+          </div>
+          <div class="plan-card" onclick="selectPricingPlan(29.9, 100, this)">
+            <div class="plan-amount">¥29.9</div>
+            <div class="plan-quota">100篇</div>
+          </div>
+          <div class="plan-card" onclick="selectPricingPlan(49.9, 200, this)">
+            <div class="plan-amount">¥49.9</div>
+            <div class="plan-quota">200篇</div>
+          </div>
+        </div>
+        <button class="btn-confirm-pay" onclick="createPricingOrder(this)">立即支付</button>
+      </div>
+
+      <!-- 步骤2：展示虎皮椒支付二维码 -->
+      <div class="pay-step-2" id="pricingPayStep2" style="display:none;">
+        <div style="text-align: center; margin-bottom: 12px; font-weight: 600; font-size: 0.95rem; color: #111827;">
+          请使用微信支付完成付款
+        </div>
+
+        <div style="max-width: 200px; margin: 0 auto;">
+          <img id="pricingQrCode" src="" style="width: 100%; border-radius: 8px; border: 1px solid #eef2f7; background: white; padding: 8px;">
+        </div>
+
+        <div id="pricingPaymentStatus" style="text-align:center;color:#6b7280;font-size:0.95rem;line-height:1.8;margin:20px 0 12px;">
+          系统会自动检查付款状态，请稍等...
+        </div>
+
+        <button class="btn-confirm-pay" id="pricingCheckPaymentBtn" onclick="checkPricingPaymentStatus(this)">未自动到账？点此刷新状态</button>
+        <div style="text-align: center; margin-top: 12px;">
+          <span onclick="resetPricingPayment()" style="font-size: 0.85rem; color: #9ca3af; cursor: pointer; text-decoration: underline;">选择其他金额</span>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1561,70 +1742,135 @@ function renderMarketingPricing(origin: string): string {
 <script>
 let pricingOrderId = null;
 let pricingPollTimer = null;
+let pricingSelectedAmount = 9.9;
+let pricingSelectedQuota = 30;
 
-// 打开充值弹窗
-async function openPricingRecharge(amount, quota) {
+// 选择套餐
+function selectPricingPlan(amount, quota, el) {
+  pricingSelectedAmount = amount;
+  pricingSelectedQuota = quota;
+  document.querySelectorAll('#pricingRechargeModal .plan-card').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+}
+
+// 打开充值弹窗（从套餐按钮调用）- 修改：直接打开弹窗，不创建订单
+function openPricingRecharge(amount, quota) {
+  pricingSelectedAmount = amount;
+  pricingSelectedQuota = quota;
+  
+  // 设置选中状态
+  const cards = document.querySelectorAll('#pricingRechargeModal .plan-card');
+  cards.forEach(card => card.classList.remove('active'));
+  if (amount === 9.9) cards[0].classList.add('active');
+  else if (amount === 29.9) cards[1].classList.add('active');
+  else if (amount === 49.9) cards[2].classList.add('active');
+  
+  // 重置支付状态
+  resetPricingPayment();
+  
+  // 显示弹窗
+  document.getElementById('pricingRechargeModal').classList.add('active');
+}
+
+// 创建订单 - 修改：与个人中心逻辑保持一致
+async function createPricingOrder(btn) {
   try {
     // 获取token（如果用户已登录）
     const token = localStorage.getItem('memoraid_token');
-    const headers = {
-      'Content-Type': 'application/json'
-    };
     
-    // 如果有token，添加到请求头
-    if (token) {
-      headers['Authorization'] = 'Bearer ' + token;
+    // 未登录时跳转到登录页面
+    if (!token) {
+      alert('请先登录后再充值');
+      window.location.href = '/login';
+      return;
     }
+    
+    btn.disabled = true;
+    btn.style.opacity = '0.7';
+    
+    // 更新状态提示
+    updatePricingPaymentStatus('正在创建支付订单...', false);
     
     // 创建订单
     const res = await fetch('/api/payment/create', {
       method: 'POST',
-      headers: headers,
-      body: JSON.stringify({ amount: amount })
+      headers: {
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ amount: pricingSelectedAmount })
     });
     
     const data = await res.json();
     
-    if (!res.ok) {
-      if (res.status === 401) {
-        // 未登录，跳转到登录页面
-        alert('请先登录后再充值');
-        window.location.href = '/login';
-        return;
-      }
+    if (!res.ok || data.error) {
       alert('创建订单失败: ' + (data.error || '未知错误'));
+      btn.disabled = false;
+      btn.style.opacity = '1';
       return;
     }
     
-    // 检查是否有二维码
-    if (!data.paymentQrcode && !data.qrcode) {
-      alert('获取支付二维码失败');
-      return;
-    }
-    
-    // 订单创建成功，设置数据
+    // 订单创建成功，保存订单ID和二维码
     pricingOrderId = data.orderId;
-    document.getElementById('pricingAmount').textContent = amount;
-    document.getElementById('pricingQuota').textContent = quota;
-    document.getElementById('pricingQrCode').src = data.paymentQrcode || data.qrcode || '';
+    const qrcodeUrl = data.paymentQrcode || data.paymentUrl || '';
     
-    // 显示弹窗
-    document.getElementById('pricingRechargeModal').style.display = 'flex';
-    document.getElementById('pricingPayStep1').style.display = 'block';
-    document.getElementById('pricingPayStep2').style.display = 'none';
+    // 预加载二维码图片
+    await preloadPricingQrcode(qrcodeUrl);
+    
+    // 设置二维码
+    document.getElementById('pricingQrCode').src = qrcodeUrl;
+    
+    // 切换到支付步骤
+    document.getElementById('pricingPayStep0').style.display = 'none';
+    document.getElementById('pricingPayStep2').style.display = 'block';
+    
+    // 更新状态提示
+    updatePricingPaymentStatus('系统会自动检查付款状态，请稍等...', false);
     
     // 开始轮询支付状态
     startPricingPaymentPolling();
   } catch (e) {
-    alert('创建订单失败: ' + e.message);
+    console.error('创建订单错误:', e);
+    alert('网络错误，请稍后重试');
+  } finally {
+    btn.disabled = false;
+    btn.style.opacity = '1';
   }
 }
 
 // 关闭充值弹窗
 function closePricingRecharge() {
-  document.getElementById('pricingRechargeModal').style.display = 'none';
+  document.getElementById('pricingRechargeModal').classList.remove('active');
+  resetPricingPayment();
+}
+
+// 重置支付流程 - 修改：与个人中心逻辑保持一致
+function resetPricingPayment() {
   stopPricingPaymentPolling();
   pricingOrderId = null;
+  document.getElementById('pricingPayStep0').style.display = 'block';
+  document.getElementById('pricingPayStep2').style.display = 'none';
+  document.getElementById('pricingQrCode').src = '';
+  document.getElementById('pricingPaymentStatus').textContent = '系统会自动检查付款状态，请稍等...';
+  document.getElementById('pricingPaymentStatus').style.color = '#64748b';
+  document.getElementById('pricingCheckPaymentBtn').disabled = false;
+}
+
+// 更新支付状态提示
+function updatePricingPaymentStatus(text, isSuccess) {
+  const statusEl = document.getElementById('pricingPaymentStatus');
+  statusEl.textContent = text;
+  statusEl.style.color = isSuccess ? '#059669' : '#64748b';
+}
+
+// 预加载二维码图片
+function preloadPricingQrcode(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(url);
+    image.onerror = () => reject(new Error('支付二维码加载失败'));
+    image.src = url;
+  });
 }
 
 // 开始轮询支付状态
@@ -1641,34 +1887,74 @@ function stopPricingPaymentPolling() {
   }
 }
 
-// 检查支付状态
+// 获取支付状态
+async function fetchPricingPaymentStatus() {
+  if (!pricingOrderId) return null;
+  
+  const res = await fetch('/api/payment/status?orderId=' + encodeURIComponent(pricingOrderId));
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || '查询支付状态失败');
+  }
+  return data;
+}
+
+// 处理支付成功
+async function handlePricingPaidOrder(data) {
+  stopPricingPaymentPolling();
+  updatePricingPaymentStatus('支付成功，额度已自动到账。', true);
+  document.getElementById('pricingCheckPaymentBtn').disabled = true;
+  
+  // 1.5秒后关闭弹窗
+  setTimeout(() => {
+    closePricingRecharge();
+    // 如果在用户中心页面，刷新数据
+    if (window.location.pathname === '/user' && typeof loadData === 'function') {
+      loadData();
+    }
+  }, 1500);
+}
+
+// 检查支付状态（自动轮询）
 async function checkPricingPayment() {
   if (!pricingOrderId) return;
   
   try {
-    const token = localStorage.getItem('memoraid_token');
-    const headers = {};
-    
-    if (token) {
-      headers['Authorization'] = 'Bearer ' + token;
+    const data = await fetchPricingPaymentStatus();
+    if (data && data.isPaid) {
+      await handlePricingPaidOrder(data);
     }
-    
-    // 修复：使用查询参数而不是路径参数
-    const res = await fetch('/api/payment/status?orderId=' + pricingOrderId, {
-      headers: headers
-    });
-    const data = await res.json();
-    
-    // 修复：检查isPaid字段
-    if (data.isPaid) {
-      stopPricingPaymentPolling();
-      document.getElementById('pricingPayStep1').style.display = 'none';
-      document.getElementById('pricingPayStep2').style.display = 'block';
-    } else if (data.status === 'pending') {
-      document.getElementById('pricingPaymentStatus').textContent = '等待支付中...';
+  } catch (e) {
+    console.error('轮询支付状态失败:', e);
+  }
+}
+
+// 手动检查支付状态（点击按钮）
+async function checkPricingPaymentStatus(btn) {
+  if (!pricingOrderId) {
+    alert('订单号未找到，请刷新重试');
+    return;
+  }
+
+  const originalText = btn.textContent;
+  btn.textContent = '检查中...';
+  btn.disabled = true;
+  btn.style.opacity = '0.7';
+  
+  try {
+    const data = await fetchPricingPaymentStatus();
+    if (data && data.isPaid) {
+      await handlePricingPaidOrder(data);
+    } else {
+      updatePricingPaymentStatus('系统暂未检测到付款成功，正在继续自动检查，请稍等...', false);
     }
   } catch (e) {
     console.error('检查支付状态失败:', e);
+    alert('检查失败: ' + e.message);
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
+    btn.style.opacity = '1';
   }
 }
 
@@ -1676,7 +1962,7 @@ async function checkPricingPayment() {
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
     const modal = document.getElementById('pricingRechargeModal');
-    if (modal && modal.style.display === 'flex') {
+    if (modal && modal.classList.contains('active')) {
       closePricingRecharge();
     }
   }
@@ -9036,8 +9322,21 @@ export default {
                     
                     <!-- 定时任务内容 -->
                     <section class="tab-content" id="tasksContent">
-                        <div class="table-wrapper" id="tasksTable">
-                            <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+                        <!-- 定时任务列表区域 -->
+                        <div style="margin-bottom:32px">
+                            <h3 style="margin:0 0 16px;font-size:18px;font-weight:600;color:var(--text)">📋 我的定时任务</h3>
+                            <div class="table-wrapper" id="tasksTable">
+                                <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+                            </div>
+                        </div>
+                        
+                        <!-- 执行记录区域 -->
+                        <div>
+                            <h3 style="margin:0 0 16px;font-size:18px;font-weight:600;color:var(--text)">📊 执行记录</h3>
+                            <div class="table-wrapper" id="executionLogsTable">
+                                <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+                            </div>
+                            <div class="pagination" id="executionLogsPagination"></div>
                         </div>
                     </section>
                     
@@ -9176,6 +9475,7 @@ export default {
         let currentTab = 'articles'; // 当前Tab：articles、tasks 或 recharge
         let userEmail = '';
         let selectedAmount = 9.9; // 修复：默认选中第一个套餐9.9元
+        let logsAutoRefreshTimer = null; // 执行记录自动刷新定时器
         
         // 分页状态（仅文章列表和充值记录需要分页）
         let articlesPage = 1;
@@ -9185,6 +9485,9 @@ export default {
         let rechargePageSize = 20;
         let rechargeTotalCount = 0;
         let tasksTotalCount = 0; // 定时任务总数（不需要分页）
+        let executionLogsPage = 1; // 执行记录当前页
+        let executionLogsPageSize = 20; // 执行记录每页数量
+        let executionLogsTotalCount = 0; // 执行记录总数
         
         // 检查登录状态
         async function checkAuth() {
@@ -9484,6 +9787,9 @@ export default {
                 
                 renderScheduledTasks(tasks);
                 
+                // 加载执行记录
+                loadExecutionLogs();
+                
                 // 注意：taskCount元素在新布局中已移除，不再需要更新
                 
             } catch (e) {
@@ -9685,7 +9991,104 @@ export default {
                 '</table></div>';
         }
         
-        // 执行记录分页变量
+        // 加载所有执行记录（不按任务筛选，显示所有任务的执行记录）
+        async function loadExecutionLogs() {
+            try {
+                const token = localStorage.getItem('memoraid_token');
+                if (!token) return;
+                
+                const offset = (executionLogsPage - 1) * executionLogsPageSize;
+                const headers = { 'Authorization': 'Bearer ' + token };
+                
+                // 调用API获取所有执行记录（不传task_id参数）
+                const res = await fetch(API_BASE + '/api/task-execution-logs?limit=' + executionLogsPageSize + '&offset=' + offset, { headers });
+                const data = await res.json();
+                
+                const logs = data.logs || [];
+                executionLogsTotalCount = data.total || 0;
+                
+                renderExecutionLogs(logs);
+                renderExecutionLogsPagination();
+                
+            } catch (e) {
+                console.error('加载执行记录失败:', e);
+                document.getElementById('executionLogsTable').innerHTML = 
+                    '<div class="empty-state"><div class="empty-icon">📊</div><p class="empty-text">暂无执行记录</p></div>';
+            }
+        }
+        
+        // 渲染执行记录表格
+        function renderExecutionLogs(logs) {
+            if (!logs.length) {
+                document.getElementById('executionLogsTable').innerHTML = 
+                    '<div class="empty-state"><div class="empty-icon">📊</div><p class="empty-text">暂无执行记录</p></div>';
+                return;
+            }
+            
+            const rows = logs.map(log => {
+                const statusColor = log.status === 'success' ? '#10b981' : 
+                                  log.status === 'failed' ? '#ef4444' : '#f59e0b';
+                const statusText = log.status === 'success' ? '✅ 成功' : 
+                                 log.status === 'failed' ? '❌ 失败' : '⏳ 执行中';
+                const duration = log.duration ? Math.round(log.duration / 1000) + 's' : '-';
+                
+                let errorCell = '';
+                if (log.error_message) {
+                    errorCell = '<div style="margin-top:4px;padding:4px 8px;background:#fef2f2;border-left:3px solid #ef4444;border-radius:4px">' +
+                        '<span style="color:#dc2626;font-size:0.85rem">⚠️ ' + log.error_message + '</span>' +
+                        '</div>';
+                }
+                
+                return '<tr>' +
+                    '<td style="min-width:120px"><span style="font-weight:500;color:var(--text)">' + (log.task_name || '未命名任务') + '</span></td>' +
+                    '<td style="min-width:140px" class="time-cell">' + formatTime(Math.floor(log.started_at / 1000)) + '</td>' +
+                    '<td style="min-width:90px"><span class="stat-pill" style="background:' + statusColor + '20;color:' + statusColor + '">' + statusText + '</span>' + errorCell + '</td>' +
+                    '<td style="min-width:70px;text-align:center">' + (log.articles_generated || 0) + ' 篇</td>' +
+                    '<td style="min-width:70px;text-align:center">' + (log.articles_published || 0) + ' 篇</td>' +
+                    '<td style="min-width:70px;text-align:center">' + duration + '</td>' +
+                '</tr>';
+            }).join('');
+            
+            document.getElementById('executionLogsTable').innerHTML = 
+                '<div style="overflow-x:auto"><table class="data-table" style="width:100%">' +
+                    '<thead><tr>' +
+                        '<th style="min-width:120px">任务名称</th>' +
+                        '<th style="min-width:140px">执行时间</th>' +
+                        '<th style="min-width:90px">状态</th>' +
+                        '<th style="min-width:70px">生成</th>' +
+                        '<th style="min-width:70px">发布</th>' +
+                        '<th style="min-width:70px">耗时</th>' +
+                    '</tr></thead>' +
+                    '<tbody>' + rows + '</tbody>' +
+                '</table></div>';
+        }
+        
+        // 渲染执行记录分页
+        function renderExecutionLogsPagination() {
+            const totalPages = Math.ceil(executionLogsTotalCount / executionLogsPageSize);
+            if (totalPages <= 1) {
+                document.getElementById('executionLogsPagination').innerHTML = '';
+                return;
+            }
+            
+            let html = '<div class="pagination-controls">';
+            html += '<button class="pagination-btn" onclick="changeExecutionLogsPage(' + (executionLogsPage - 1) + ')" ' + (executionLogsPage === 1 ? 'disabled' : '') + '>上一页</button>';
+            html += '<span class="pagination-info">第 ' + executionLogsPage + ' / ' + totalPages + ' 页（共 ' + executionLogsTotalCount + ' 条）</span>';
+            html += '<button class="pagination-btn" onclick="changeExecutionLogsPage(' + (executionLogsPage + 1) + ')" ' + (executionLogsPage === totalPages ? 'disabled' : '') + '>下一页</button>';
+            html += '</div>';
+            
+            document.getElementById('executionLogsPagination').innerHTML = html;
+        }
+        
+        // 切换执行记录页码
+        function changeExecutionLogsPage(page) {
+            const totalPages = Math.ceil(executionLogsTotalCount / executionLogsPageSize);
+            if (page < 1 || page > totalPages) return;
+            executionLogsPage = page;
+            loadExecutionLogs();
+        }
+        
+        // 执行记录分页变量（用于单个任务的执行记录弹窗）
         let currentTaskId = '';
         let currentTaskName = '';
         let logsPage = 1;
@@ -9715,6 +10118,9 @@ export default {
                 
                 const logs = data.logs || [];
                 logsTotalCount = data.total || 0;
+                
+                // 检查是否有执行中的任务
+                const hasRunningTask = logs.some(log => log.status === 'running');
                 
                 // 构建弹窗内容
                 let modalContent = '<div style="padding:20px">';
@@ -9771,6 +10177,16 @@ export default {
                 // 显示弹窗
                 showModal(modalContent);
                 
+                // 如果有执行中的任务，5秒后自动刷新
+                if (hasRunningTask) {
+                    stopLogsAutoRefresh(); // 先停止之前的定时器
+                    logsAutoRefreshTimer = setTimeout(() => {
+                        loadTaskLogs();
+                    }, 5000);
+                } else {
+                    stopLogsAutoRefresh(); // 没有执行中的任务，停止自动刷新
+                }
+                
             } catch (e) {
                 console.error('加载执行记录失败:', e);
                 alert('加载执行记录失败，请稍后重试');
@@ -9783,6 +10199,14 @@ export default {
             if (page < 1 || page > totalPages) return;
             logsPage = page;
             loadTaskLogs();
+        }
+        
+        // 停止执行记录自动刷新
+        function stopLogsAutoRefresh() {
+            if (logsAutoRefreshTimer) {
+                clearTimeout(logsAutoRefreshTimer);
+                logsAutoRefreshTimer = null;
+            }
         }
         
         // 显示模态框
@@ -9816,6 +10240,8 @@ export default {
             if (overlay) {
                 overlay.style.display = 'none';
             }
+            // 停止执行记录自动刷新
+            stopLogsAutoRefresh();
         }
         
         // 渲染文章分页
