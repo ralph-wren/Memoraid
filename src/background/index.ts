@@ -2565,7 +2565,8 @@ ${platformPrompt}
     }
 
     // 确保有标题
-    const hasH1 = /^\s*#\s+/.test(summary);
+    // 【修复】支持frontmatter,检查整个文档中是否有H1标题,而不仅仅是开头
+    const hasH1 = /^#\s+/m.test(summary);  // 使用多行模式,匹配任意行开头的H1
 
     if (!hasH1) {
       const genericTitles = ['微博搜索', 'Weibo Search', '搜索', 'Search', '主页', 'Home'];

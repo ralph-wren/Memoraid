@@ -874,22 +874,66 @@ ${task.customPrompt ? `\n选题要求：${task.customPrompt}\n` : '\n选题要�
     // 根据 URL 匹配文章
     await taskLog(task.id, 'info', `🔍 开始匹配 ${selections.length} 个 URL...`);
     
+    // 【修复】改进URL规范化函数，处理编码差异
+    const normalizeUrl = (url: string): string => {
+      try {
+        // 先完全解码URL，再重新编码，统一编码格式
+        let decoded = url;
+        // 多次解码，确保完全解码（有些URL可能被多次编码）
+        while (decoded !== decodeURIComponent(decoded)) {
+          decoded = decodeURIComponent(decoded);
+        }
+        
+        const urlObj = new URL(decoded);
+        
+        // 提取关键参数(如微博的 q 参数)
+        const q = urlObj.searchParams.get('q');
+        if (q) {
+          // 返回解码后的 q 参数作为唯一标识
+          return q;
+        }
+        
+        // 如果没有 q 参数，返回完整的路径+参数（解码后）
+        return urlObj.pathname + urlObj.search;
+      } catch {
+        // 如果URL解析失败，返回原始URL
+        return url;
+      }
+    };
+    
     const selectedArticles = selections
       .map((sel, idx) => {
-        // 在原始列表中查找匹配的 URL
-        const article = articles.find(a => a.url === sel.url);
+        // 1. 先尝试精确匹配
+        let article = articles.find(a => a.url === sel.url);
+        let matchType = 'exact';
+        
+        // 2. 如果精确匹配失败，尝试规范化后匹配
         if (!article) {
-          // 如果没有匹配到，记录日志方便调试
-          taskLog(task.id, 'warn', `⚠️ [${idx + 1}] 无法匹配 URL: ${sel.url}`);
+          const normalizedSelUrl = normalizeUrl(sel.url);
+          article = articles.find(a => normalizeUrl(a.url) === normalizedSelUrl);
+          matchType = 'normalized';
+          
+          if (article) {
+            taskLog(task.id, 'info', `✅ [${idx + 1}] 规范化匹配成功: ${article.title}`);
+          }
+        }
+        
+        if (!article) {
+          // 如果还是没有匹配到，记录详细的调试信息
+          taskLog(task.id, 'warn', `⚠️ [${idx + 1}] 无法匹配 URL`);
+          taskLog(task.id, 'info', `   AI返回: ${sel.url}`);
+          taskLog(task.id, 'info', `   规范化: ${normalizeUrl(sel.url)}`);
+          
           // 打印前 3 个热榜 URL 作为参考
           if (idx === 0) {
             taskLog(task.id, 'info', `📋 热榜前 3 个 URL 示例:`);
             articles.slice(0, 3).forEach((a, i) => {
-              taskLog(task.id, 'info', `  ${i + 1}. ${a.url}`);
+              taskLog(task.id, 'info', `  ${i + 1}. 原始: ${a.url}`);
+              taskLog(task.id, 'info', `      规范: ${normalizeUrl(a.url)}`);
             });
           }
         } else {
-          taskLog(task.id, 'success', `✅ [${idx + 1}] 匹配成功: ${article.title}`);
+          taskLog(task.id, 'success', `✅ [${idx + 1}] ${matchType === 'exact' ? '精确' : '规范化'}匹配成功: ${article.title}`);
         }
         return article ? { ...article, reason: sel.reason } : null;
       })

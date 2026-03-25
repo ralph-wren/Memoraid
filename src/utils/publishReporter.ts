@@ -194,10 +194,13 @@ export class PublishReporter {
     } catch {}
 
     const title = this.getCurrentTitle();
+    // 【修复】不再使用 document.title 作为后备,因为它通常是平台名称(如"公众号"、"知乎")
+    // 使用更有意义的默认值(包含平台名称和时间戳)
+    const finalTitle = title || `${this.options.platform}文章_${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
 
     reportArticlePublish({
       platform: this.options.platform,
-      title: title || document.title || '未命名文章',
+      title: finalTitle,
       url: publishedUrl,
       status: 'published',
       extra: { trigger }

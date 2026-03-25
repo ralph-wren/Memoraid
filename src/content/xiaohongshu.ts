@@ -1366,7 +1366,18 @@ const clickPublish = async (): Promise<boolean> => {
     // 注意：不清除 sessionStorage 数据，让 URL 监听器在最终上报后再清除
     try {
         const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
-        const finalTitle = pendingTitle || '小红书文章';
+        // 【修复】尝试从页面中提取标题,避免使用通用默认值
+        let finalTitle = pendingTitle;
+        if (!finalTitle) {
+            // 尝试从标题输入框获取
+            const titleInput = document.querySelector('input[placeholder*="标题"]') as HTMLInputElement;
+            if (titleInput && titleInput.value.trim()) {
+                finalTitle = titleInput.value.trim();
+            } else {
+                // 使用更有意义的默认值(包含时间戳)
+                finalTitle = `小红书笔记_${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
+            }
+        }
         
         // 读取 generatedId (重要:用于关联AI生成的记录)
         const generatedId = sessionStorage.getItem('memoraid_generated_id') || undefined;
@@ -1664,7 +1675,18 @@ const installPublishReporting = () => {
 
                 // 读取保存的数据
                 const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
-                const finalTitle = pendingTitle || '小红书文章';
+                // 【修复】尝试从页面中提取标题,避免使用通用默认值
+                let finalTitle = pendingTitle;
+                if (!finalTitle) {
+                    // 尝试从标题输入框获取
+                    const titleInput = document.querySelector('input[placeholder*="标题"]') as HTMLInputElement;
+                    if (titleInput && titleInput.value.trim()) {
+                        finalTitle = titleInput.value.trim();
+                    } else {
+                        // 使用更有意义的默认值(包含时间戳)
+                        finalTitle = `小红书笔记_${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`;
+                    }
+                }
                 const generatedId = sessionStorage.getItem('memoraid_generated_id') || undefined;
                 
                 // 读取 token 数据

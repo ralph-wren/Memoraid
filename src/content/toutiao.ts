@@ -1867,7 +1867,14 @@ const installPublishReporting = () => {
 
     // 优先使用缓存的标题
     const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
-    const finalTitle = (pendingTitle || getCurrentTitle() || document.title || '未命名文章').trim();
+    const currentTitle = getCurrentTitle();
+    // 【修复】不再使用 document.title,因为它在头条页面可能是通用名称
+    // 使用更有意义的默认值(包含时间戳)
+    const finalTitle = (
+        pendingTitle || 
+        currentTitle || 
+        `头条文章_${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
+    ).trim();
     
     // 读取 generatedId (重要:用于关联AI生成的记录)
     const generatedId = sessionStorage.getItem('memoraid_generated_id') || undefined;

@@ -4836,10 +4836,16 @@ const installPublishReporting = () => {
     // 1. 传入的 titleText
     // 2. 自动填充时保存的标题 (memoraid_pending_title)
     // 3. 当前页面标题输入框的值 (getCurrentTitle)
-    // 4. document.title
-    // 5. 默认值
+    // 4. 使用更有意义的默认值(包含时间戳)
+    // 【修复】不再使用 document.title,因为它在公众号页面就是"公众号"
     const pendingTitle = sessionStorage.getItem('memoraid_pending_title');
-    const finalTitle = (titleText || pendingTitle || getCurrentTitle() || document.title || '未命名文章').trim();
+    const currentTitle = getCurrentTitle();
+    const finalTitle = (
+        titleText || 
+        pendingTitle || 
+        currentTitle || 
+        `公众号文章_${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
+    ).trim();
     
     // 读取 token 数据
     const tokenUsageStr = sessionStorage.getItem('memoraid_token_usage');
