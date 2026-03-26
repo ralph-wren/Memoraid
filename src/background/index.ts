@@ -1612,6 +1612,12 @@ async function handlePublishToToutiao(payload: {
       }
     });
 
+    // 【修复】检查 chrome.tabs 是否可用（防止定时任务中 chrome API 未初始化）
+    if (!chrome || !chrome.tabs) {
+      console.error('[Background] chrome.tabs is not available');
+      throw new Error('Chrome API 未就绪，请稍后重试');
+    }
+
     const tab = await chrome.tabs.create({
       url: 'https://mp.toutiao.com/profile_v4/graphic/publish',
       active: true
@@ -1741,6 +1747,12 @@ async function handlePublishToZhihu(payload: {
         autoPublish // 传递自动发布标识（定时任务强制为 true）
       }
     });
+
+    // 【修复】检查 chrome.tabs 是否可用（防止定时任务中 chrome API 未初始化）
+    if (!chrome || !chrome.tabs) {
+      console.error('[Background] chrome.tabs is not available');
+      throw new Error('Chrome API 未就绪，请稍后重试');
+    }
 
     const tab = await chrome.tabs.create({
       url: 'https://zhuanlan.zhihu.com/write',
@@ -1874,6 +1886,12 @@ async function handlePublishToWeixin(payload: {
           break;
         }
       }
+    }
+    
+    // 【修复】检查 chrome.tabs 是否可用（防止定时任务中 chrome API 未初始化）
+    if (!chrome || !chrome.tabs) {
+      console.error('[Background] chrome.tabs is not available');
+      throw new Error('Chrome API 未就绪，请稍后重试');
     }
     
     // 如果没有找到 token，打开首页获取
@@ -2089,6 +2107,12 @@ async function handlePublishToXiaohongshu(payload: {
     // 4. 打开或激活小红书发布页面
     // 添加 from=tab_switch 参数确保页面显示"新的创作"按钮
     const publishUrl = 'https://creator.xiaohongshu.com/publish/publish?from=tab_switch&target=article';
+
+    // 【修复】检查 chrome.tabs 是否可用（防止定时任务中 chrome API 未初始化）
+    if (!chrome || !chrome.tabs) {
+      console.error('[Background] chrome.tabs is not available');
+      throw new Error('Chrome API 未就绪，请稍后重试');
+    }
 
     // 查找已有的小红书页面
     const existingTabs = await chrome.tabs.query({ url: '*://creator.xiaohongshu.com/*' });
