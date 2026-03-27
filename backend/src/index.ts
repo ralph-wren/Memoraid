@@ -138,16 +138,40 @@ function getXunhupayConfig(env: Env): { appId: string; appSecret: string; gatewa
 }
 
 async function getUserQuotaSnapshot(env: Env, userId: string): Promise<UserQuotaSnapshot> {
-  const quotaRow = await env.DB.prepare(`
-    SELECT
-      COALESCE(free_quota_remaining, 0) as free_quota,
-      COALESCE(paid_quota_remaining, 0) as paid_quota
-    FROM user_quotas
-    WHERE user_id = ?
-  `).bind(userId).first<{ free_quota?: number; paid_quota?: number }>();
-
-  const freeQuota = Number(quotaRow?.free_quota || 0);
-  const paidQuota = Number(quotaRow?.paid_quota || 0);
+  // 【修改2026-03-28】改为根据文章总数动态计算额度
+  // 1. 获取用户的免费额度上限和付费总额度
+  const user = await env.DB.prepare(`
+    SELECT provider FROM users WHERE id = ?
+  `).bind(userId).first<{ provider?: string }>();
+  
+  const freeLimit = (user?.provider === 'anonymous') ? 5 : 20;
+  
+  // 2. 获取付费总额度（累计充值）
+  const paidTotalRow = await env.DB.prepare(`
+    SELECT COALESCE(SUM(quota_amount), 0) as paid_total
+    FROM payment_orders
+    WHERE user_id = ? AND status IN ('paid', 'approved')
+  `).bind(userId).first<{ paid_total?: number }>();
+  
+  const paidTotal = Number(paidTotalRow?.paid_total || 0);
+  
+  // 3. 获取文章总数
+  const articleCountRow = await env.DB.prepare(`
+    SELECT COUNT(*) as total
+    FROM articles a
+    JOIN accounts ac ON a.account_id = ac.id
+    WHERE ac.user_id = ?
+  `).bind(userId).first<{ total?: number }>();
+  
+  const totalArticles = Number(articleCountRow?.total || 0);
+  
+  // 4. 计算剩余额度：前N篇算免费，超出部分算付费
+  const freeUsed = Math.min(totalArticles, freeLimit);
+  const freeQuota = freeLimit - freeUsed;
+  
+  const paidUsed = Math.max(0, totalArticles - freeLimit);
+  const paidQuota = paidTotal - paidUsed;
+  
   return {
     freeQuota,
     paidQuota,
@@ -3652,26 +3676,18 @@ export default {
 
         if (aiResponse.ok) {
             // 3. Log Usage (Only if successful)
-            // 【修复】AI聊天不扣除额度，只记录使用日志
-            // 额度扣除统一在 /api/articles/report 端点处理
+            // 【修复2026-03-27】AI聊天不记录额度使用
+            // 额度扣除统一在 /api/articles/report 端点处理，避免重复扣除
             try {
                 if (trackingType === 'user') {
-                    // 只记录免费额度使用日志，不扣除付费额度
-                    // 付费额度的扣除在文章报告时统一处理
-                    if (!hasPaidQuota) {
-                        // 没有付费额度，记录免费额度使用
-                        await env.DB.prepare(
-                            'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
-                        ).bind(userId, body.model).run();
-                        console.log(`[AI Chat] 已记录用户 ${userId} 的免费额度使用`);
-                    } else {
-                        console.log(`[AI Chat] 用户 ${userId} 使用付费额度，不在此处扣除（将在文章报告时扣除）`);
-                    }
+                    // 登录用户：AI聊天不记录使用，额度将在文章报告时统一扣除
+                    console.log(`[AI Chat] 用户 ${userId} AI聊天成功，额度将在文章报告时扣除`);
                 } else {
-                    // 匿名用户，记录免费额度使用
+                    // 匿名用户：记录免费额度使用（匿名用户没有文章上报功能）
                     await env.DB.prepare(
                         'INSERT INTO ai_usage_logs (anonymous_id, model) VALUES (?, ?)'
                     ).bind(anonymousId, body.model).run();
+                    console.log(`[AI Chat] 匿名用户 ${anonymousId} 已记录免费额度使用`);
                 }
             } catch (e) {
                 console.error('Failed to log AI usage:', e);
@@ -3922,52 +3938,22 @@ export default {
                 Math.floor(Date.now() / 1000)
             ).run();
             
-            // 【修复】只对 status='generated' 的新文章扣除额度
-            // 这样即使去重失败，'published' 状态的文章也不会重复扣除
-            if (!existingArticle && status === 'generated') {
+            // 【修复2026-03-27】兼容 generated 和 published 状态的新文章扣除额度
+            // 只要是新文章（不存在于数据库），无论状态是 generated 还是 published 都扣除额度
+            // 这样可以防止用户通过直接上报 published 状态绕过额度限制
+            if (!existingArticle) {
                 newArticlesCount++;
-                console.log(`[Article Report] 新生成的文章，将扣除额度: articleId=${articleId}`);
-            } else if (existingArticle) {
-                console.log(`[Article Report] 已存在文章，不扣除额度: articleId=${articleId}`);
-            } else if (status !== 'generated') {
-                console.log(`[Article Report] 非生成状态(${status})，不扣除额度: articleId=${articleId}`);
+                console.log(`[Article Report] 新文章(status=${status})，将扣除额度: articleId=${articleId}`);
+            } else {
+                console.log(`[Article Report] 已存在文章，不扣除额度: articleId=${articleId}, existingStatus=${existingArticle.status}`);
             }
         }
 
-        // 【新增】扣除额度 - 只为新文章扣除
+        // 【修改2026-03-28】不再在文章上报时扣除额度
+        // 额度统计改为在查询时根据文章总数动态计算
+        // 规则：前N篇（免费额度）算免费，超出部分算付费
         if (newArticlesCount > 0) {
-            console.log(`[Article Report] 准备扣除额度: newArticlesCount=${newArticlesCount}, paidQuota=${paidQuota}, userId=${userId}`);
-            
-            // 优先扣除付费额度，再扣除免费额度
-            if (paidQuota > 0) {
-                const deductFromPaid = Math.min(paidQuota, newArticlesCount);
-                await env.DB.prepare(
-                    'UPDATE user_quotas SET paid_quota_remaining = paid_quota_remaining - ? WHERE user_id = ?'
-                ).bind(deductFromPaid, userId).run();
-                
-                console.log(`[Article Report] 已扣除付费额度: ${deductFromPaid} 次`);
-                
-                const remainingToDeduct = newArticlesCount - deductFromPaid;
-                if (remainingToDeduct > 0) {
-                    // 记录免费额度使用
-                    for (let i = 0; i < remainingToDeduct; i++) {
-                        await env.DB.prepare(
-                            'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
-                        ).bind(userId, 'article-generation').run();
-                    }
-                    console.log(`[Article Report] 已扣除免费额度: ${remainingToDeduct} 次`);
-                }
-            } else {
-                // 全部从免费额度扣除
-                for (let i = 0; i < newArticlesCount; i++) {
-                    await env.DB.prepare(
-                        'INSERT INTO ai_usage_logs (user_id, model) VALUES (?, ?)'
-                    ).bind(userId, 'article-generation').run();
-                }
-                console.log(`[Article Report] 已扣除免费额度: ${newArticlesCount} 次`);
-            }
-        } else {
-            console.log(`[Article Report] 无新文章，不扣除额度`);
+            console.log(`[Article Report] 新增 ${newArticlesCount} 篇文章，额度将在查询时动态计算`);
         }
 
         // 【新增】记录Analytics数据点 - 文章发布统计
@@ -4475,6 +4461,8 @@ export default {
         let query = `
           SELECT u.id, u.email, u.provider, u.created_at, MAX(a.publish_time) as last_active,
           q.paid_quota_remaining,
+          -- 【新增2026-03-28】付费总额度：累计充值的总额度
+          (SELECT COALESCE(SUM(quota_amount), 0) FROM payment_orders po WHERE po.user_id = u.id AND po.status IN ('paid', 'approved')) as paid_quota_total,
           -- 只统计文章生成次数（从 ai_usage_logs 中筛选 model = 'article-generation' 的记录）
           (SELECT COUNT(*) FROM ai_usage_logs WHERE (user_id = u.id OR anonymous_id = u.id) AND model = 'article-generation') as ai_usage,
           -- 最近3天生成文章数
@@ -4532,6 +4520,12 @@ export default {
         if (sort === 'articles_3d') sortField = 'articles_3d';
         if (sort === 'articles_7d') sortField = 'articles_7d';
         if (sort === 'total_tokens') sortField = 'total_tokens'; // 新增：支持按消耗token排序
+        // 【新增2026-03-28】支持按累计文章数排序
+        if (sort === 'total_articles') sortField = 'total_articles';
+        // 【新增2026-03-28】支持按免费额度排序（需要动态计算）
+        // 免费额度剩余 = 免费上限 - min(文章总数, 免费上限)
+        // 匿名用户免费上限5，其他用户20
+        if (sort === 'free_quota') sortField = '(CASE WHEN u.provider = \'anonymous\' THEN 5 ELSE 20 END) - (CASE WHEN total_articles <= (CASE WHEN u.provider = \'anonymous\' THEN 5 ELSE 20 END) THEN total_articles ELSE (CASE WHEN u.provider = \'anonymous\' THEN 5 ELSE 20 END) END)';
 
         const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
         const nullsOrder = (sort === 'last_active' || sort === 'paid_quota') ? 'NULLS LAST' : '';
@@ -5461,8 +5455,11 @@ export default {
                                     <tr>
                                         <th>用户</th>
                                         <th>来源</th>
-                                        <th title="文章生成使用次数">免费额度</th>
-                                        <th class="sortable" id="sort-paid_quota" onclick="toggleSort('paid_quota')">付费额度</th>
+                                        <!-- 【修改2026-03-28】免费额度支持排序 -->
+                                        <th class="sortable" id="sort-free_quota" onclick="toggleSort('free_quota')" title="免费额度：剩余/总额度">免费额度</th>
+                                        <th class="sortable" id="sort-paid_quota" onclick="toggleSort('paid_quota')" title="付费额度：剩余/总充值">付费额度</th>
+                                        <!-- 【修改2026-03-28】累计文章支持排序 -->
+                                        <th class="sortable" id="sort-total_articles" onclick="toggleSort('total_articles')" title="累计生成的文章总数">累计文章</th>
                                         <!-- 新增：3日/7日文章数，支持排序 -->
                                         <th class="sortable" id="sort-articles_3d" onclick="toggleSort('articles_3d')" title="最近3天生成的文章数量">3日文章</th>
                                         <th class="sortable" id="sort-articles_7d" onclick="toggleSort('articles_7d')" title="最近7天生成的文章数量">7日文章</th>
@@ -5974,6 +5971,27 @@ export default {
                     if (tokens >= 1000) return (tokens / 1000).toFixed(1) + 'K';
                     return tokens.toString();
                 };
+                
+                // 【修改2026-03-28】简化额度计算逻辑：只根据文章总数计算
+                // 规则：前N篇（免费额度）算免费，超出部分算付费
+                const totalArticles = u.total_articles || 0;
+                const paidTotal = u.paid_quota_total || 0;
+                
+                // 计算免费额度使用情况
+                const freeUsed = Math.min(totalArticles, limit);
+                const freeRemaining = limit - freeUsed;
+                const freeQuotaText = freeRemaining + '/' + limit;
+                
+                // 计算付费额度使用情况
+                const paidUsed = Math.max(0, totalArticles - limit);
+                const paidRemaining = paidTotal - paidUsed;
+                const paidQuotaText = paidRemaining + '/' + paidTotal;
+                
+                // 免费额度颜色：用完显示红色，否则绿色
+                const freeQuotaClass = freeRemaining <= 0 ? 'error' : 'success';
+                // 付费额度颜色：负数显示红色，正数绿色，0显示默认
+                const paidQuotaClass = paidRemaining < 0 ? 'error' : (paidRemaining > 0 ? 'success' : '');
+                
                 return \`
                 <tr style="cursor:pointer">
                     <td onclick="goToUserArticles('\${u.email}')" title="点击查看此用户的所有文章">
@@ -5983,8 +6001,9 @@ export default {
                         </div>
                     </td>
                     <td>\${u.provider}</td>
-                    <td title="已生成 \${u.total_articles || 0} 篇文章"><span class="status-pill \${(u.ai_usage >= limit) ? 'error' : 'success'}">\${u.ai_usage || 0}/\${limit}</span></td>
-                    <td><span class="status-pill success">\${u.paid_quota_remaining || 0}</span></td>
+                    <td title="免费额度：已使用 \${freeUsed} 次，剩余 \${freeRemaining} 次"><span class="status-pill \${freeQuotaClass}">\${freeQuotaText}</span></td>
+                    <td title="付费额度：已使用 \${paidUsed} 次，剩余 \${paidRemaining} 次"><span class="status-pill \${paidQuotaClass}">\${paidQuotaText}</span></td>
+                    <td title="累计生成文章数：\${totalArticles} 篇"><span class="status-pill \${totalArticles > 0 ? 'info' : ''}">\${totalArticles}</span></td>
                     <td><span class="status-pill \${u.articles_3d > 0 ? 'success' : ''}">\${u.articles_3d || 0}</span></td>
                     <td><span class="status-pill \${u.articles_7d > 0 ? 'success' : ''}">\${u.articles_7d || 0}</span></td>
                     <td><span class="status-pill \${u.total_tokens > 0 ? 'info' : ''}" title="\${u.total_tokens || 0} tokens">\${formatTokens(u.total_tokens)}</span></td>
@@ -5992,7 +6011,7 @@ export default {
                     <td>\${u.last_active ? new Date(u.last_active * 1000).toLocaleString() : '-'}</td>
                 </tr>
             \`}).join('');
-            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="9" style="text-align:center">暂无数据</td></tr>';
+            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="10" style="text-align:center">暂无数据</td></tr>';
         }
 
         function renderArticles(articles) {
