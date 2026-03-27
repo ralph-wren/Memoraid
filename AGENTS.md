@@ -18,7 +18,7 @@
 16. 每次执行npm run release前，更新一下版本信息
 17. 需要遵守.cursor目录下的规则
 18. 通过 bash -lc "CI=1 npx wrangler r2 object put pothos-images/memoraid/feature-extract.png --file ../store-assets/feature-extract.png --content-type image/png --remote" 的方式可以上传图片到cloudflare r2
-19. 生成的说明文档统一放到docs目录,文件名称格式{日期如202601241230}-{功能，几个字}-{具体解决的问题}.md
+19. 生成的说明文档统一放到docs目录,文件名称格式{日期如202601241230}-{功能，几个字}-{具体解决的问题}.md，我让你生成你再生成
 20. 每生成一篇文章，都要通过omni-recall skills同步一次记忆到远程数据库,如果skills没有安装，通过`npx skills add ralph-wren/omni-recall`命令进行安装，全局安装不要放在项目下面
 21. 测试文件、临时文件统一放到test目录
 22. 创建远程数据库表之前先查看有哪些表，别创建相似的表了，不要重复建表

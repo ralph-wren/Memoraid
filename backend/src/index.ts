@@ -10932,55 +10932,31 @@ export default {
           return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
+        // 【修改2026-03-28】改为使用 getUserQuotaSnapshot 函数动态计算额度
+        const quotaSnapshot = await getUserQuotaSnapshot(env, userId);
+        
         // 获取用户信息
         const user = await env.DB.prepare('SELECT provider FROM users WHERE id = ?').bind(userId).first();
         const isAnonymous = user?.provider === 'anonymous' || !user;
         const freeLimit = isAnonymous ? 5 : 20;
         
-        // 获取已使用的免费次数（统计所有AI使用）
-        // 容错处理：如果表不存在，返回0
-        let usageCount = 0;
-        try {
-          usageCount = await env.DB.prepare(
-            'SELECT COUNT(*) as count FROM ai_usage_logs WHERE user_id = ?'
-          ).bind(userId).first('count') as number || 0;
-        } catch (e) {
-          console.error('ai_usage_logs表查询失败:', e);
-          usageCount = 0;
-        }
+        // 获取文章总数
+        const articleCountRow = await env.DB.prepare(`
+          SELECT COUNT(*) as total
+          FROM articles a
+          JOIN accounts ac ON a.account_id = ac.id
+          WHERE ac.user_id = ?
+        `).bind(userId).first<{ total?: number }>();
         
-        // 获取付费额度
-        // 容错处理：如果表不存在，返回默认值
-        let quota = null;
-        try {
-          quota = await env.DB.prepare('SELECT * FROM user_quotas WHERE user_id = ?').bind(userId).first();
-          
-          if (!quota) {
-            // 尝试初始化额度
-            try {
-              await env.DB.prepare('INSERT OR IGNORE INTO user_quotas (user_id) VALUES (?)').bind(userId).run();
-              quota = await env.DB.prepare('SELECT * FROM user_quotas WHERE user_id = ?').bind(userId).first();
-            } catch (insertError) {
-              console.error('初始化user_quotas失败:', insertError);
-            }
-          }
-        } catch (e) {
-          console.error('user_quotas表查询失败:', e);
-          // 表不存在时返回默认值
-          quota = null;
-        }
-        
-        const paidQuota = quota?.paid_quota_remaining || 0;
-        const freeRemaining = Math.max(0, freeLimit - usageCount);
-        const totalRemaining = freeRemaining + paidQuota;
+        const totalArticles = Number(articleCountRow?.total || 0);
+        const freeUsed = Math.min(totalArticles, freeLimit);
 
         return new Response(JSON.stringify({
-          ...quota,
           free_limit: freeLimit,
-          free_used: usageCount,
-          free_remaining: freeRemaining,
-          paid_remaining: paidQuota,
-          total_remaining: totalRemaining,
+          free_used: freeUsed,
+          free_remaining: quotaSnapshot.freeQuota,
+          paid_remaining: quotaSnapshot.paidQuota,
+          total_remaining: quotaSnapshot.totalQuota,
           is_anonymous: isAnonymous
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
