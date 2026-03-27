@@ -102,6 +102,14 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
       if (response.ok) {
         const data = await response.json();
         setTasks(data.tasks || []);
+        
+        // 【新增2026-03-28】检查是否有正在执行的任务，更新runningTaskId状态
+        const runningTask = (data.tasks || []).find((t: ScheduledTask) => t.lastRunStatus === 'running');
+        if (runningTask) {
+          setRunningTaskId(runningTask.id);
+        } else {
+          setRunningTaskId(null);
+        }
       } else {
         console.error('加载任务失败:', await response.text());
       }
@@ -344,6 +352,27 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
     }, 3000);
   };
 
+  // 【新增2026-03-28】暂停正在执行的任务
+  const stopTaskNow = async (taskId: string) => {
+    if (runningTaskId !== taskId) return;
+    
+    try {
+      // 发送暂停任务消息到后台
+      await chrome.runtime.sendMessage({
+        type: 'SCHEDULE_STOP_NOW',
+        payload: { taskId }
+      });
+      
+      // 立即清除运行状态
+      setRunningTaskId(null);
+      
+      // 刷新任务状态
+      await loadTasksFromBackend(true);
+    } catch (e) {
+      console.error('发送暂停任务消息失败:', e);
+    }
+  };
+
   // 切换发布平台
   const togglePlatform = (taskId: string, platform: PublishPlatform) => {
     const task = tasks.find(t => t.id === taskId);
@@ -484,14 +513,22 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
                       {task.enabled ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
                     </button>
 
-                    {/* 立即执行按钮 */}
+                    {/* 立即执行/取消按钮 */}
                     <button
-                      onClick={(e) => { e.stopPropagation(); runTaskNow(task.id); }}
-                      disabled={runningTaskId === task.id}
-                      className={`p-1 rounded transition ${runningTaskId === task.id ? 'text-orange-400' : 'text-blue-500 hover:text-blue-700 hover:bg-blue-50'}`}
-                      title="立即执行"
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        if (runningTaskId === task.id) {
+                          // 执行中，点击取消
+                          stopTaskNow(task.id);
+                        } else {
+                          // 未执行，点击执行
+                          runTaskNow(task.id);
+                        }
+                      }}
+                      className={`p-1 rounded transition ${runningTaskId === task.id ? 'text-red-500 hover:text-red-700 hover:bg-red-50' : 'text-blue-500 hover:text-blue-700 hover:bg-blue-50'}`}
+                      title={runningTaskId === task.id ? '点击取消执行' : '立即执行'}
                     >
-                      {runningTaskId === task.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                      {runningTaskId === task.id ? <X className="w-4 h-4" /> : <Zap className="w-4 h-4" />}
                     </button>
 
                     {/* 查看日志按钮 */}

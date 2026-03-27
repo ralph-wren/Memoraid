@@ -5,7 +5,7 @@ import { getSettings, saveSettings, DEFAULT_SETTINGS, addHistoryItem } from '../
 import { ExtractionResult, ActiveTask, ChatMessage } from '../utils/types';
 import { generateArticlePrompt, TOUTIAO_DEFAULT_PROMPT, WEIXIN_DEFAULT_PROMPT, ZHIHU_DEFAULT_PROMPT, XIAOHONGSHU_DEFAULT_PROMPT } from '../utils/prompts';
 import { generateRandomString } from '../utils/crypto';
-import { initScheduler, runTaskById } from './scheduler'; // 定时任务调度器
+import { initScheduler, runTaskById, stopTaskById } from './scheduler'; // 定时任务调度器
 
 console.log('Background service worker started');
 
@@ -446,6 +446,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     const { taskId } = message.payload || {};
     if (taskId) {
       runTaskById(taskId); // 异步执行，不等待
+    }
+    sendResponse({ success: true });
+    return true;
+  }
+
+  // 定时任务：取消正在执行的任务
+  if (message.type === 'SCHEDULE_STOP_NOW') {
+    const { taskId } = message.payload || {};
+    if (taskId) {
+      stopTaskById(taskId); // 异步执行，不等待
     }
     sendResponse({ success: true });
     return true;

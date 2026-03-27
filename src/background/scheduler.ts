@@ -11,6 +11,73 @@ import { handleInitiateProcess } from './index';
 const CHECK_ALARM_NAME = 'memoraid_schedule_check';
 
 // ============================================
+// 任务取消控制
+// 用于跟踪正在执行的任务和取消标志
+// ============================================
+
+// 存储正在执行的任务ID和对应的取消标志（内存中）
+const runningTasks = new Map<string, { cancelled: boolean }>();
+
+// Storage key for tracking running tasks
+const RUNNING_TASKS_STORAGE_KEY = 'scheduler_running_tasks';
+// Storage key for tracking cancelled tasks
+const CANCELLED_TASKS_STORAGE_KEY = 'scheduler_cancelled_tasks';
+
+/**
+ * 将任务标记为正在执行（持久化到storage）
+ */
+async function markTaskAsRunning(taskId: string) {
+  runningTasks.set(taskId, { cancelled: false });
+  
+  // 同时保存到storage，防止service worker重启后丢失
+  try {
+    const result = await chrome.storage.local.get(RUNNING_TASKS_STORAGE_KEY);
+    const runningTaskIds: string[] = result[RUNNING_TASKS_STORAGE_KEY] || [];
+    if (!runningTaskIds.includes(taskId)) {
+      runningTaskIds.push(taskId);
+      await chrome.storage.local.set({ [RUNNING_TASKS_STORAGE_KEY]: runningTaskIds });
+    }
+  } catch (e) {
+    console.error('[Scheduler] 保存运行任务列表失败:', e);
+  }
+}
+
+/**
+ * 将任务从运行列表中移除（从storage中删除）
+ */
+async function unmarkTaskAsRunning(taskId: string) {
+  runningTasks.delete(taskId);
+  
+  // 同时从storage中移除
+  try {
+    const result = await chrome.storage.local.get(RUNNING_TASKS_STORAGE_KEY);
+    const runningTaskIds: string[] = result[RUNNING_TASKS_STORAGE_KEY] || [];
+    const newRunningTaskIds = runningTaskIds.filter(id => id !== taskId);
+    await chrome.storage.local.set({ [RUNNING_TASKS_STORAGE_KEY]: newRunningTaskIds });
+  } catch (e) {
+    console.error('[Scheduler] 移除运行任务列表失败:', e);
+  }
+}
+
+/**
+ * 从storage恢复运行任务列表（service worker重启后调用）
+ */
+async function restoreRunningTasks() {
+  try {
+    const result = await chrome.storage.local.get(RUNNING_TASKS_STORAGE_KEY);
+    const runningTaskIds: string[] = result[RUNNING_TASKS_STORAGE_KEY] || [];
+    for (const taskId of runningTaskIds) {
+      if (!runningTasks.has(taskId)) {
+        runningTasks.set(taskId, { cancelled: false });
+      }
+    }
+    console.log('[Scheduler] 恢复运行任务列表:', runningTaskIds);
+  } catch (e) {
+    console.error('[Scheduler] 恢复运行任务列表失败:', e);
+  }
+}
+
+// ============================================
 // 任务实时日志系统
 // 日志存储在 chrome.storage.local 中，UI 通过轮询读取实时显示
 // ============================================
@@ -146,6 +213,9 @@ async function cleanupTimeoutTasks() {
  */
 export async function initScheduler() {
   console.log('[Scheduler] 初始化定时任务调度器...');
+
+  // 恢复运行任务列表（防止service worker重启后丢失）
+  await restoreRunningTasks();
 
   // 先清理超时任务
   await cleanupTimeoutTasks();
@@ -309,6 +379,19 @@ function shouldRunTask(task: ScheduledTask, now: Date): boolean {
  * 2. AI 选择模式：让 AI 从热榜中选择指定数量的话题生成多篇文章
  */
 async function executeTask(task: ScheduledTask) {
+  // 注册任务到运行列表，初始化取消标志为false（持久化到storage）
+  await markTaskAsRunning(task.id);
+  
+  // 清除旧的取消标志（如果有的话）
+  try {
+    const result = await chrome.storage.local.get(CANCELLED_TASKS_STORAGE_KEY);
+    const cancelledTaskIds: string[] = result[CANCELLED_TASKS_STORAGE_KEY] || [];
+    const newCancelledTaskIds = cancelledTaskIds.filter(id => id !== task.id);
+    await chrome.storage.local.set({ [CANCELLED_TASKS_STORAGE_KEY]: newCancelledTaskIds });
+  } catch (e) {
+    console.error('[Scheduler] 清除取消标志失败:', e);
+  }
+  
   // 清空旧日志，开始新一轮执行
   await clearTaskLog(task.id);
   
@@ -356,6 +439,12 @@ async function executeTask(task: ScheduledTask) {
     // 选择要处理的文章列表
     let selectedArticles: Array<{ title: string; url: string }> = [];
 
+    // 检查任务是否被取消（在AI选择话题前）
+    if (await isTaskCancelled(task.id)) {
+      await taskLog(task.id, 'warn', `⚠️ 任务已被取消`);
+      throw new Error('任务已被用户取消');
+    }
+
     // 始终使用 AI 选择话题（即使只选 1 篇）
     await taskLog(task.id, 'info', `🤖 正在调用 AI 选择话题...`);
     selectedArticles = await selectArticlesWithAI(task, articles, articleCount);
@@ -375,6 +464,12 @@ async function executeTask(task: ScheduledTask) {
     }> = [];
 
     for (let i = 0; i < selectedArticles.length; i++) {
+      // 检查任务是否被取消
+      if (await isTaskCancelled(task.id)) {
+        await taskLog(task.id, 'warn', `⚠️ 任务已被取消，停止处理剩余文章`);
+        throw new Error('任务已被用户取消');
+      }
+      
       const article = selectedArticles[i];
       await taskLog(task.id, 'info', `\n📝 [${i + 1}/${selectedArticles.length}] 处理话题: ${article.title}`);
       await taskLog(task.id, 'info', `🔗 文章链接: ${article.url}`);
@@ -420,8 +515,22 @@ async function executeTask(task: ScheduledTask) {
           }
         }
         
-        await new Promise(r => setTimeout(r, 5000));
+        // 检查任务是否被取消（页面加载后）
+        if (await isTaskCancelled(task.id)) {
+          await taskLog(task.id, 'warn', `⚠️ 任务已被取消`);
+          throw new Error('任务已被用户取消');
+        }
+        
+        // 等待页面渲染完成（拆分成多个小延迟，每次检查取消标志）
         await taskLog(task.id, 'info', `⏳ 等待页面渲染完成`);
+        for (let i = 0; i < 5; i++) {
+          await new Promise(r => setTimeout(r, 1000)); // 每次等待1秒
+          // 检查任务是否被取消
+          if (await isTaskCancelled(task.id)) {
+            await taskLog(task.id, 'warn', `⚠️ 任务已被取消`);
+            throw new Error('任务已被用户取消');
+          }
+        }
 
         // 依次发布到各平台
         for (const platform of task.platforms) {
@@ -440,6 +549,12 @@ async function executeTask(task: ScheduledTask) {
             let publishCompleted = false;
             
             while (Date.now() - startTime < maxWaitTime) {
+              // 检查任务是否被取消
+              if (await isTaskCancelled(task.id)) {
+                await taskLog(task.id, 'warn', `⚠️ 任务已被取消，停止等待发布完成`);
+                throw new Error('任务已被用户取消');
+              }
+              
               await new Promise(r => setTimeout(r, checkInterval));
               
               // 检查 pending 数据是否已清除
@@ -474,10 +589,17 @@ async function executeTask(task: ScheduledTask) {
         // 记录成功结果
         articleResults.push(articleResult);
 
-        // 如果还有下一篇，等待一段时间避免频率过高
+        // 如果还有下一篇，等待一段时间避免频率过高（拆分成多个小延迟，每次检查取消标志）
         if (i < selectedArticles.length - 1) {
           await taskLog(task.id, 'info', `⏳ 等待 10 秒后处理下一篇...`);
-          await new Promise(r => setTimeout(r, 10000));
+          for (let j = 0; j < 10; j++) {
+            await new Promise(r => setTimeout(r, 1000)); // 每次等待1秒
+            // 检查任务是否被取消
+            if (await isTaskCancelled(task.id)) {
+              await taskLog(task.id, 'warn', `⚠️ 任务已被取消`);
+              throw new Error('任务已被用户取消');
+            }
+          }
         }
 
       } catch (e: any) {
@@ -499,6 +621,13 @@ async function executeTask(task: ScheduledTask) {
     if (executionLogId) {
       const completedAt = Date.now();
       const duration = completedAt - startedAt;
+      
+      // 读取任务日志
+      const taskLogs = await getTaskLogs(task.id);
+      console.log(`[Scheduler] 读取到 ${taskLogs.length} 条日志`);
+      const logsJson = JSON.stringify(taskLogs);
+      console.log(`[Scheduler] 日志JSON长度: ${logsJson.length}`);
+      
       try {
         await updateExecutionLog(executionLogId, {
           status: 'success',
@@ -506,6 +635,7 @@ async function executeTask(task: ScheduledTask) {
           duration,
           articles_generated: selectedArticles.length,
           articles_published: successCount,
+          details: logsJson, // 保存任务日志
         });
         await taskLog(task.id, 'info', `✅ 已更新执行记录`);
       } catch (e: any) {
@@ -538,12 +668,20 @@ async function executeTask(task: ScheduledTask) {
     if (executionLogId) {
       const completedAt = Date.now();
       const duration = completedAt - startedAt;
+      
+      // 读取任务日志
+      const taskLogs = await getTaskLogs(task.id);
+      console.log(`[Scheduler] 读取到 ${taskLogs.length} 条日志`);
+      const logsJson = JSON.stringify(taskLogs);
+      console.log(`[Scheduler] 日志JSON长度: ${logsJson.length}`);
+      
       try {
         await updateExecutionLog(executionLogId, {
           status: 'failed',
           completed_at: completedAt,
           duration,
           error_message: error?.message || String(error),
+          details: logsJson, // 保存任务日志
         });
         await taskLog(task.id, 'info', `✅ 已更新执行记录（失败）`);
       } catch (e: any) {
@@ -555,6 +693,10 @@ async function executeTask(task: ScheduledTask) {
     await taskLog(task.id, 'info', `🧹 正在关闭任务打开的 ${taskTabIds.length} 个页面...`);
     await closeAllTaskTabs(taskTabIds);
     await taskLog(task.id, 'success', `✅ 页面已全部关闭`);
+  } finally {
+    // 清理任务运行记录（从内存和storage中移除）
+    await unmarkTaskAsRunning(task.id);
+    console.log(`[Scheduler] 任务 ${task.id} 已从运行列表中移除`);
   }
 }
 
@@ -1192,6 +1334,110 @@ export async function runTaskById(taskId: string) {
 }
 
 /**
+ * 取消正在执行的任务
+ * @param taskId 要取消的任务 ID
+ */
+export async function stopTaskById(taskId: string) {
+  try {
+    console.log(`[Scheduler] 收到取消任务请求: ${taskId}`);
+    
+    // 先尝试从storage恢复运行任务列表（防止service worker重启后丢失）
+    await restoreRunningTasks();
+    
+    // 检查任务是否正在执行
+    let taskControl = runningTasks.get(taskId);
+    
+    if (!taskControl) {
+      // 如果在内存中找不到，可能是旧版本启动的任务
+      // 直接将取消标志保存到storage，让任务执行时检查
+      console.log(`[Scheduler] 任务 ${taskId} 未在内存中，将取消标志保存到storage`);
+      try {
+        const result = await chrome.storage.local.get(CANCELLED_TASKS_STORAGE_KEY);
+        const cancelledTaskIds: string[] = result[CANCELLED_TASKS_STORAGE_KEY] || [];
+        if (!cancelledTaskIds.includes(taskId)) {
+          cancelledTaskIds.push(taskId);
+          await chrome.storage.local.set({ [CANCELLED_TASKS_STORAGE_KEY]: cancelledTaskIds });
+        }
+      } catch (e) {
+        console.error('[Scheduler] 保存取消标志失败:', e);
+      }
+      
+      // 记录取消日志
+      await taskLog(taskId, 'warn', `⚠️ 用户手动取消任务`);
+      
+      // 更新任务状态为失败（取消也算失败）
+      await updateTaskStatus(taskId, 'failed', '用户手动取消');
+      
+      return;
+    }
+    
+    // 设置取消标志
+    taskControl.cancelled = true;
+    console.log(`[Scheduler] 已设置任务 ${taskId} 的取消标志`);
+    
+    // 同时保存到storage
+    try {
+      const result = await chrome.storage.local.get(CANCELLED_TASKS_STORAGE_KEY);
+      const cancelledTaskIds: string[] = result[CANCELLED_TASKS_STORAGE_KEY] || [];
+      if (!cancelledTaskIds.includes(taskId)) {
+        cancelledTaskIds.push(taskId);
+        await chrome.storage.local.set({ [CANCELLED_TASKS_STORAGE_KEY]: cancelledTaskIds });
+      }
+    } catch (e) {
+      console.error('[Scheduler] 保存取消标志失败:', e);
+    }
+    
+    // 记录取消日志
+    await taskLog(taskId, 'warn', `⚠️ 用户手动取消任务`);
+    
+    // 更新任务状态为失败（取消也算失败）
+    await updateTaskStatus(taskId, 'failed', '用户手动取消');
+    
+  } catch (error) {
+    console.error(`[Scheduler] 取消任务失败:`, error);
+  }
+}
+
+/**
+ * 检查任务是否被取消（同时检查内存和storage）
+ * @param taskId 任务ID
+ * @returns 是否被取消
+ */
+async function isTaskCancelled(taskId: string): Promise<boolean> {
+  // 先检查内存
+  const taskControl = runningTasks.get(taskId);
+  if (taskControl?.cancelled) {
+    return true;
+  }
+  
+  // 再检查storage（兼容旧版本启动的任务）
+  try {
+    const result = await chrome.storage.local.get(CANCELLED_TASKS_STORAGE_KEY);
+    const cancelledTaskIds: string[] = result[CANCELLED_TASKS_STORAGE_KEY] || [];
+    return cancelledTaskIds.includes(taskId);
+  } catch (e) {
+    console.error('[Scheduler] 检查取消标志失败:', e);
+    return false;
+  }
+}
+
+/**
+ * 获取指定任务的日志
+ * @param taskId 任务ID
+ * @returns 日志数组
+ */
+async function getTaskLogs(taskId: string): Promise<TaskLogEntry[]> {
+  const key = `${LOG_STORAGE_PREFIX}${taskId}`;
+  try {
+    const result = await chrome.storage.local.get(key);
+    return result[key] || [];
+  } catch (e) {
+    console.error('[Scheduler] 读取任务日志失败:', e);
+    return [];
+  }
+}
+
+/**
  * 创建任务执行记录
  * @param taskId 任务ID
  * @param taskName 任务名称
@@ -1251,6 +1497,7 @@ async function updateExecutionLog(
     articles_generated?: number;
     articles_published?: number;
     error_message?: string;
+    details?: string; // 新增：任务执行日志
   }
 ): Promise<void> {
   try {

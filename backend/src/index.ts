@@ -8330,8 +8330,9 @@ export default {
             const total = countResult?.total || 0;
 
             // 获取记录列表
+            // 【修改2026-03-28】添加details字段，用于查看完整日志
             const logs = await env.DB.prepare(
-                `SELECT id, task_id, task_name, status, started_at, completed_at, duration, articles_generated, articles_published, error_message FROM task_execution_logs ${whereClause} ORDER BY started_at DESC LIMIT ? OFFSET ?`
+                `SELECT id, task_id, task_name, status, started_at, completed_at, duration, articles_generated, articles_published, error_message, details FROM task_execution_logs ${whereClause} ORDER BY started_at DESC LIMIT ? OFFSET ?`
             ).bind(...params, limit, offset).all();
 
             return new Response(JSON.stringify({
@@ -10045,6 +10046,9 @@ export default {
                 return;
             }
             
+            // 【修改2026-03-28】将日志数据存储在全局变量中，避免HTML属性转义问题
+            window.executionLogsData = {};
+            
             const rows = logs.map(log => {
                 const statusColor = log.status === 'success' ? '#10b981' : 
                                   log.status === 'failed' ? '#ef4444' : '#f59e0b';
@@ -10059,6 +10063,17 @@ export default {
                         '</div>';
                 }
                 
+                // 【新增2026-03-28】日志查看按钮
+                const hasLogs = log.details || log.error_message;
+                const logButton = hasLogs 
+                    ? "<button class='btn-sm btn-ghost' onclick='viewExecutionLog(" + log.id + ")' style='font-size:0.8rem;padding:4px 8px'>📋 查看</button>"
+                    : '<span style="color:var(--text-muted);font-size:0.8rem">-</span>';
+                
+                // 存储日志数据到全局变量
+                if (hasLogs) {
+                    window.executionLogsData[log.id] = log;
+                }
+                
                 return '<tr>' +
                     '<td style="min-width:120px"><span style="font-weight:500;color:var(--text)">' + (log.task_name || '未命名任务') + '</span></td>' +
                     '<td style="min-width:140px" class="time-cell">' + formatTime(Math.floor(log.started_at / 1000)) + '</td>' +
@@ -10066,6 +10081,7 @@ export default {
                     '<td style="min-width:70px;text-align:center">' + (log.articles_generated || 0) + ' 篇</td>' +
                     '<td style="min-width:70px;text-align:center">' + (log.articles_published || 0) + ' 篇</td>' +
                     '<td style="min-width:70px;text-align:center">' + duration + '</td>' +
+                    '<td style="min-width:80px;text-align:center">' + logButton + '</td>' +
                 '</tr>';
             }).join('');
             
@@ -10078,6 +10094,7 @@ export default {
                         '<th style="min-width:70px">生成</th>' +
                         '<th style="min-width:70px">发布</th>' +
                         '<th style="min-width:70px">耗时</th>' +
+                        '<th style="min-width:80px">日志</th>' +
                     '</tr></thead>' +
                     '<tbody>' + rows + '</tbody>' +
                 '</table></div>';
@@ -10262,6 +10279,75 @@ export default {
             }
             // 停止执行记录自动刷新
             stopLogsAutoRefresh();
+        }
+        
+        // 【新增2026-03-28】查看执行日志详情
+        function viewExecutionLog(logId) {
+            // 从全局变量中获取日志数据
+            const log = window.executionLogsData[logId];
+            if (!log) {
+                alert('日志数据不存在');
+                return;
+            }
+            
+            // 解析details字段（任务执行日志）
+            let logsHtml = '';
+            if (log.details) {
+                try {
+                    const logs = typeof log.details === 'string' ? JSON.parse(log.details) : log.details;
+                    if (Array.isArray(logs) && logs.length > 0) {
+                        // 格式化日志显示
+                        logsHtml = '<div style="background:#f8fafc;padding:16px;border-radius:8px;max-height:600px;overflow-y:auto">';
+                        logs.forEach(entry => {
+                            const time = new Date(entry.time).toLocaleTimeString('zh-CN', { 
+                                hour: '2-digit', 
+                                minute: '2-digit', 
+                                second: '2-digit',
+                                hour12: false 
+                            });
+                            
+                            // 根据日志级别设置颜色
+                            let color = '#64748b'; // info默认灰色
+                            let bgColor = 'transparent';
+                            if (entry.level === 'success') {
+                                color = '#10b981';
+                                bgColor = '#f0fdf4';
+                            } else if (entry.level === 'error') {
+                                color = '#ef4444';
+                                bgColor = '#fef2f2';
+                            } else if (entry.level === 'warn') {
+                                color = '#f59e0b';
+                                bgColor = '#fffbeb';
+                            }
+                            
+                            logsHtml += '<div style="display:flex;gap:12px;padding:6px 8px;margin-bottom:2px;background:' + bgColor + ';border-radius:4px">' +
+                                '<span style="color:#94a3b8;font-size:0.85rem;font-family:monospace;flex-shrink:0">' + time + '</span>' +
+                                '<span style="color:' + color + ';font-size:0.9rem;line-height:1.6;white-space:pre-wrap;word-break:break-word">' + entry.message + '</span>' +
+                                '</div>';
+                        });
+                        logsHtml += '</div>';
+                    } else {
+                        logsHtml = '<div style="background:#f8fafc;padding:16px;border-radius:8px;text-align:center;color:var(--text-muted)">暂无日志</div>';
+                    }
+                } catch (e) {
+                    logsHtml = '<div style="background:#fef2f2;padding:16px;border-radius:8px;color:#dc2626">日志解析失败</div>';
+                }
+            } else {
+                logsHtml = '<div style="background:#f8fafc;padding:16px;border-radius:8px;text-align:center;color:var(--text-muted)">暂无日志</div>';
+            }
+            
+            const modalContent = '<div style="padding:24px;max-width:900px">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">' +
+                    '<h3 style="margin:0;font-size:1.25rem;color:var(--text)">📋 执行日志 - ' + (log.task_name || '未命名任务') + '</h3>' +
+                    '<button onclick="closeModal()" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--text-muted)">×</button>' +
+                '</div>' +
+                logsHtml +
+                '<div style="margin-top:20px;text-align:right">' +
+                    '<button class="btn-primary" onclick="closeModal()" style="padding:8px 20px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer">关闭</button>' +
+                '</div>' +
+            '</div>';
+            
+            showModal(modalContent);
         }
         
         // 渲染文章分页
@@ -11527,6 +11613,7 @@ export default {
           articles_generated?: number;
           articles_published?: number;
           error_message?: string;
+          details?: string; // 添加日志详情字段
         };
 
         // 构建更新语句
@@ -11556,6 +11643,11 @@ export default {
         if (body.error_message !== undefined) {
           updates.push('error_message = ?');
           params.push(body.error_message);
+        }
+        // 添加日志详情字段的处理
+        if (body.details !== undefined) {
+          updates.push('details = ?');
+          params.push(body.details);
         }
 
         if (updates.length === 0) {
