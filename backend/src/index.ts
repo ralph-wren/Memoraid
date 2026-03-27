@@ -9698,9 +9698,10 @@ export default {
                 ]);
                 
                 // 更新额度显示
+                // 【修复2026-03-28】使用正确的字段名
                 if (quota && !quota.error) {
-                    document.getElementById('freeQuotaInline').textContent = quota.free_quota_remaining ?? 0;
-                    document.getElementById('paidQuotaInline').textContent = quota.paid_quota_remaining ?? 0;
+                    document.getElementById('freeQuotaInline').textContent = quota.free_remaining ?? 0;
+                    document.getElementById('paidQuotaInline').textContent = quota.paid_remaining ?? 0;
                 }
                 
                 // 渲染平台筛选
