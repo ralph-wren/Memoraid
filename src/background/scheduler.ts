@@ -537,8 +537,8 @@ async function executeTask(task: ScheduledTask) {
           await taskLog(task.id, 'info', `📤 开始发布到: ${platform}...`);
           try {
             await taskLog(task.id, 'info', `⏳ 正在抓取内容、AI 生成文章并发布...`);
-            // 传递 isScheduledTask = true，标识这是定时任务，强制自动发布
-            await handleInitiateProcess(platform, tab.id!, true);
+            // 传递 isScheduledTask = true 和 taskId，用于定时任务取消检查
+            await handleInitiateProcess(platform, tab.id!, true, task.id);
             
             // 【修复】等待发布流程完全完成
             // 检查 pending 数据是否已被清除（表示发布完成）
@@ -1403,7 +1403,7 @@ export async function stopTaskById(taskId: string) {
  * @param taskId 任务ID
  * @returns 是否被取消
  */
-async function isTaskCancelled(taskId: string): Promise<boolean> {
+export async function isTaskCancelled(taskId: string): Promise<boolean> {
   // 先检查内存
   const taskControl = runningTasks.get(taskId);
   if (taskControl?.cancelled) {

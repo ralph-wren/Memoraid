@@ -467,7 +467,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // 导出 handleInitiateProcess，供 scheduler 直接调用
 // （background 不能通过 chrome.runtime.sendMessage 给自己发消息）
 // 添加 isScheduledTask 参数，用于标识是否来自定时任务
-export async function handleInitiateProcess(platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu', tabId: number, isScheduledTask: boolean = false) {
+// 添加 taskId 参数，用于定时任务取消检查
+export async function handleInitiateProcess(platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu', tabId: number, isScheduledTask: boolean = false, taskId?: string) {
   const platformName = platform === 'toutiao' ? '头条' :
     platform === 'zhihu' ? '知乎' :
       platform === 'xiaohongshu' ? '小红书' : '公众号';
@@ -537,8 +538,8 @@ export async function handleInitiateProcess(platform: 'toutiao' | 'zhihu' | 'wei
       isScheduledTask // 添加定时任务标识日志
     });
 
-    // 3. 开始生成和发布流程，传递 isScheduledTask 参数
-    await startArticleGenerationAndPublish(extraction, platform, isScheduledTask);
+    // 3. 开始生成和发布流程，传递 isScheduledTask 和 taskId 参数
+    await startArticleGenerationAndPublish(extraction, platform, isScheduledTask, taskId);
     
     // 【调试日志】startArticleGenerationAndPublish 调用完成
     console.log('[DEBUG] handleInitiateProcess: startArticleGenerationAndPublish 调用完成');
@@ -2397,14 +2398,16 @@ async function startArticleGeneration(extraction: ExtractionResult) {
 
 // 一键生成文章并发布到指定平台
 // 添加 isScheduledTask 参数，用于标识是否来自定时任务
-async function startArticleGenerationAndPublish(extraction: ExtractionResult, platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu', isScheduledTask: boolean = false) {
+// 添加 taskId 参数，用于定时任务取消检查
+async function startArticleGenerationAndPublish(extraction: ExtractionResult, platform: 'toutiao' | 'zhihu' | 'weixin' | 'xiaohongshu', isScheduledTask: boolean = false, taskId?: string) {
   try {
     // 【调试日志】函数入口
     console.log('[DEBUG] startArticleGenerationAndPublish 开始执行:', {
       platform,
       title: extraction.title,
       url: extraction.url,
-      isScheduledTask // 添加定时任务标识日志
+      isScheduledTask, // 添加定时任务标识日志
+      taskId // 添加任务ID日志
     });
     
     abortController = new AbortController();
@@ -2539,9 +2542,22 @@ ${platformPrompt}
 
     try {
       for await (const chunk of stream) {
-        // 检查是否已取消
+        // 检查是否已取消（手动取消）
         if (!abortController || abortController.signal.aborted) {
           break;
+        }
+
+        // 检查定时任务是否被取消（每次循环都检查）
+        if (taskId && isScheduledTask) {
+          const { isTaskCancelled } = await import('./scheduler');
+          if (await isTaskCancelled(taskId)) {
+            console.log('[AI生成] 检测到定时任务已取消，中断AI生成');
+            // 中断AI生成
+            if (abortController) {
+              abortController.abort();
+            }
+            break;
+          }
         }
 
         const content = chunk.choices[0]?.delta?.content || '';
