@@ -9938,8 +9938,17 @@ export default {
                         <div style="background: var(--card-bg); border-radius: var(--radius); padding: 24px; margin-bottom: 20px; border: 1px solid var(--border);">
                             <h3 style="margin: 0 0 16px; font-size: 1.1rem; font-weight: 600;">我的邀请链接</h3>
                             <div style="background: var(--bg-subtle); border: 2px dashed var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px;">
-                                <div style="background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-family: monospace; font-size: 0.9rem; word-break: break-all; margin-bottom: 12px;" id="inviteUrl">加载中...</div>
-                                <button class="btn btn-primary" onclick="copyInviteUrl()">📋 复制链接</button>
+                                <!-- 点击链接直接复制 -->
+                                <div 
+                                    style="background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-family: monospace; font-size: 0.9rem; word-break: break-all; cursor: pointer; transition: all 0.2s;" 
+                                    id="inviteUrl" 
+                                    onclick="copyInviteUrl()"
+                                    onmouseover="this.style.background='var(--bg-subtle)'; this.style.borderColor='var(--accent)'"
+                                    onmouseout="this.style.background='var(--bg)'; this.style.borderColor='var(--border)'"
+                                    title="点击复制链接"
+                                >加载中...</div>
+                                <!-- 复制成功提示显示在这里 -->
+                                <div id="inviteLinkAlert" style="margin-top: 8px;"></div>
                             </div>
                             <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0;">
                                 分享此链接给好友，好友通过链接注册并充值后，您将获得充值金额10%的佣金奖励
@@ -11551,7 +11560,8 @@ export default {
         function copyInviteUrl() {
             const url = document.getElementById('inviteUrl').textContent;
             navigator.clipboard.writeText(url).then(() => {
-                showReferralAlert('paymentAlert', '✅ 邀请链接已复制到剪贴板', 'success');
+                // 在链接下方显示复制成功提示
+                showReferralAlert('inviteLinkAlert', '✅ 邀请链接已复制到剪贴板', 'success');
             });
         }
 
