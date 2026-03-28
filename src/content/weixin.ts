@@ -4683,10 +4683,17 @@ const autoFillContent = async () => {
     sessionStorage.setItem(taskKey, 'processing');
 
     // 保存 generatedId 供发布上报使用
+    // 【修复2026-03-28】使用 chrome.storage.local 代替 sessionStorage
+    // 原因：sessionStorage 在页面刷新或关闭后会丢失，导致重新发布时无法识别为同一篇文章
     if (payload.generatedId) {
+      // 使用文章标题作为key，保存generatedId（支持多篇文章）
+      const storageKey = `memoraid_generated_id_${payload.title}`;
+      await chrome.storage.local.set({ [storageKey]: payload.generatedId });
       sessionStorage.setItem('memoraid_generated_id', payload.generatedId);
+      sessionStorage.setItem('memoraid_generated_id_key', storageKey); // 保存key供后续使用
     } else {
       sessionStorage.removeItem('memoraid_generated_id');
+      sessionStorage.removeItem('memoraid_generated_id_key');
     }
     
     // 保存 token 数据供发布上报使用
@@ -4866,20 +4873,44 @@ const installPublishReporting = () => {
       sessionStorage.removeItem('memoraid_token_usage');
     }
 
-    reportArticlePublish({
-      platform: 'weixin',
-      title: finalTitle,
-      url: publishedUrl,
-      status,
-      extra: { 
-        trigger,
-        // 记录 token 消耗数据
-        promptTokens: tokenUsage?.promptTokens,
-        completionTokens: tokenUsage?.completionTokens,
-        totalTokens: tokenUsage?.totalTokens,
-      },
-      generatedId: sessionStorage.getItem('memoraid_generated_id') || undefined
-    });
+    // 【修复2026-03-28】优先从 sessionStorage 读取 generatedId
+    // 如果没有，尝试从 chrome.storage.local 读取（异步）
+    const sessionGeneratedId = sessionStorage.getItem('memoraid_generated_id');
+    
+    if (sessionGeneratedId) {
+      // 有 sessionStorage 中的 ID，直接使用
+      reportArticlePublish({
+        platform: 'weixin',
+        title: finalTitle,
+        url: publishedUrl,
+        status,
+        extra: { 
+          trigger,
+          promptTokens: tokenUsage?.promptTokens,
+          completionTokens: tokenUsage?.completionTokens,
+          totalTokens: tokenUsage?.totalTokens,
+        },
+        generatedId: sessionGeneratedId
+      });
+    } else {
+      // 没有 sessionStorage 中的 ID，尝试从 chrome.storage.local 读取
+      const storageKey = `memoraid_generated_id_${finalTitle}`;
+      chrome.storage.local.get(storageKey, (data) => {
+        reportArticlePublish({
+          platform: 'weixin',
+          title: finalTitle,
+          url: publishedUrl,
+          status,
+          extra: { 
+            trigger,
+            promptTokens: tokenUsage?.promptTokens,
+            completionTokens: tokenUsage?.completionTokens,
+            totalTokens: tokenUsage?.totalTokens,
+          },
+          generatedId: data[storageKey] || undefined
+        });
+      });
+    }
   };
 
   const normalizeUrl = (href: string): string => {

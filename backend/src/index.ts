@@ -465,6 +465,40 @@ async function settleRechargeOrder(
 
   trackPaymentAnalytics(env, latestOrder, settleStatus);
 
+  // 【推广系统】处理佣金结算
+  try {
+    // 查询用户是否是被邀请人
+    const invitation = await env.DB.prepare(
+      'SELECT inviter_id, invite_code FROM user_invitations WHERE invitee_id = ?'
+    ).bind(order.user_id).first<{ inviter_id: string; invite_code: string }>();
+
+    if (invitation) {
+      // 计算佣金（10%）
+      const commissionRate = 0.1;
+      const commissionAmount = Number(order.amount) * commissionRate;
+
+      // 创建佣金记录
+      await env.DB.prepare(`
+        INSERT INTO commission_records (
+          inviter_id, invitee_id, order_id, amount, recharge_amount, commission_rate, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'settled', ?)
+      `).bind(
+        invitation.inviter_id,
+        order.user_id,
+        orderId,
+        commissionAmount,
+        order.amount,
+        commissionRate,
+        Date.now()
+      ).run();
+
+      console.log(`[推广系统] 为邀请人 ${invitation.inviter_id} 结算佣金 ${commissionAmount} 元`);
+    }
+  } catch (commissionError) {
+    console.error('[推广系统] 佣金结算失败:', commissionError);
+    // 佣金结算失败不影响主流程
+  }
+
   return {
     order: latestOrder,
     quotaSnapshot,
@@ -2028,12 +2062,30 @@ function renderMarketingLogin(origin: string, error?: string | null): string {
 
         ${errorText ? `<div style="margin-bottom:14px;border:1px solid rgba(239,68,68,.25);background:rgba(239,68,68,.06);padding:10px 12px;border-radius:14px;color:#b91c1c;font-weight:800;font-size:13px">${errorText}</div>` : ''}
 
-        <div id="loginButtons" style="display:flex;flex-direction:column;gap:10px">
+        <!-- OAuth登录按钮 -->
+        <div id="oauthButtons" style="display:flex;flex-direction:column;gap:10px">
           <button type="button" class="btn btn-primary" style="width:100%;border-radius:14px" onclick="loginWith('google')">
             使用 Google 登录
           </button>
           <button type="button" class="btn btn-ghost" style="width:100%;border-radius:14px" onclick="loginWith('github')">
             使用 GitHub 登录
+          </button>
+        </div>
+
+        <!-- 邮箱登录表单（默认隐藏） -->
+        <div id="emailLoginForm" style="display:none">
+          <div style="margin-bottom:12px">
+            <input type="email" id="emailInput" placeholder="请输入邮箱地址" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:14px;font-size:14px;background:var(--bg);color:var(--text)" />
+          </div>
+          <div id="codeInputGroup" style="display:none;margin-bottom:12px">
+            <input type="text" id="codeInput" placeholder="请输入6位验证码" maxlength="6" style="width:100%;padding:12px;border:1px solid var(--border);border-radius:14px;font-size:14px;background:var(--bg);color:var(--text)" />
+          </div>
+          <div id="emailAlert" style="margin-bottom:12px"></div>
+          <button type="button" id="sendCodeBtn" class="btn btn-primary" style="width:100%;border-radius:14px" onclick="sendVerificationCode()">
+            发送验证码
+          </button>
+          <button type="button" id="verifyCodeBtn" class="btn btn-primary" style="width:100%;border-radius:14px;display:none" onclick="verifyCode()">
+            验证并登录
           </button>
         </div>
 
@@ -2043,7 +2095,11 @@ function renderMarketingLogin(origin: string, error?: string | null): string {
           <span style="height:1px;background:var(--border);flex:1"></span>
         </div>
 
-        <a class="btn btn-ghost" href="/" style="width:100%;border-radius:14px">返回首页</a>
+        <button type="button" id="toggleLoginMethod" class="btn btn-ghost" style="width:100%;border-radius:14px" onclick="toggleLoginMethod()">
+          使用邮箱登录
+        </button>
+        
+        <a class="btn btn-ghost" href="/" style="width:100%;border-radius:14px;margin-top:10px">返回首页</a>
 
         <div style="margin-top:14px;color:var(--text-3);font-weight:700;font-size:12px">
           登录即表示您同意我们的 <a href="/privacy" style="font-weight:900">隐私政策</a>
@@ -2053,11 +2109,180 @@ function renderMarketingLogin(origin: string, error?: string | null): string {
   </div>
 
   <script>
+    let countdown = 0;
+    let countdownTimer = null;
+    
+    // OAuth登录
     function loginWith(provider) {
-      const buttons = document.getElementById('loginButtons');
+      const buttons = document.getElementById('oauthButtons');
       if (buttons) buttons.style.opacity = '0.7';
+      
+      // 获取URL中的ref参数（邀请码）
+      const urlParams = new URLSearchParams(window.location.search);
+      const refCode = urlParams.get('ref');
+      
       const redirectUri = encodeURIComponent(window.location.origin + '/auth/web-callback');
-      window.location.href = '/auth/login/' + provider + '?redirect_uri=' + redirectUri;
+      let authUrl = '/auth/login/' + provider + '?redirect_uri=' + redirectUri;
+      
+      // 如果有邀请码，添加到URL中
+      if (refCode) {
+        authUrl += '&ref=' + encodeURIComponent(refCode);
+      }
+      
+      window.location.href = authUrl;
+    }
+    
+    // 切换登录方式
+    function toggleLoginMethod() {
+      const oauthButtons = document.getElementById('oauthButtons');
+      const emailForm = document.getElementById('emailLoginForm');
+      const toggleBtn = document.getElementById('toggleLoginMethod');
+      
+      if (oauthButtons.style.display === 'none') {
+        // 切换到OAuth登录
+        oauthButtons.style.display = 'flex';
+        emailForm.style.display = 'none';
+        toggleBtn.textContent = '使用邮箱登录';
+      } else {
+        // 切换到邮箱登录
+        oauthButtons.style.display = 'none';
+        emailForm.style.display = 'block';
+        toggleBtn.textContent = '使用 OAuth 登录';
+      }
+    }
+    
+    // 显示提示信息
+    function showEmailAlert(message, type = 'error') {
+      const alertDiv = document.getElementById('emailAlert');
+      const bgColor = type === 'success' ? 'rgba(34,197,94,.06)' : 'rgba(239,68,68,.06)';
+      const borderColor = type === 'success' ? 'rgba(34,197,94,.25)' : 'rgba(239,68,68,.25)';
+      const textColor = type === 'success' ? '#15803d' : '#b91c1c';
+      
+      alertDiv.innerHTML = \`<div style="border:1px solid \${borderColor};background:\${bgColor};padding:10px 12px;border-radius:14px;color:\${textColor};font-weight:800;font-size:13px">\${message}</div>\`;
+      
+      if (type === 'success') {
+        setTimeout(() => { alertDiv.innerHTML = ''; }, 3000);
+      }
+    }
+    
+    // 发送验证码
+    async function sendVerificationCode() {
+      const email = document.getElementById('emailInput').value.trim();
+      
+      if (!email) {
+        showEmailAlert('请输入邮箱地址');
+        return;
+      }
+      
+      // 验证邮箱格式
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        showEmailAlert('请输入有效的邮箱地址');
+        return;
+      }
+      
+      const sendBtn = document.getElementById('sendCodeBtn');
+      sendBtn.disabled = true;
+      sendBtn.textContent = '发送中...';
+      
+      try {
+        const response = await fetch('/api/auth/send-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          // 如果返回了验证码（邮件发送失败的情况），显示在提示中
+          if (data.code) {
+            showEmailAlert(data.message + '<br><strong style="font-size:18px;letter-spacing:2px;color:#667eea">验证码: ' + data.code + '</strong>', 'success');
+          } else {
+            showEmailAlert(data.message || '验证码已发送到您的邮箱，请查收', 'success');
+          }
+          
+          // 显示验证码输入框和验证按钮
+          document.getElementById('codeInputGroup').style.display = 'block';
+          document.getElementById('verifyCodeBtn').style.display = 'block';
+          sendBtn.style.display = 'none';
+          
+          // 开始倒计时
+          startCountdown();
+        } else {
+          showEmailAlert(data.error || '发送失败，请稍后重试');
+          sendBtn.disabled = false;
+          sendBtn.textContent = '发送验证码';
+        }
+      } catch (error) {
+        showEmailAlert('网络错误，请稍后重试');
+        sendBtn.disabled = false;
+        sendBtn.textContent = '发送验证码';
+      }
+    }
+    
+    // 倒计时
+    function startCountdown() {
+      countdown = 60;
+      const sendBtn = document.getElementById('sendCodeBtn');
+      
+      countdownTimer = setInterval(() => {
+        countdown--;
+        if (countdown > 0) {
+          sendBtn.textContent = \`重新发送(\${countdown}s)\`;
+        } else {
+          clearInterval(countdownTimer);
+          sendBtn.disabled = false;
+          sendBtn.textContent = '重新发送验证码';
+          sendBtn.style.display = 'block';
+        }
+      }, 1000);
+    }
+    
+    // 验证验证码并登录
+    async function verifyCode() {
+      const email = document.getElementById('emailInput').value.trim();
+      const code = document.getElementById('codeInput').value.trim();
+      
+      if (!code || code.length !== 6) {
+        showEmailAlert('请输入6位验证码');
+        return;
+      }
+      
+      const verifyBtn = document.getElementById('verifyCodeBtn');
+      verifyBtn.disabled = true;
+      verifyBtn.textContent = '验证中...';
+      
+      try {
+        // 获取URL中的ref参数（邀请码）
+        const urlParams = new URLSearchParams(window.location.search);
+        const refCode = urlParams.get('ref');
+        
+        const response = await fetch('/api/auth/verify-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, code, ref_code: refCode })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          showEmailAlert('登录成功，正在跳转...', 'success');
+          
+          // 保存token并跳转
+          setTimeout(() => {
+            window.location.href = '/auth/web-callback?token=' + data.token + '&email=' + encodeURIComponent(email);
+          }, 1000);
+        } else {
+          showEmailAlert(data.error || '验证失败，请重试');
+          verifyBtn.disabled = false;
+          verifyBtn.textContent = '验证并登录';
+        }
+      } catch (error) {
+        showEmailAlert('网络错误，请稍后重试');
+        verifyBtn.disabled = false;
+        verifyBtn.textContent = '验证并登录';
+      }
     }
   </script>
 </main>
@@ -2867,21 +3092,283 @@ export default {
         }
     }
 
+    // ============================================
+    // 邮箱验证码登录 API
+    // ============================================
+    
+    // 发送验证码
+    if (url.pathname === '/api/auth/send-code' && request.method === 'POST') {
+      try {
+        const body: any = await request.json();
+        const email = body.email?.trim();
+        
+        if (!email) {
+          return new Response(JSON.stringify({ error: '请提供邮箱地址' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // 验证邮箱格式
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+          return new Response(JSON.stringify({ error: '邮箱格式不正确' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // 检查是否在60秒内已发送过验证码
+        const recentCode = await env.DB.prepare(
+          'SELECT created_at FROM email_verification_codes WHERE email = ? AND created_at > ? ORDER BY created_at DESC LIMIT 1'
+        ).bind(email, Date.now() - 60000).first();
+        
+        if (recentCode) {
+          return new Response(JSON.stringify({ error: '验证码已发送，请稍后再试' }), {
+            status: 429,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // 生成6位数字验证码
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+        const expiresAt = Date.now() + 10 * 60 * 1000; // 10分钟有效期
+        
+        // 保存验证码到数据库
+        await env.DB.prepare(
+          'INSERT INTO email_verification_codes (email, code, created_at, expires_at) VALUES (?, ?, ?, ?)'
+        ).bind(email, code, Date.now(), expiresAt).run();
+        
+        // 发送邮件（使用Resend服务）
+        let emailSent = false;
+        try {
+          if (env.RESEND_API_KEY) {
+            console.log(`[邮箱验证码] 准备发送邮件到 ${email}`);
+            
+            const emailResponse = await fetch('https://api.resend.com/emails', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                from: 'Memoraid <onboarding@resend.dev>', // 使用Resend的测试域名
+                to: [email],
+                subject: '【Memoraid】登录验证码',
+                html: `
+                  <!DOCTYPE html>
+                  <html>
+                  <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                  </head>
+                  <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5;">
+                    <div style="max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                      <!-- Header -->
+                      <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 32px 24px; text-align: center;">
+                        <h1 style="margin: 0; color: #ffffff; font-size: 28px; font-weight: 700;">Memoraid</h1>
+                        <p style="margin: 8px 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">AI驱动的内容创作助手</p>
+                      </div>
+                      
+                      <!-- Content -->
+                      <div style="padding: 40px 32px;">
+                        <h2 style="margin: 0 0 16px; color: #1f2937; font-size: 20px; font-weight: 600;">登录验证码</h2>
+                        <p style="margin: 0 0 24px; color: #6b7280; font-size: 15px; line-height: 1.6;">
+                          您正在登录 Memoraid，您的验证码是：
+                        </p>
+                        
+                        <!-- Verification Code -->
+                        <div style="background-color: #f9fafb; border: 2px dashed #e5e7eb; border-radius: 8px; padding: 24px; text-align: center; margin-bottom: 24px;">
+                          <div style="font-size: 36px; font-weight: 700; color: #667eea; letter-spacing: 8px; font-family: 'Courier New', monospace;">
+                            ${code}
+                          </div>
+                        </div>
+                        
+                        <p style="margin: 0 0 16px; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                          <strong style="color: #ef4444;">⚠️ 重要提示：</strong>
+                        </p>
+                        <ul style="margin: 0 0 24px; padding-left: 20px; color: #6b7280; font-size: 14px; line-height: 1.8;">
+                          <li>验证码有效期为 <strong>10分钟</strong></li>
+                          <li>请勿将验证码告知他人</li>
+                          <li>如非本人操作，请忽略此邮件</li>
+                        </ul>
+                        
+                        <div style="border-top: 1px solid #e5e7eb; padding-top: 24px; margin-top: 32px;">
+                          <p style="margin: 0; color: #9ca3af; font-size: 13px; line-height: 1.6;">
+                            此邮件由系统自动发送，请勿直接回复。<br>
+                            如有疑问，请访问 <a href="https://memoraid.dpdns.org" style="color: #667eea; text-decoration: none;">memoraid.dpdns.org</a>
+                          </p>
+                        </div>
+                      </div>
+                      
+                      <!-- Footer -->
+                      <div style="background-color: #f9fafb; padding: 24px 32px; text-align: center; border-top: 1px solid #e5e7eb;">
+                        <p style="margin: 0; color: #9ca3af; font-size: 12px;">
+                          © ${new Date().getFullYear()} Memoraid. All rights reserved.
+                        </p>
+                      </div>
+                    </div>
+                  </body>
+                  </html>
+                `
+              })
+            });
+            
+            if (!emailResponse.ok) {
+              const errorData = await emailResponse.json();
+              console.error('[Resend发送失败]', errorData);
+              emailSent = false;
+              // 不抛出错误，继续执行，让用户可以使用验证码
+            } else {
+              console.log(`[邮箱验证码] 已通过Resend发送到 ${email}`);
+              emailSent = true;
+            }
+          } else {
+            // 如果没有配置Resend API Key，只记录到控制台
+            console.log(`[邮箱验证码] ${email}: ${code} (未配置Resend，仅记录)`);
+            emailSent = false;
+          }
+        } catch (emailError) {
+          console.error('[邮件发送失败]', emailError);
+          emailSent = false;
+          // 邮件发送失败不影响验证码生成，用户仍可使用
+        }
+        
+        // 如果邮件发送失败，在响应中返回验证码（方便测试）
+        // 生产环境建议验证域名后删除此逻辑
+        const shouldReturnCode = !emailSent;
+        
+        return new Response(JSON.stringify({ 
+          success: true,
+          message: emailSent ? '验证码已发送到您的邮箱' : '验证码已生成（邮件发送失败，请查看下方验证码）',
+          ...(shouldReturnCode ? { code } : {}) // 邮件发送失败时返回验证码
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        console.error('[发送验证码失败]', e);
+        return new Response(JSON.stringify({ error: '发送失败，请稍后重试' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+    
+    // 验证验证码并登录
+    if (url.pathname === '/api/auth/verify-code' && request.method === 'POST') {
+      try {
+        const body: any = await request.json();
+        const email = body.email?.trim();
+        const code = body.code?.trim();
+        const refCode = body.ref_code?.trim(); // 邀请码
+        
+        if (!email || !code) {
+          return new Response(JSON.stringify({ error: '请提供邮箱和验证码' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // 查询验证码
+        const verificationRecord = await env.DB.prepare(
+          'SELECT * FROM email_verification_codes WHERE email = ? AND code = ? AND used = 0 AND expires_at > ? ORDER BY created_at DESC LIMIT 1'
+        ).bind(email, code, Date.now()).first<{
+          id: number;
+          email: string;
+          code: string;
+          expires_at: number;
+        }>();
+        
+        if (!verificationRecord) {
+          return new Response(JSON.stringify({ error: '验证码错误或已过期' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+        
+        // 标记验证码为已使用
+        await env.DB.prepare(
+          'UPDATE email_verification_codes SET used = 1 WHERE id = ?'
+        ).bind(verificationRecord.id).run();
+        
+        // 查找或创建用户
+        const emailUserId = `email_${email}`;
+        let user = await env.DB.prepare(
+          'SELECT id, email FROM users WHERE email = ? OR id = ?'
+        ).bind(email, emailUserId).first<{ id: string; email: string }>();
+        
+        let finalUserId = emailUserId;
+        
+        if (!user) {
+          // 新用户，创建账号
+          await env.DB.prepare(
+            'INSERT INTO users (id, email, provider, provider_id) VALUES (?, ?, ?, ?)'
+          ).bind(emailUserId, email, 'email', email).run();
+          
+          finalUserId = emailUserId;
+          
+          // 【推广系统】记录邀请关系
+          if (refCode) {
+            try {
+              const invitation = await env.DB.prepare(
+                'SELECT inviter_id FROM user_invitations WHERE invite_code = ? AND invitee_id IS NULL LIMIT 1'
+              ).bind(refCode).first<{ inviter_id: string }>();
+              
+              if (invitation) {
+                await env.DB.prepare(
+                  'UPDATE user_invitations SET invitee_id = ?, invited_at = ? WHERE invite_code = ? AND invitee_id IS NULL'
+                ).bind(finalUserId, Date.now(), refCode).run();
+                
+                console.log(`[推广系统] 记录邀请关系: ${invitation.inviter_id} -> ${finalUserId} (邮箱: ${email})`);
+              }
+            } catch (inviteError) {
+              console.error('[推广系统] 记录邀请关系失败:', inviteError);
+            }
+          }
+        } else {
+          finalUserId = user.id;
+        }
+        
+        // 生成token
+        const appToken = btoa(JSON.stringify({ 
+          userId: finalUserId, 
+          email, 
+          exp: Date.now() + 30 * 24 * 3600 * 1000 
+        }));
+        const fullToken = `mock_jwt_${appToken}`;
+        
+        return new Response(JSON.stringify({ 
+          success: true,
+          token: fullToken,
+          email
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        console.error('[验证码登录失败]', e);
+        return new Response(JSON.stringify({ error: '登录失败，请稍后重试' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
     // 1. Auth Init - Redirect to Provider
     if (url.pathname.startsWith('/auth/login/') && request.method === 'GET') {
        const provider = url.pathname.split('/').pop();
        const redirectUri = url.searchParams.get('redirect_uri');
        const anonymousId = url.searchParams.get('anonymousId');
+       const refCode = url.searchParams.get('ref'); // 获取邀请码
 
-       console.log('Auth Init:', { provider, redirectUri, anonymousId, origin: effectiveOrigin });
+       console.log('Auth Init:', { provider, redirectUri, anonymousId, refCode, origin: effectiveOrigin });
 
        if (!redirectUri) {
            console.error('Missing redirect_uri');
            return new Response('Missing redirect_uri', { status: 400 });
        }
 
-       // Construct state object
-       const statePayload = JSON.stringify({ redirectUri, anonymousId });
+       // Construct state object (包含邀请码)
+       const statePayload = JSON.stringify({ redirectUri, anonymousId, refCode });
        const state = encodeURIComponent(statePayload);
 
        let authUrl = '';
@@ -2935,11 +3422,13 @@ export default {
         
         let extRedirectUri = '';
         let anonymousId = '';
+        let refCode = ''; // 从state中提取邀请码
 
         try {
             const stateObj = JSON.parse(decodeURIComponent(stateParam || ''));
             extRedirectUri = stateObj.redirectUri;
             anonymousId = stateObj.anonymousId;
+            refCode = stateObj.refCode || ''; // 从state对象中提取邀请码
         } catch (e) {
             // Fallback for old clients or if state is just the URI
             extRedirectUri = decodeURIComponent(stateParam || '');
@@ -3051,6 +3540,32 @@ export default {
                 await env.DB.prepare(
                     `INSERT INTO users (id, email, provider, provider_id) VALUES (?, ?, ?, ?)`
                 ).bind(finalUserId, email, provider, providerId).run();
+                
+                // 【推广系统】记录邀请关系
+                if (refCode) {
+                    try {
+                        // 查找邀请码对应的记录
+                        const invitation = await env.DB.prepare(
+                            'SELECT inviter_id FROM user_invitations WHERE invite_code = ? AND invitee_id IS NULL LIMIT 1'
+                        ).bind(refCode).first<{ inviter_id: string }>();
+                        
+                        if (invitation) {
+                            // 更新邀请关系，记录被邀请人ID
+                            await env.DB.prepare(`
+                                UPDATE user_invitations 
+                                SET invitee_id = ?, invited_at = ?
+                                WHERE invite_code = ? AND invitee_id IS NULL
+                            `).bind(finalUserId, Date.now(), refCode).run();
+                            
+                            console.log(`[推广系统] 记录邀请关系: ${invitation.inviter_id} -> ${finalUserId} (邀请码: ${refCode})`);
+                        } else {
+                            console.log(`[推广系统] 未找到有效的邀请码: ${refCode}`);
+                        }
+                    } catch (inviteError) {
+                        console.error('[推广系统] 记录邀请关系失败:', inviteError);
+                        // 邀请关系记录失败不影响注册流程
+                    }
+                }
             }
 
             // Generate App Token (Simple Mock JWT for demo, ideally use proper JWT lib)
@@ -3907,11 +4422,30 @@ export default {
             
             // 检查文章是否已存在
             const existingArticle = await env.DB.prepare(
-                'SELECT id, status FROM articles WHERE account_id = ? AND article_id = ?'
-            ).bind(accountDbId, articleId).first();
+                'SELECT id, status, extra_info FROM articles WHERE account_id = ? AND article_id = ?'
+            ).bind(accountDbId, articleId).first<{ id: number; status: string; extra_info: string }>();
             
             // 【调试日志】记录文章处理情况
             console.log(`[Article Report] 处理文章: articleId=${articleId}, accountDbId=${accountDbId}, exists=${!!existingArticle}, existingStatus=${existingArticle?.status}, newStatus=${status}`);
+            
+            // 【修复2026-03-28】如果文章已存在，合并extra_info，保留token数据
+            let finalExtraInfo = extra || {};
+            if (existingArticle && existingArticle.extra_info) {
+                try {
+                    const oldExtra = JSON.parse(existingArticle.extra_info);
+                    // 合并旧数据和新数据，新数据优先，但保留旧的token数据（如果新数据没有）
+                    finalExtraInfo = {
+                        ...oldExtra, // 旧数据
+                        ...extra,    // 新数据覆盖
+                        // 如果新数据没有token信息，保留旧的
+                        promptTokens: extra?.promptTokens || oldExtra.promptTokens,
+                        completionTokens: extra?.completionTokens || oldExtra.completionTokens,
+                        totalTokens: extra?.totalTokens || oldExtra.totalTokens,
+                    };
+                } catch (e) {
+                    console.error('[Article Report] 解析旧extra_info失败:', e);
+                }
+            }
             
             await env.DB.prepare(
                 `INSERT INTO articles (account_id, article_id, title, content_summary, cover_image, article_url, publish_time, status, extra_info, updated_at)
@@ -3934,7 +4468,7 @@ export default {
                 articleUrl || '',
                 publishTime,
                 status || 'published',
-                JSON.stringify(extra || {}),
+                JSON.stringify(finalExtraInfo),
                 Math.floor(Date.now() / 1000)
             ).run();
             
@@ -9315,6 +9849,9 @@ export default {
                     <a href="#recharge" class="nav-item" id="nav-recharge">
                         <span>💰</span> 充值记录
                     </a>
+                    <a href="#referral" class="nav-item" id="nav-referral">
+                        <span>🎁</span> 推广赚钱
+                    </a>
                     <a href="#tickets" class="nav-item" id="nav-tickets">
                         <span>💬</span> 工单反馈
                     </a>
@@ -9366,6 +9903,113 @@ export default {
                             <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
                         </div>
                         <div class="pagination" id="rechargePagination"></div>
+                    </section>
+                    
+                    <!-- 推广赚钱内容 -->
+                    <section class="tab-content" id="referralContent">
+                        <!-- 统计卡片 -->
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                            <div style="background: var(--card-bg); border-radius: var(--radius); padding: 20px; border: 1px solid var(--border);">
+                                <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">邀请人数</div>
+                                <div style="font-size: 2rem; font-weight: 700; color: var(--accent);" id="inviteeCount">0</div>
+                            </div>
+                            <div style="background: var(--card-bg); border-radius: var(--radius); padding: 20px; border: 1px solid var(--border);">
+                                <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">累计佣金</div>
+                                <div style="font-size: 2rem; font-weight: 700; color: var(--accent);" id="totalCommission">0<span style="font-size: 1rem; color: var(--text-muted); margin-left: 4px;">元</span></div>
+                            </div>
+                            <div style="background: var(--card-bg); border-radius: var(--radius); padding: 20px; border: 1px solid var(--border);">
+                                <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">可提现金额</div>
+                                <div style="font-size: 2rem; font-weight: 700; color: var(--emerald);" id="availableAmount">0<span style="font-size: 1rem; color: var(--text-muted); margin-left: 4px;">元</span></div>
+                            </div>
+                        </div>
+
+                        <!-- 邀请链接 -->
+                        <div style="background: var(--card-bg); border-radius: var(--radius); padding: 24px; margin-bottom: 20px; border: 1px solid var(--border);">
+                            <h3 style="margin: 0 0 16px; font-size: 1.1rem; font-weight: 600;">我的邀请链接</h3>
+                            <div style="background: var(--bg-subtle); border: 2px dashed var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px;">
+                                <div style="background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-family: monospace; font-size: 0.9rem; word-break: break-all; margin-bottom: 12px;" id="inviteUrl">加载中...</div>
+                                <button class="btn btn-primary" onclick="copyInviteUrl()">📋 复制链接</button>
+                            </div>
+                            <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0;">
+                                分享此链接给好友，好友通过链接注册并充值后，您将获得充值金额10%的佣金奖励
+                            </p>
+                        </div>
+
+                        <!-- 收款方式和提现 -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                            <!-- 收款方式 -->
+                            <div style="background: var(--card-bg); border-radius: var(--radius); padding: 24px; border: 1px solid var(--border);">
+                                <h3 style="margin: 0 0 16px; font-size: 1.1rem; font-weight: 600;">收款方式设置</h3>
+                                <div id="paymentAlert" style="margin-bottom: 12px;"></div>
+                                <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+                                    <button class="payment-tab active" data-type="alipay" onclick="switchPaymentTab('alipay')" style="flex: 1; padding: 12px; border: 2px solid var(--border); border-radius: 8px; background: var(--bg-subtle); cursor: pointer; text-align: center;">
+                                        <div style="font-size: 1.5rem; margin-bottom: 4px;">💳</div>
+                                        <div style="font-size: 0.85rem;">支付宝</div>
+                                    </button>
+                                    <button class="payment-tab" data-type="wechat" onclick="switchPaymentTab('wechat')" style="flex: 1; padding: 12px; border: 2px solid var(--border); border-radius: 8px; background: transparent; cursor: pointer; text-align: center;">
+                                        <div style="font-size: 1.5rem; margin-bottom: 4px;">💚</div>
+                                        <div style="font-size: 0.85rem;">微信</div>
+                                    </button>
+                                </div>
+                                <div id="alipayUpload" class="payment-upload">
+                                    <div style="border: 2px dashed var(--border); border-radius: 8px; padding: 30px; text-align: center; cursor: pointer;" onclick="document.getElementById('alipayInput').click()" id="alipayArea">
+                                        <div id="alipayPreview">
+                                            <div style="font-size: 2.5rem; margin-bottom: 8px;">📷</div>
+                                            <div style="color: var(--text); margin-bottom: 4px; font-size: 0.9rem;">点击上传支付宝收款码</div>
+                                            <div style="color: var(--text-muted); font-size: 0.75rem;">支持 JPG、PNG 格式</div>
+                                        </div>
+                                    </div>
+                                    <input type="file" id="alipayInput" accept="image/*" style="display: none;" onchange="uploadPaymentQRCode('alipay')">
+                                </div>
+                                <div id="wechatUpload" class="payment-upload" style="display: none;">
+                                    <div style="border: 2px dashed var(--border); border-radius: 8px; padding: 30px; text-align: center; cursor: pointer;" onclick="document.getElementById('wechatInput').click()" id="wechatArea">
+                                        <div id="wechatPreview">
+                                            <div style="font-size: 2.5rem; margin-bottom: 8px;">📷</div>
+                                            <div style="color: var(--text); margin-bottom: 4px; font-size: 0.9rem;">点击上传微信收款码</div>
+                                            <div style="color: var(--text-muted); font-size: 0.75rem;">支持 JPG、PNG 格式</div>
+                                        </div>
+                                    </div>
+                                    <input type="file" id="wechatInput" accept="image/*" style="display: none;" onchange="uploadPaymentQRCode('wechat')">
+                                </div>
+                            </div>
+
+                            <!-- 申请提现 -->
+                            <div style="background: var(--card-bg); border-radius: var(--radius); padding: 24px; border: 1px solid var(--border);">
+                                <h3 style="margin: 0 0 16px; font-size: 1.1rem; font-weight: 600;">申请提现</h3>
+                                <div id="withdrawAlert" style="margin-bottom: 12px;"></div>
+                                <div style="margin-bottom: 12px;">
+                                    <label style="display: block; margin-bottom: 6px; font-weight: 500; font-size: 0.85rem;">提现金额（最低100元）</label>
+                                    <input type="number" id="withdrawAmount" placeholder="请输入提现金额" min="100" style="width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; background: var(--bg); color: var(--text);">
+                                </div>
+                                <div style="margin-bottom: 16px;">
+                                    <label style="display: block; margin-bottom: 6px; font-weight: 500; font-size: 0.85rem;">提现方式</label>
+                                    <select id="withdrawMethod" style="width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; background: var(--bg); color: var(--text);">
+                                        <option value="alipay">支付宝</option>
+                                        <option value="wechat">微信</option>
+                                    </select>
+                                </div>
+                                <button class="btn btn-success" onclick="submitWithdraw()" id="withdrawBtn" style="width: 100%; background: var(--emerald);">申请提现</button>
+                                <p style="color: var(--text-muted); font-size: 0.75rem; margin: 12px 0 0;">
+                                    提现申请提交后，我们将在1-3个工作日内审核并打款到您的收款账户
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- 佣金明细 -->
+                        <div style="background: var(--card-bg); border-radius: var(--radius); padding: 24px; margin-bottom: 20px; border: 1px solid var(--border);">
+                            <h3 style="margin: 0 0 16px; font-size: 1.1rem; font-weight: 600;">佣金明细</h3>
+                            <div class="table-wrapper" id="commissionsTable">
+                                <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+                            </div>
+                        </div>
+
+                        <!-- 提现记录 -->
+                        <div style="background: var(--card-bg); border-radius: var(--radius); padding: 24px; border: 1px solid var(--border);">
+                            <h3 style="margin: 0 0 16px; font-size: 1.1rem; font-weight: 600;">提现记录</h3>
+                            <div class="table-wrapper" id="withdrawalsTable">
+                                <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+                            </div>
+                        </div>
                     </section>
                     
                     <!-- 工单反馈内容 -->
@@ -9647,6 +10291,17 @@ export default {
                     document.getElementById('rechargeContent').classList.add('active');
                     if (document.getElementById('rechargeTable').innerHTML.includes('加载中')) {
                         loadRechargeHistory();
+                    }
+                } else if (tab === 'referral') {
+                    document.getElementById('referralContent').classList.add('active');
+                    // 加载推广数据
+                    if (!window.referralDataLoaded) {
+                        loadReferralStats();
+                        loadInviteCode();
+                        loadPaymentMethods();
+                        loadCommissions();
+                        loadWithdrawals();
+                        window.referralDataLoaded = true;
                     }
                 } else if (tab === 'tickets') {
                     document.getElementById('ticketsContent').classList.add('active');
@@ -10823,6 +11478,283 @@ export default {
             }
         }
 
+        // ============================================
+        // 推广赚钱模块函数
+        // ============================================
+        
+        let currentPaymentTab = 'alipay';
+        let paymentMethods = { alipay_qrcode_url: null, wechat_qrcode_url: null };
+
+        // 显示提示信息
+        function showReferralAlert(containerId, message, type = 'info') {
+            const container = document.getElementById(containerId);
+            const colors = {
+                info: 'background: rgba(59, 130, 246, 0.1); color: rgb(59, 130, 246); border: 1px solid rgba(59, 130, 246, 0.3);',
+                success: 'background: rgba(16, 185, 129, 0.1); color: rgb(16, 185, 129); border: 1px solid rgba(16, 185, 129, 0.3);',
+                error: 'background: rgba(239, 68, 68, 0.1); color: rgb(239, 68, 68); border: 1px solid rgba(239, 68, 68, 0.3);'
+            };
+            container.innerHTML = \`<div style="padding: 12px 16px; border-radius: 8px; margin-bottom: 12px; \${colors[type]}">\${message}</div>\`;
+            setTimeout(() => container.innerHTML = '', 5000);
+        }
+
+        // 加载推广统计数据
+        async function loadReferralStats() {
+            try {
+                const res = await fetch(API_BASE + '/api/referral/stats', {
+                    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('memoraid_token') }
+                });
+                const data = await res.json();
+                
+                document.getElementById('inviteeCount').textContent = data.invitee_count || 0;
+                document.getElementById('totalCommission').innerHTML = (data.total_commission || 0).toFixed(2) + '<span style="font-size: 1rem; color: var(--text-muted); margin-left: 4px;">元</span>';
+                document.getElementById('availableAmount').innerHTML = (data.available_amount || 0).toFixed(2) + '<span style="font-size: 1rem; color: var(--text-muted); margin-left: 4px;">元</span>';
+                
+                // 更新提现按钮状态
+                const withdrawBtn = document.getElementById('withdrawBtn');
+                if (!data.can_withdraw) {
+                    withdrawBtn.disabled = true;
+                    withdrawBtn.textContent = '满100元可提现';
+                    withdrawBtn.style.opacity = '0.5';
+                    withdrawBtn.style.cursor = 'not-allowed';
+                }
+            } catch (e) {
+                console.error('加载推广统计失败:', e);
+            }
+        }
+
+        // 加载邀请码
+        async function loadInviteCode() {
+            try {
+                const res = await fetch(API_BASE + '/api/referral/code', {
+                    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('memoraid_token') }
+                });
+                const data = await res.json();
+                document.getElementById('inviteUrl').textContent = data.invite_url;
+            } catch (e) {
+                console.error('加载邀请码失败:', e);
+                document.getElementById('inviteUrl').textContent = '加载失败';
+            }
+        }
+
+        // 复制邀请链接
+        function copyInviteUrl() {
+            const url = document.getElementById('inviteUrl').textContent;
+            navigator.clipboard.writeText(url).then(() => {
+                showReferralAlert('paymentAlert', '✅ 邀请链接已复制到剪贴板', 'success');
+            });
+        }
+
+        // 切换收款方式标签
+        function switchPaymentTab(type) {
+            currentPaymentTab = type;
+            document.querySelectorAll('.payment-tab').forEach(tab => {
+                if (tab.dataset.type === type) {
+                    tab.style.borderColor = 'var(--accent)';
+                    tab.style.background = 'var(--bg-subtle)';
+                    tab.classList.add('active');
+                } else {
+                    tab.style.borderColor = 'var(--border)';
+                    tab.style.background = 'transparent';
+                    tab.classList.remove('active');
+                }
+            });
+            
+            document.getElementById('alipayUpload').style.display = type === 'alipay' ? 'block' : 'none';
+            document.getElementById('wechatUpload').style.display = type === 'wechat' ? 'block' : 'none';
+        }
+
+        // 加载收款方式
+        async function loadPaymentMethods() {
+            try {
+                const res = await fetch(API_BASE + '/api/referral/payment-method', {
+                    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('memoraid_token') }
+                });
+                paymentMethods = await res.json();
+                
+                // 显示已上传的收款码
+                if (paymentMethods.alipay_qrcode_url) {
+                    showQRCodePreview('alipay', paymentMethods.alipay_qrcode_url);
+                }
+                if (paymentMethods.wechat_qrcode_url) {
+                    showQRCodePreview('wechat', paymentMethods.wechat_qrcode_url);
+                }
+            } catch (e) {
+                console.error('加载收款方式失败:', e);
+            }
+        }
+
+        // 显示收款码预览
+        function showQRCodePreview(type, url) {
+            const preview = document.getElementById(type + 'Preview');
+            preview.innerHTML = \`<img src="\${url}" style="max-width: 200px; max-height: 200px; border-radius: 8px;" alt="\${type}收款码">\`;
+        }
+
+        // 上传收款码
+        async function uploadPaymentQRCode(type) {
+            const input = document.getElementById(type + 'Input');
+            const file = input.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('type', type);
+            formData.append('image', file);
+
+            try {
+                showReferralAlert('paymentAlert', '正在上传...', 'info');
+                const res = await fetch(API_BASE + '/api/referral/payment-method', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('memoraid_token') },
+                    body: formData
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    showReferralAlert('paymentAlert', '✅ 收款码上传成功', 'success');
+                    showQRCodePreview(type, data.image_url);
+                    paymentMethods[type + '_qrcode_url'] = data.image_url;
+                } else {
+                    showReferralAlert('paymentAlert', '❌ 上传失败: ' + data.error, 'error');
+                }
+            } catch (e) {
+                showReferralAlert('paymentAlert', '❌ 上传失败: ' + e.message, 'error');
+            }
+        }
+
+        // 申请提现
+        async function submitWithdraw() {
+            const amount = parseFloat(document.getElementById('withdrawAmount').value);
+            const method = document.getElementById('withdrawMethod').value;
+
+            if (!amount || amount < 100) {
+                showReferralAlert('withdrawAlert', '❌ 提现金额不能低于100元', 'error');
+                return;
+            }
+
+            // 检查是否已上传收款码
+            const qrcodeUrl = method === 'alipay' ? paymentMethods.alipay_qrcode_url : paymentMethods.wechat_qrcode_url;
+            if (!qrcodeUrl) {
+                showReferralAlert('withdrawAlert', '❌ 请先上传' + (method === 'alipay' ? '支付宝' : '微信') + '收款码', 'error');
+                return;
+            }
+
+            try {
+                const res = await fetch(API_BASE + '/api/referral/withdraw', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Bearer ' + localStorage.getItem('memoraid_token'),
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ amount, payment_method: method })
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    showReferralAlert('withdrawAlert', '✅ ' + data.message, 'success');
+                    document.getElementById('withdrawAmount').value = '';
+                    loadReferralStats();
+                    loadWithdrawals();
+                } else {
+                    showReferralAlert('withdrawAlert', '❌ ' + data.error, 'error');
+                }
+            } catch (e) {
+                showReferralAlert('withdrawAlert', '❌ 提交失败: ' + e.message, 'error');
+            }
+        }
+
+        // 加载佣金明细
+        async function loadCommissions() {
+            try {
+                const res = await fetch(API_BASE + '/api/referral/commissions?page=1&pageSize=20', {
+                    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('memoraid_token') }
+                });
+                const data = await res.json();
+                
+                const container = document.getElementById('commissionsTable');
+                if (data.records.length === 0) {
+                    container.innerHTML = '<div class="empty-state"><div class="empty-icon">💰</div><p class="empty-text">暂无佣金记录</p></div>';
+                    return;
+                }
+                
+                const statusMap = { 'pending': '待结算', 'settled': '已结算', 'withdrawn': '已提现' };
+                const statusColors = { 'pending': '#f59e0b', 'settled': '#10b981', 'withdrawn': '#3b82f6' };
+                
+                container.innerHTML = \`
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>时间</th>
+                                <th>被邀请人</th>
+                                <th>充值金额</th>
+                                <th>佣金金额</th>
+                                <th>状态</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            \${data.records.map(r => \`
+                                <tr>
+                                    <td>\${new Date(r.created_at).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}</td>
+                                    <td>\${r.invitee_email || r.invitee_id}</td>
+                                    <td>¥\${r.recharge_amount.toFixed(2)}</td>
+                                    <td style="color: var(--emerald); font-weight: 600;">¥\${r.amount.toFixed(2)}</td>
+                                    <td><span style="display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: \${statusColors[r.status]}22; color: \${statusColors[r.status]};">\${statusMap[r.status]}</span></td>
+                                </tr>
+                            \`).join('')}
+                        </tbody>
+                    </table>
+                \`;
+            } catch (e) {
+                console.error('加载佣金明细失败:', e);
+                document.getElementById('commissionsTable').innerHTML = '<div class="empty-state"><div class="empty-icon">❌</div><p class="empty-text">加载失败</p></div>';
+            }
+        }
+
+        // 加载提现记录
+        async function loadWithdrawals() {
+            try {
+                const res = await fetch(API_BASE + '/api/referral/withdrawals?page=1&pageSize=20', {
+                    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('memoraid_token') }
+                });
+                const data = await res.json();
+                
+                const container = document.getElementById('withdrawalsTable');
+                if (data.records.length === 0) {
+                    container.innerHTML = '<div class="empty-state"><div class="empty-icon">💸</div><p class="empty-text">暂无提现记录</p></div>';
+                    return;
+                }
+                
+                const statusMap = { 'pending': '待审核', 'approved': '已通过', 'rejected': '已拒绝', 'completed': '已完成' };
+                const statusColors = { 'pending': '#f59e0b', 'approved': '#10b981', 'rejected': '#ef4444', 'completed': '#10b981' };
+                
+                container.innerHTML = \`
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>申请时间</th>
+                                <th>提现金额</th>
+                                <th>提现方式</th>
+                                <th>状态</th>
+                                <th>备注</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            \${data.records.map(r => \`
+                                <tr>
+                                    <td>\${new Date(r.created_at).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}</td>
+                                    <td style="font-weight: 600;">¥\${r.amount.toFixed(2)}</td>
+                                    <td>\${r.payment_method === 'alipay' ? '支付宝' : '微信'}</td>
+                                    <td><span style="display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: \${statusColors[r.status]}22; color: \${statusColors[r.status]};">\${statusMap[r.status]}</span></td>
+                                    <td style="color: var(--text-muted); font-size: 0.85rem;">\${r.admin_note || '-'}</td>
+                                </tr>
+                            \`).join('')}
+                        </tbody>
+                    </table>
+                \`;
+            } catch (e) {
+                console.error('加载提现记录失败:', e);
+                document.getElementById('withdrawalsTable').innerHTML = '<div class="empty-state"><div class="empty-icon">❌</div><p class="empty-text">加载失败</p></div>';
+            }
+        }
+
         // 初始化：先检查登录，再加载数据
         async function init() {
             const isAuth = await checkAuth();
@@ -11265,6 +12197,430 @@ export default {
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), {
           status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // ============================================
+    // 推广系统 API - 用于管理用户推广和佣金
+    // ============================================
+
+    // 7.9.1 GET /api/referral/code - 获取或生成用户的邀请码
+    if (url.pathname === '/api/referral/code' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 查询用户是否已有邀请码
+        let inviteCode = await env.DB.prepare(
+          'SELECT invite_code FROM user_invitations WHERE inviter_id = ? LIMIT 1'
+        ).bind(userId).first<{ invite_code: string }>();
+
+        // 如果没有，生成一个唯一的邀请码
+        if (!inviteCode) {
+          // 生成6位随机邀请码（字母+数字）
+          const generateCode = () => {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 去掉容易混淆的字符
+            let code = '';
+            for (let i = 0; i < 6; i++) {
+              code += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return code;
+          };
+
+          // 确保邀请码唯一
+          let code = generateCode();
+          let attempts = 0;
+          while (attempts < 10) {
+            const existing = await env.DB.prepare(
+              'SELECT invite_code FROM user_invitations WHERE invite_code = ?'
+            ).bind(code).first();
+            if (!existing) break;
+            code = generateCode();
+            attempts++;
+          }
+
+          // 插入邀请码到数据库
+          await env.DB.prepare(`
+            INSERT INTO user_invitations (inviter_id, invite_code, created_at)
+            VALUES (?, ?, ?)
+          `).bind(userId, code, Date.now()).run();
+          
+          inviteCode = { invite_code: code };
+        }
+
+        // 生成邀请链接
+        const inviteUrl = `${effectiveOrigin}/login?ref=${inviteCode.invite_code}`;
+
+        return new Response(JSON.stringify({
+          invite_code: inviteCode.invite_code,
+          invite_url: inviteUrl
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.2 GET /api/referral/stats - 获取推广统计数据
+    if (url.pathname === '/api/referral/stats' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 统计邀请人数（只统计已完成邀请的，即invitee_id不为空）
+        const inviteeCount = await env.DB.prepare(
+          'SELECT COUNT(*) as count FROM user_invitations WHERE inviter_id = ? AND invitee_id IS NOT NULL'
+        ).bind(userId).first<{ count: number }>();
+
+        // 统计累计佣金（已结算的）
+        const totalCommission = await env.DB.prepare(
+          'SELECT COALESCE(SUM(amount), 0) as total FROM commission_records WHERE inviter_id = ? AND status IN ("settled", "withdrawn")'
+        ).bind(userId).first<{ total: number }>();
+
+        // 统计待结算佣金
+        const pendingCommission = await env.DB.prepare(
+          'SELECT COALESCE(SUM(amount), 0) as total FROM commission_records WHERE inviter_id = ? AND status = "pending"'
+        ).bind(userId).first<{ total: number }>();
+
+        // 统计已提现金额
+        const withdrawnAmount = await env.DB.prepare(
+          'SELECT COALESCE(SUM(amount), 0) as total FROM withdrawal_records WHERE user_id = ? AND status = "completed"'
+        ).bind(userId).first<{ total: number }>();
+
+        // 可提现金额 = 已结算佣金 - 已提现金额
+        const availableAmount = (totalCommission?.total || 0) - (withdrawnAmount?.total || 0);
+
+        return new Response(JSON.stringify({
+          invitee_count: inviteeCount?.count || 0,
+          total_commission: totalCommission?.total || 0,
+          pending_commission: pendingCommission?.total || 0,
+          withdrawn_amount: withdrawnAmount?.total || 0,
+          available_amount: availableAmount,
+          can_withdraw: availableAmount >= 100 // 满100元可提现
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.3 GET /api/referral/commissions - 获取佣金明细列表
+    if (url.pathname === '/api/referral/commissions' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const page = parseInt(url.searchParams.get('page') || '1');
+        const pageSize = parseInt(url.searchParams.get('pageSize') || '20');
+        const offset = (page - 1) * pageSize;
+
+        // 获取佣金记录
+        const records = await env.DB.prepare(`
+          SELECT 
+            c.id,
+            c.invitee_id,
+            u.email as invitee_email,
+            c.order_id,
+            c.amount,
+            c.recharge_amount,
+            c.commission_rate,
+            c.status,
+            c.created_at
+          FROM commission_records c
+          LEFT JOIN users u ON c.invitee_id = u.id
+          WHERE c.inviter_id = ?
+          ORDER BY c.created_at DESC
+          LIMIT ? OFFSET ?
+        `).bind(userId, pageSize, offset).all();
+
+        // 获取总数
+        const totalRow = await env.DB.prepare(
+          'SELECT COUNT(*) as total FROM commission_records WHERE inviter_id = ?'
+        ).bind(userId).first<{ total: number }>();
+
+        return new Response(JSON.stringify({
+          records: records.results || [],
+          total: totalRow?.total || 0,
+          page,
+          pageSize
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.4 POST /api/referral/payment-method - 上传收款码
+    if (url.pathname === '/api/referral/payment-method' && request.method === 'POST') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const formData = await request.formData();
+        const paymentType = formData.get('type') as string; // 'alipay' or 'wechat'
+        const imageFile = formData.get('image') as File;
+
+        if (!paymentType || !imageFile) {
+          return new Response(JSON.stringify({ error: '缺少必要参数' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        if (paymentType !== 'alipay' && paymentType !== 'wechat') {
+          return new Response(JSON.stringify({ error: '无效的支付方式' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 生成唯一文件名
+        const timestamp = Date.now();
+        const ext = imageFile.name.split('.').pop() || 'jpg';
+        const fileName = `payment-qrcode/${userId}/${paymentType}_${timestamp}.${ext}`;
+
+        // 上传到 R2
+        const arrayBuffer = await imageFile.arrayBuffer();
+        await env.R2.put(fileName, arrayBuffer, {
+          httpMetadata: {
+            contentType: imageFile.type || 'image/jpeg'
+          }
+        });
+
+        // 生成访问URL
+        const imageUrl = `https://r2.memoraid.dpdns.org/${fileName}`;
+
+        // 更新或插入用户收款方式
+        const existing = await env.DB.prepare(
+          'SELECT id FROM user_payment_methods WHERE user_id = ?'
+        ).bind(userId).first();
+
+        if (existing) {
+          // 更新
+          if (paymentType === 'alipay') {
+            await env.DB.prepare(
+              'UPDATE user_payment_methods SET alipay_qrcode_url = ?, updated_at = ? WHERE user_id = ?'
+            ).bind(imageUrl, timestamp, userId).run();
+          } else {
+            await env.DB.prepare(
+              'UPDATE user_payment_methods SET wechat_qrcode_url = ?, updated_at = ? WHERE user_id = ?'
+            ).bind(imageUrl, timestamp, userId).run();
+          }
+        } else {
+          // 插入
+          if (paymentType === 'alipay') {
+            await env.DB.prepare(
+              'INSERT INTO user_payment_methods (user_id, alipay_qrcode_url, updated_at) VALUES (?, ?, ?)'
+            ).bind(userId, imageUrl, timestamp).run();
+          } else {
+            await env.DB.prepare(
+              'INSERT INTO user_payment_methods (user_id, wechat_qrcode_url, updated_at) VALUES (?, ?, ?)'
+            ).bind(userId, imageUrl, timestamp).run();
+          }
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          image_url: imageUrl
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.5 GET /api/referral/payment-method - 获取收款码
+    if (url.pathname === '/api/referral/payment-method' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const paymentMethod = await env.DB.prepare(
+          'SELECT alipay_qrcode_url, wechat_qrcode_url FROM user_payment_methods WHERE user_id = ?'
+        ).bind(userId).first();
+
+        return new Response(JSON.stringify({
+          alipay_qrcode_url: paymentMethod?.alipay_qrcode_url || null,
+          wechat_qrcode_url: paymentMethod?.wechat_qrcode_url || null
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.6 POST /api/referral/withdraw - 申请提现
+    if (url.pathname === '/api/referral/withdraw' && request.method === 'POST') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const body = await request.json() as {
+          amount: number;
+          payment_method: 'alipay' | 'wechat';
+        };
+
+        if (!body.amount || body.amount < 100) {
+          return new Response(JSON.stringify({ error: '提现金额不能低于100元' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 检查可提现金额
+        const totalCommission = await env.DB.prepare(
+          'SELECT COALESCE(SUM(amount), 0) as total FROM commission_records WHERE inviter_id = ? AND status IN ("settled", "withdrawn")'
+        ).bind(userId).first<{ total: number }>();
+
+        const withdrawnAmount = await env.DB.prepare(
+          'SELECT COALESCE(SUM(amount), 0) as total FROM withdrawal_records WHERE user_id = ? AND status = "completed"'
+        ).bind(userId).first<{ total: number }>();
+
+        const availableAmount = (totalCommission?.total || 0) - (withdrawnAmount?.total || 0);
+
+        if (body.amount > availableAmount) {
+          return new Response(JSON.stringify({ error: '可提现金额不足' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 获取收款码
+        const paymentMethod = await env.DB.prepare(
+          'SELECT alipay_qrcode_url, wechat_qrcode_url FROM user_payment_methods WHERE user_id = ?'
+        ).bind(userId).first<{ alipay_qrcode_url?: string; wechat_qrcode_url?: string }>();
+
+        const qrcodeUrl = body.payment_method === 'alipay' 
+          ? paymentMethod?.alipay_qrcode_url 
+          : paymentMethod?.wechat_qrcode_url;
+
+        if (!qrcodeUrl) {
+          return new Response(JSON.stringify({ error: '请先上传收款码' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 创建提现记录
+        const timestamp = Date.now();
+        await env.DB.prepare(`
+          INSERT INTO withdrawal_records (user_id, amount, payment_method, payment_qrcode_url, status, created_at)
+          VALUES (?, ?, ?, ?, 'pending', ?)
+        `).bind(userId, body.amount, body.payment_method, qrcodeUrl, timestamp).run();
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: '提现申请已提交，请等待审核'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.7 GET /api/referral/withdrawals - 获取提现记录
+    if (url.pathname === '/api/referral/withdrawals' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const page = parseInt(url.searchParams.get('page') || '1');
+        const pageSize = parseInt(url.searchParams.get('pageSize') || '20');
+        const offset = (page - 1) * pageSize;
+
+        // 获取提现记录
+        const records = await env.DB.prepare(`
+          SELECT 
+            id,
+            amount,
+            payment_method,
+            status,
+            admin_note,
+            created_at,
+            processed_at
+          FROM withdrawal_records
+          WHERE user_id = ?
+          ORDER BY created_at DESC
+          LIMIT ? OFFSET ?
+        `).bind(userId, pageSize, offset).all();
+
+        // 获取总数
+        const totalRow = await env.DB.prepare(
+          'SELECT COUNT(*) as total FROM withdrawal_records WHERE user_id = ?'
+        ).bind(userId).first<{ total: number }>();
+
+        return new Response(JSON.stringify({
+          records: records.results || [],
+          total: totalRow?.total || 0,
+          page,
+          pageSize
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
     }

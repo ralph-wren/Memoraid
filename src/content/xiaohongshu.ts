@@ -1721,14 +1721,14 @@ const installPublishReporting = () => {
                     title: finalTitle,
                     url: currentUrl,
                     status: 'published',
+                    generatedId, // 传递generatedId，确保同一篇文章不会重复计费
                     extra: {
                         sourceUrl: pendingSourceUrl,
                         // 记录 token 消耗数据
                         promptTokens: tokenUsage?.promptTokens,
                         completionTokens: tokenUsage?.completionTokens,
                         totalTokens: tokenUsage?.totalTokens,
-                    },
-                    generatedId
+                    }
                 }).then(() => {
                     console.log('[Xiaohongshu URL Monitor] 文章上报成功');
                 }).catch(err => {
