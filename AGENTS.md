@@ -13,7 +13,7 @@
 11. 本地已经安装和cloudflare的d1，r1数据库的交互命令
 12. 任务完成后检查下是否符合要求
 13. 使用 npx playwright codegen --channel=chrome --user-data-dir="C:\Users\ralph\AppData\Local\Chrome-Automation" https://mp.weixin.qq.com/ 这种命令打开浏览器查看相关页面操作
-14. 需要时参考docs\REMOTE_DEBUG.md的调试步骤进行远程调试，需要我在浏览器生成验证码发给你进行调试
+14. 需要时参考docs\REMOTE_DEBUG.md的调试步骤进行远程调试，需要我在浏览器生成验证码发给你进行调试，现在可以使用~/.kiro/skills/memoraid-remote-debug下的skills调试
 15. 生成所有临时文件、测试文件都统一放在跟目录的test目录下，用完删除
 16. 每次执行npm run release前，更新一下版本信息
 17. 需要遵守.cursor目录下的规则

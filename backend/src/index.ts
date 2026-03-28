@@ -473,8 +473,13 @@ async function settleRechargeOrder(
     ).bind(order.user_id).first<{ inviter_id: string; invite_code: string }>();
 
     if (invitation) {
-      // 计算佣金（10%）
-      const commissionRate = 0.1;
+      // 从系统配置中读取佣金比例
+      const commissionConfig = await env.DB.prepare(
+        'SELECT config_value FROM system_configs WHERE config_key = ?'
+      ).bind('referral_commission_rate').first<{ config_value: string }>();
+      
+      // 默认佣金比例为10%，如果配置了则使用配置的值
+      const commissionRate = commissionConfig ? parseFloat(commissionConfig.config_value) : 0.1;
       const commissionAmount = Number(order.amount) * commissionRate;
 
       // 创建佣金记录
@@ -492,7 +497,7 @@ async function settleRechargeOrder(
         Date.now()
       ).run();
 
-      console.log(`[推广系统] 为邀请人 ${invitation.inviter_id} 结算佣金 ${commissionAmount} 元`);
+      console.log(`[推广系统] 为邀请人 ${invitation.inviter_id} 结算佣金 ${commissionAmount} 元（比例：${commissionRate * 100}%）`);
     }
   } catch (commissionError) {
     console.error('[推广系统] 佣金结算失败:', commissionError);
@@ -3145,6 +3150,9 @@ export default {
           if (env.RESEND_API_KEY) {
             console.log(`[邮箱验证码] 准备发送邮件到 ${email}`);
             
+            // 【修改2026-03-29】使用配置的域名发送邮件
+            const { emailSender, emailSenderName } = await loadEmailConfig(env);
+            
             const emailResponse = await fetch('https://api.resend.com/emails', {
               method: 'POST',
               headers: {
@@ -3152,7 +3160,7 @@ export default {
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({
-                from: 'Memoraid <onboarding@resend.dev>', // 使用Resend的测试域名
+                from: `${emailSenderName} <${emailSender}>`, // 使用配置的发件人地址
                 to: [email],
                 subject: '【Memoraid】登录验证码',
                 html: `
@@ -10280,6 +10288,14 @@ export default {
                             </div>
                         </div>
 
+                        <!-- 邀请用户明细 -->
+                        <div style="background: var(--card-bg); border-radius: var(--radius); padding: 24px; margin-bottom: 20px; border: 1px solid var(--border);">
+                            <h3 style="margin: 0 0 16px; font-size: 1.1rem; font-weight: 600;">邀请用户明细</h3>
+                            <div class="table-wrapper" id="inviteesTable">
+                                <div class="loading-state"><div class="spinner"></div><div class="loading-text">加载中...</div></div>
+                            </div>
+                        </div>
+
                         <!-- 佣金明细 -->
                         <div style="background: var(--card-bg); border-radius: var(--radius); padding: 24px; margin-bottom: 20px; border: 1px solid var(--border);">
                             <h3 style="margin: 0 0 16px; font-size: 1.1rem; font-weight: 600;">佣金明细</h3>
@@ -10584,6 +10600,7 @@ export default {
                         loadReferralStats();
                         loadInviteCode();
                         loadPaymentMethods();
+                        loadInvitees(); // 加载邀请用户明细
                         loadCommissions();
                         loadWithdrawals();
                         window.referralDataLoaded = true;
@@ -12053,6 +12070,52 @@ export default {
             }
         }
 
+        // 加载邀请用户明细
+        async function loadInvitees() {
+            try {
+                const res = await fetch(API_BASE + '/api/referral/invitees?page=1&pageSize=20', {
+                    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('memoraid_token') }
+                });
+                const data = await res.json();
+                
+                const container = document.getElementById('inviteesTable');
+                
+                // 检查是否有错误或数据为空
+                if (!data.records || data.records.length === 0) {
+                    container.innerHTML = '<div class="empty-state"><div class="empty-icon">👥</div><p class="empty-text">暂无邀请用户</p></div>';
+                    return;
+                }
+                
+                container.innerHTML = \`
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>邀请时间</th>
+                                <th>用户邮箱</th>
+                                <th>注册时间</th>
+                                <th>累计充值</th>
+                                <th>累计佣金</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            \${data.records.map(r => \`
+                                <tr>
+                                    <td>\${new Date(r.invited_at).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}</td>
+                                    <td>\${r.invitee_email || r.invitee_id}</td>
+                                    <td>\${r.invited_at ? new Date(r.invited_at).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}) : '-'}</td>
+                                    <td style="font-weight: 600;">¥\${(r.total_recharge || 0).toFixed(2)}</td>
+                                    <td style="color: var(--emerald); font-weight: 600;">¥\${(r.total_commission || 0).toFixed(2)}</td>
+                                </tr>
+                            \`).join('')}
+                        </tbody>
+                    </table>
+                \`;
+            } catch (e) {
+                console.error('加载邀请用户明细失败:', e);
+                document.getElementById('inviteesTable').innerHTML = '<div class="empty-state"><div class="empty-icon">❌</div><p class="empty-text">加载失败</p></div>';
+            }
+        }
+
         // 加载佣金明细
         async function loadCommissions() {
             try {
@@ -13031,6 +13094,77 @@ export default {
 
         return new Response(JSON.stringify({
           records: records.results || [],
+          total: totalRow?.total || 0,
+          page,
+          pageSize
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.8 GET /api/referral/invitees - 获取邀请用户明细
+    if (url.pathname === '/api/referral/invitees' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const page = parseInt(url.searchParams.get('page') || '1');
+        const pageSize = parseInt(url.searchParams.get('pageSize') || '20');
+        const offset = (page - 1) * pageSize;
+
+        // 获取邀请用户列表（只查询已完成邀请的，即invitee_id不为空）
+        const invitations = await env.DB.prepare(`
+          SELECT 
+            ui.invitee_id,
+            ui.invited_at,
+            u.email as invitee_email
+          FROM user_invitations ui
+          LEFT JOIN users u ON ui.invitee_id = u.id
+          WHERE ui.inviter_id = ? AND ui.invitee_id IS NOT NULL
+          ORDER BY ui.invited_at DESC
+          LIMIT ? OFFSET ?
+        `).bind(userId, pageSize, offset).all();
+
+        // 为每个邀请用户计算累计充值和佣金
+        const records = [];
+        for (const inv of (invitations.results || [])) {
+          // 计算累计充值金额（使用payment_orders表）
+          const rechargeSum = await env.DB.prepare(
+            'SELECT COALESCE(SUM(amount), 0) as total FROM payment_orders WHERE user_id = ? AND status = "completed"'
+          ).bind(inv.invitee_id).first<{ total: number }>();
+
+          // 计算累计佣金
+          const commissionSum = await env.DB.prepare(
+            'SELECT COALESCE(SUM(amount), 0) as total FROM commission_records WHERE invitee_id = ?'
+          ).bind(inv.invitee_id).first<{ total: number }>();
+
+          records.push({
+            invitee_id: inv.invitee_id,
+            invitee_email: inv.invitee_email,
+            invited_at: inv.invited_at,
+            total_recharge: rechargeSum?.total || 0,
+            total_commission: commissionSum?.total || 0
+          });
+        }
+
+        // 获取总数
+        const totalRow = await env.DB.prepare(
+          'SELECT COUNT(*) as total FROM user_invitations WHERE inviter_id = ? AND invitee_id IS NOT NULL'
+        ).bind(userId).first<{ total: number }>();
+
+        return new Response(JSON.stringify({
+          records: records,
           total: totalRow?.total || 0,
           page,
           pageSize
