@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Plus, Trash2, Clock, Play, Pause, ChevronDown, ChevronUp, Zap, Loader2, FileText, Save, RefreshCw, Copy, X } from 'lucide-react';
 import {
   ScheduledTask, PublishPlatform, ScheduleType,
@@ -87,7 +87,8 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
   };
 
   // 从后端加载任务列表（如果有未保存的修改，跳过刷新避免覆盖）
-  const loadTasksFromBackend = async (force: boolean = false) => {
+  // 使用 useCallback 避免不必要的重新创建，依赖 backendUrl 和 getAuthHeaders
+  const loadTasksFromBackend = useCallback(async (force: boolean = false) => {
     // 如果有未保存的修改且不是强制刷新，跳过（使用 ref 避免闭包问题）
     if (!force && unsavedTaskIdsRef.current.size > 0) {
       console.log('[ScheduleSettings] 跳过自动刷新：有未保存的修改', Array.from(unsavedTaskIdsRef.current));
@@ -96,8 +97,15 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
     
     setLoading(true);
     try {
+      const headers: Record<string, string> = {};
+      if (settings.sync?.token) {
+        headers['Authorization'] = `Bearer ${settings.sync.token}`;
+      } else if (anonymousId) {
+        headers['X-Anonymous-ID'] = anonymousId;
+      }
+      
       const response = await fetch(`${backendUrl}/api/scheduled-tasks`, {
-        headers: getAuthHeaders(),
+        headers,
       });
       if (response.ok) {
         const data = await response.json();
@@ -118,14 +126,15 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
     } finally {
       setLoading(false);
     }
-  };
+  }, [backendUrl, settings.sync?.token, anonymousId]); // 依赖这些值，当它们变化时重新创建函数
 
   // 组件挂载时加载任务，并每10秒自动刷新（有未保存修改时跳过）
+  // 当 token 或 anonymousId 变化时也重新加载（用户登录/登出）
   useEffect(() => {
     loadTasksFromBackend(true); // 初始加载强制执行
     const interval = setInterval(() => loadTasksFromBackend(false), 10000); // 自动刷新时检查未保存状态
     return () => clearInterval(interval);
-  }, []);
+  }, [loadTasksFromBackend]); // 依赖 loadTasksFromBackend，当它变化时重新设置定时器
 
   // 标记任务为未保存
   const markTaskUnsaved = (taskId: string) => {

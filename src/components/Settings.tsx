@@ -15,7 +15,7 @@ interface ProviderConfig {
 }
 
 // 后端 API 地址
-const BACKEND_URL = 'http://memoraid.dpdns.org';
+const BACKEND_URL = 'https://memoraid.dpdns.org';
 
 const PROVIDERS: Record<string, ProviderConfig> = {
   'memoraid': {
@@ -174,6 +174,15 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
   const [showEncKey, setShowEncKey] = useState(false);
   const [globalSaveStatus, setGlobalSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle'); // 全局保存按钮状态
   // 移除 autoSaveStatus，不再需要自动保存状态
+  
+  // 邮箱验证码登录相关状态
+  const [showEmailLogin, setShowEmailLogin] = useState(false); // 是否显示邮箱登录表单
+  const [emailInput, setEmailInput] = useState(''); // 邮箱输入
+  const [emailCode, setEmailCode] = useState(''); // 验证码输入
+  const [emailCodeSent, setEmailCodeSent] = useState(false); // 是否已发送验证码
+  const [emailSending, setEmailSending] = useState(false); // 是否正在发送验证码
+  const [emailVerifying, setEmailVerifying] = useState(false); // 是否正在验证
+  const [emailCountdown, setEmailCountdown] = useState(0); // 倒计时秒数
 
   const t = getTranslation(settings.language || 'zh-CN');
 
@@ -502,6 +511,118 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
         setSyncStatus('idle');
         setSyncMessage(null);
       }, 10000);
+    }
+  };
+
+  // 发送邮箱验证码
+  const handleSendEmailCode = async () => {
+    if (!emailInput || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput)) {
+      setSyncMessage({ type: 'error', text: '请输入有效的邮箱地址' });
+      return;
+    }
+
+    setEmailSending(true);
+    setSyncMessage(null);
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/auth/send-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailInput })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setEmailCodeSent(true);
+        setSyncMessage({ type: 'success', text: data.message || '验证码已发送' });
+        
+        // 如果是测试环境，显示验证码
+        if (data.code) {
+          setSyncMessage({ type: 'success', text: `验证码：${data.code}（测试环境）` });
+        }
+        
+        // 开始60秒倒计时
+        setEmailCountdown(60);
+        const timer = setInterval(() => {
+          setEmailCountdown(prev => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      } else {
+        throw new Error(data.error || '发送失败');
+      }
+    } catch (error: any) {
+      console.error('发送验证码失败:', error);
+      setSyncMessage({ type: 'error', text: error.message || '发送失败，请稍后重试' });
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
+  // 验证邮箱验证码并登录
+  const handleVerifyEmailCode = async () => {
+    if (emailCode.length !== 6) {
+      setSyncMessage({ type: 'error', text: '请输入6位验证码' });
+      return;
+    }
+
+    setEmailVerifying(true);
+    setSyncMessage(null);
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/auth/verify-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          email: emailInput, 
+          code: emailCode 
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.token) {
+        // 登录成功，保存token和邮箱
+        const newSettings = {
+          ...settings,
+          sync: {
+            backendUrl: settings.sync?.backendUrl || BACKEND_URL, // 确保backendUrl存在
+            enabled: true,
+            token: data.token,
+            email: emailInput,
+            encryptionKey: settings.sync?.encryptionKey,
+            lastSynced: settings.sync?.lastSynced
+          }
+        };
+        setSettings(newSettings);
+        await saveSettings(newSettings);
+        
+        setSyncStatus('success');
+        setSyncMessage({ type: 'success', text: '登录成功！' });
+        
+        // 重置邮箱登录状态
+        setShowEmailLogin(false);
+        setEmailInput('');
+        setEmailCode('');
+        setEmailCodeSent(false);
+        setEmailCountdown(0);
+      } else {
+        throw new Error(data.error || '验证失败');
+      }
+    } catch (error: any) {
+      console.error('验证失败:', error);
+      setSyncMessage({ type: 'error', text: error.message || '验证失败，请重试' });
+    } finally {
+      setEmailVerifying(false);
+      setTimeout(() => {
+        setSyncStatus('idle');
+        setSyncMessage(null);
+      }, 3000);
     }
   };
 
@@ -884,6 +1005,92 @@ const Settings: React.FC<SettingsProps> = ({ onViewTaskLog }) => {
                 {t.githubLogin}
               </button>
             </div>
+            
+            {/* 邮箱验证码登录 */}
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-200"></div>
+              </div>
+              <div className="relative flex justify-center text-xs">
+                <span className="px-2 bg-white text-gray-500">或</span>
+              </div>
+            </div>
+            
+            {!showEmailLogin ? (
+              <button
+                onClick={() => setShowEmailLogin(true)}
+                className="w-full py-2 px-3 border rounded flex items-center justify-center gap-2 hover:bg-gray-50 text-sm font-medium transition"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                  <polyline points="22,6 12,13 2,6"/>
+                </svg>
+                其他邮箱登录
+              </button>
+            ) : (
+              <div className="space-y-2">
+                <input
+                  type="email"
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  placeholder="请输入邮箱地址"
+                  className="w-full px-3 py-2 border rounded text-sm"
+                  disabled={emailCodeSent}
+                />
+                {emailCodeSent && (
+                  <input
+                    type="text"
+                    value={emailCode}
+                    onChange={(e) => setEmailCode(e.target.value)}
+                    placeholder="请输入6位验证码"
+                    maxLength={6}
+                    className="w-full px-3 py-2 border rounded text-sm"
+                  />
+                )}
+                <div className="flex gap-2">
+                  {!emailCodeSent ? (
+                    <>
+                      <button
+                        onClick={handleSendEmailCode}
+                        disabled={!emailInput || emailSending}
+                        className="flex-1 py-2 px-3 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                      >
+                        {emailSending ? '发送中...' : '发送验证码'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowEmailLogin(false);
+                          setEmailInput('');
+                          setEmailCode('');
+                          setEmailCodeSent(false);
+                        }}
+                        className="px-3 py-2 border rounded text-sm hover:bg-gray-50 transition"
+                      >
+                        取消
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={handleVerifyEmailCode}
+                        disabled={emailCode.length !== 6 || emailVerifying}
+                        className="flex-1 py-2 px-3 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                      >
+                        {emailVerifying ? '验证中...' : '验证并登录'}
+                      </button>
+                      <button
+                        onClick={handleSendEmailCode}
+                        disabled={emailCountdown > 0 || emailSending}
+                        className="px-3 py-2 border rounded text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                      >
+                        {emailCountdown > 0 ? `${emailCountdown}秒` : '重新发送'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+            
             {syncMessage && (
               <div className={`text-xs p-2 rounded text-center ${syncMessage.type === 'success' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'
                 }`}>

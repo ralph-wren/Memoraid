@@ -2084,7 +2084,7 @@ function renderMarketingLogin(origin: string, error?: string | null): string {
           <button type="button" id="sendCodeBtn" class="btn btn-primary" style="width:100%;border-radius:14px" onclick="sendVerificationCode()">
             发送验证码
           </button>
-          <button type="button" id="verifyCodeBtn" class="btn btn-primary" style="width:100%;border-radius:14px;display:none" onclick="verifyCode()">
+          <button type="button" id="verifyCodeBtn" class="btn btn-primary" style="width:100%;border-radius:14px;margin-top:12px;display:none" onclick="verifyCode()">
             验证并登录
           </button>
         </div>
@@ -4322,25 +4322,36 @@ export default {
 
         const { platform, account, articles } = body;
 
-        // 【新增】检查用户额度 - 每篇文章消耗1次额度
+        // 【修改2026-03-28】检查用户额度 - 改为统计articles表动态计算
         const user = await env.DB.prepare('SELECT provider FROM users WHERE id = ?').bind(userId).first();
         const isAnonymous = user?.provider === 'anonymous';
         const freeLimit = isAnonymous ? 5 : 20;
         
-        // 查询已使用次数（从ai_usage_logs表）
-        const usageCount = await env.DB.prepare(
-          'SELECT COUNT(*) as count FROM ai_usage_logs WHERE user_id = ?'
-        ).bind(userId).first('count') as number || 0;
+        // 查询已生成的文章总数（从articles表）
+        const articleCountRow = await env.DB.prepare(`
+          SELECT COUNT(*) as count
+          FROM articles a
+          JOIN accounts ac ON a.account_id = ac.id
+          WHERE ac.user_id = ?
+        `).bind(userId).first<{ count?: number }>();
+        const totalArticles = Number(articleCountRow?.count || 0);
         
-        // 查询付费额度
-        const quotaRow = await env.DB.prepare(
-          'SELECT paid_quota_remaining FROM user_quotas WHERE user_id = ?'
-        ).bind(userId).first();
-        const paidQuota = quotaRow?.paid_quota_remaining || 0;
+        // 查询付费总额度（累计充值）
+        const paidTotalRow = await env.DB.prepare(`
+          SELECT COALESCE(SUM(quota_amount), 0) as paid_total
+          FROM payment_orders
+          WHERE user_id = ? AND status IN ('paid', 'approved')
+        `).bind(userId).first<{ paid_total?: number }>();
+        const paidTotal = Number(paidTotalRow?.paid_total || 0);
         
-        // 计算剩余额度
-        const freeRemaining = Math.max(0, freeLimit - usageCount);
-        const totalRemaining = freeRemaining + paidQuota;
+        // 计算剩余额度：前N篇算免费，超出部分算付费
+        const freeUsed = Math.min(totalArticles, freeLimit);
+        const freeRemaining = freeLimit - freeUsed;
+        
+        const paidUsed = Math.max(0, totalArticles - freeLimit);
+        const paidRemaining = paidTotal - paidUsed;
+        
+        const totalRemaining = freeRemaining + paidRemaining;
         
         // 检查是否有足够额度（每篇文章需要1次额度）
         const articlesCount = articles.length;
@@ -4350,7 +4361,7 @@ export default {
             message: `额度不足。需要 ${articlesCount} 次，剩余 ${totalRemaining} 次`,
             quota: {
               free_remaining: freeRemaining,
-              paid_remaining: paidQuota,
+              paid_remaining: paidRemaining,
               total_remaining: totalRemaining,
               required: articlesCount
             }
