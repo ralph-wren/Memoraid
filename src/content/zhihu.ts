@@ -250,6 +250,7 @@ class ZhihuLogger {
   private logContent: HTMLDivElement;
   private stopBtn: HTMLButtonElement;
   private onStop?: () => void;
+  private logs: Array<{ time: number; level: string; message: string }> = []; // 【新增2026-03-28】存储日志数据
 
   constructor() {
     this.container = document.createElement('div');
@@ -309,10 +310,21 @@ class ZhihuLogger {
   hide() { this.container.style.display = 'none'; }
   setStopCallback(cb: () => void) { this.onStop = cb; this.stopBtn.style.display = 'block'; }
   hideStopButton() { this.stopBtn.style.display = 'none'; }
-  clear() { this.logContent.innerHTML = ''; }
+  clear() { 
+    this.logContent.innerHTML = ''; 
+    this.logs = []; // 【新增2026-03-28】清空日志数据
+  }
 
   log(message: string, type: 'info' | 'action' | 'error' | 'success' | 'warn' = 'info') {
     this.show();
+    
+    // 【新增2026-03-28】保存日志到数组
+    this.logs.push({
+      time: Date.now(),
+      level: type,
+      message: message
+    });
+    
     const line = document.createElement('div');
     line.style.cssText = 'margin-top:4px;word-wrap:break-word;white-space:pre-wrap;line-height:1.4;';
     const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
@@ -322,6 +334,11 @@ class ZhihuLogger {
     this.logContent.appendChild(line);
     this.logContent.scrollTop = this.logContent.scrollHeight;
     if (type === 'error') { reportError(message, { type, context: 'ZhihuContentScript' }); }
+  }
+  
+  // 【新增2026-03-28】获取日志数据
+  getLogs(): Array<{ time: number; level: string; message: string }> {
+    return [...this.logs]; // 返回副本
   }
 }
 
@@ -2211,6 +2228,9 @@ const installPublishReporting = () => {
       sessionStorage.removeItem('memoraid_token_usage');
     }
 
+    // 【新增2026-03-28】获取发布日志
+    const publishLogs = logger.getLogs();
+
     // 直接调用chrome.runtime.sendMessage,避免导入问题
     const generatedId = sessionStorage.getItem('memoraid_generated_id') || undefined;
     
@@ -2230,7 +2250,8 @@ const installPublishReporting = () => {
         url: publishedUrl,
         status: 'published',
         extra,
-        generatedId
+        generatedId,
+        logs: publishLogs // 【新增2026-03-28】传递日志
       }
     }).then(() => {
       console.log('[Memoraid Zhihu] 文章上报成功');

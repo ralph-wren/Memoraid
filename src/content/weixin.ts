@@ -1,5 +1,6 @@
 import { reportArticlePublish, reportError } from '../utils/debug';
 import { DOMHelper } from '../utils/domHelper';
+import { showDebugPanel, startDebugSession, stopDebugSession, getDebugSessionStatus } from '../utils/remoteDebug';
 
 // WeChat Official Account Publish Content Script
 // 微信公众号发布页面自动化 - 基于 Playwright 录制
@@ -213,6 +214,7 @@ class WeixinLogger {
   private logContent: HTMLDivElement;
   private stopBtn: HTMLButtonElement;
   private onStop?: () => void;
+  private logs: Array<{ time: number; level: string; message: string }> = []; // 【新增2026-03-28】存储日志数据
 
   constructor() {
     this.container = document.createElement('div');
@@ -266,25 +268,81 @@ class WeixinLogger {
     this.container.appendChild(header);
     this.container.appendChild(this.logContent);
     document.body.appendChild(this.container);
+    
+    // 【新增2026-03-28】从 sessionStorage 恢复日志（如果页面刷新）
+    try {
+      const savedLogs = sessionStorage.getItem('memoraid_weixin_logs');
+      if (savedLogs) {
+        const parsed = JSON.parse(savedLogs);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          this.logs = parsed;
+          console.log('[WeixinLogger] 从 sessionStorage 恢复了', this.logs.length, '条日志');
+          // 重新渲染日志到 UI
+          this.logs.forEach(log => {
+            this.renderLogLine(log.message, log.level as any, log.time);
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[WeixinLogger] 无法从 sessionStorage 恢复日志:', e);
+    }
   }
 
   show() { this.container.style.display = 'flex'; }
   hide() { this.container.style.display = 'none'; }
   setStopCallback(cb: () => void) { this.onStop = cb; this.stopBtn.style.display = 'block'; }
   hideStopButton() { this.stopBtn.style.display = 'none'; }
-  clear() { this.logContent.innerHTML = ''; }
+  clear() { 
+    this.logContent.innerHTML = ''; 
+    this.logs = []; // 【新增2026-03-28】清空日志数据
+    // 【新增2026-03-28】同时清空 sessionStorage
+    try {
+      sessionStorage.removeItem('memoraid_weixin_logs');
+    } catch (e) {
+      console.warn('[WeixinLogger] 无法清空 sessionStorage 日志:', e);
+    }
+  }
 
-  log(message: string, type: 'info' | 'action' | 'error' | 'success' | 'warn' = 'info') {
-    this.show();
+  // 【新增2026-03-28】渲染单条日志到 UI（用于恢复日志时）
+  private renderLogLine(message: string, type: 'info' | 'action' | 'error' | 'success' | 'warn', timestamp?: number) {
     const line = document.createElement('div');
     line.style.cssText = 'margin-top:4px;word-wrap:break-word;white-space:pre-wrap;line-height:1.4;';
-    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    const time = timestamp 
+      ? new Date(timestamp).toLocaleTimeString('zh-CN', { hour12: false })
+      : new Date().toLocaleTimeString('zh-CN', { hour12: false });
     const colors: Record<string, string> = { info: '#aaa', action: '#0ff', error: '#f55', success: '#4f4', warn: '#fb0' };
     const icons: Record<string, string> = { info: 'ℹ️', action: '▶️', error: '❌', success: '✅', warn: '⚠️' };
     line.innerHTML = `<span style="color:#555">[${time}]</span> ${icons[type]} <span style="color:${colors[type]}">${message}</span>`;
     this.logContent.appendChild(line);
+  }
+
+  log(message: string, type: 'info' | 'action' | 'error' | 'success' | 'warn' = 'info') {
+    this.show();
+    
+    // 【新增2026-03-28】保存日志到数组
+    this.logs.push({
+      time: Date.now(),
+      level: type,
+      message: message
+    });
+    
+    // 【新增2026-03-28】同步保存到 sessionStorage，防止页面刷新后丢失
+    try {
+      sessionStorage.setItem('memoraid_weixin_logs', JSON.stringify(this.logs));
+    } catch (e) {
+      console.warn('[WeixinLogger] 无法保存日志到 sessionStorage:', e);
+    }
+    
+    // 渲染日志到 UI
+    this.renderLogLine(message, type);
     this.logContent.scrollTop = this.logContent.scrollHeight;
+    
     if (type === 'error') { reportError(message, { type, context: 'WeixinContentScript' }); }
+  }
+  
+  // 【新增2026-03-28】获取日志数据
+  getLogs(): Array<{ time: number; level: string; message: string }> {
+    return [...this.logs]; // 返回副本
   }
 }
 
@@ -4877,6 +4935,63 @@ const installPublishReporting = () => {
     // 如果没有，尝试从 chrome.storage.local 读取（异步）
     const sessionGeneratedId = sessionStorage.getItem('memoraid_generated_id');
     
+    // 【修复2026-03-28】从多个来源获取日志，确保不丢失
+    let publishLogs: Array<{ time: number; level: string; message: string }> = [];
+    
+    // 方法1: 从文件作用域的 logger 对象获取（最直接）
+    try {
+      const logsFromLogger = logger.getLogs();
+      if (logsFromLogger && logsFromLogger.length > 0) {
+        publishLogs = logsFromLogger;
+        console.log('[Weixin] 从 logger 对象获取日志，数量:', publishLogs.length);
+      }
+    } catch (error) {
+      console.warn('[Weixin] 无法从 logger 对象获取日志:', error);
+    }
+    
+    // 方法2: 如果 logger 日志为空，尝试从 DOM 元素获取
+    if (publishLogs.length === 0) {
+      try {
+        const loggerEl = document.getElementById('memoraid-weixin-logger');
+        if (loggerEl && (loggerEl as any).__memoraidLogger) {
+          const domLogger = (loggerEl as any).__memoraidLogger;
+          const logsFromDom = domLogger.getLogs();
+          if (logsFromDom && logsFromDom.length > 0) {
+            publishLogs = logsFromDom;
+            console.log('[Weixin] 从 DOM 元素获取日志，数量:', publishLogs.length);
+          }
+        }
+      } catch (error) {
+        console.warn('[Weixin] 无法从 DOM 元素获取日志:', error);
+      }
+    }
+    
+    // 方法3: 如果还是为空，尝试从 sessionStorage 恢复
+    if (publishLogs.length === 0) {
+      try {
+        const savedLogs = sessionStorage.getItem('memoraid_weixin_logs');
+        if (savedLogs) {
+          const parsed = JSON.parse(savedLogs);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            publishLogs = parsed;
+            console.log('[Weixin] 从 sessionStorage 恢复日志，数量:', publishLogs.length);
+          }
+        }
+      } catch (error) {
+        console.warn('[Weixin] 无法从 sessionStorage 恢复日志:', error);
+      }
+    }
+    
+    console.log('[Weixin] 准备上报文章，最终日志数量:', publishLogs.length);
+    if (publishLogs.length > 0) {
+      console.log('[Weixin] 日志预览（前3条）:', publishLogs.slice(0, 3));
+    } else {
+      console.warn('[Weixin] ⚠️ 日志为空！可能原因：');
+      console.warn('  1. logger 对象未创建日志');
+      console.warn('  2. 页面刷新导致日志丢失');
+      console.warn('  3. sessionStorage 被清空');
+    }
+    
     if (sessionGeneratedId) {
       // 有 sessionStorage 中的 ID，直接使用
       reportArticlePublish({
@@ -4890,7 +5005,8 @@ const installPublishReporting = () => {
           completionTokens: tokenUsage?.completionTokens,
           totalTokens: tokenUsage?.totalTokens,
         },
-        generatedId: sessionGeneratedId
+        generatedId: sessionGeneratedId,
+        logs: publishLogs // 【新增2026-03-28】传递日志
       });
     } else {
       // 没有 sessionStorage 中的 ID，尝试从 chrome.storage.local 读取
@@ -4907,7 +5023,8 @@ const installPublishReporting = () => {
             completionTokens: tokenUsage?.completionTokens,
             totalTokens: tokenUsage?.totalTokens,
           },
-          generatedId: data[storageKey] || undefined
+          generatedId: data[storageKey] || undefined,
+          logs: publishLogs // 【新增2026-03-28】传递日志
         });
       });
     }
@@ -5135,16 +5252,33 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 installPublishReporting();
 
-// 导出供外部调用
-(window as any).memoraidWeixinRunFlow = runPublishFlow;
-(window as any).memoraidWeixinRunImageFlow = runSmartImageFlow;
-(window as any).memoraidWeixinFillTitle = fillTitle;
-(window as any).memoraidWeixinFillContent = fillContent;
-(window as any).memoraidWeixinGenerateAI = generateAIImage;
-(window as any).memoraidWeixinSetCover = setCoverFromContent;
-(window as any).memoraidWeixinDeclareOriginal = declareOriginal;
-(window as any).memoraidWeixinPreview = clickPreview;
-(window as any).memoraidWeixinPublish = publishArticle;
+// 【修复2026-03-28】Content Script 运行在 ISOLATED world，无法直接设置页面的全局变量
+// 解决方案：将 logger 对象存储在 DOM 元素的属性上，这样 reportOnce 可以访问
+// 同时也通过 window 对象尝试导出（在某些情况下可能有效）
+try {
+  // 方法1: 存储在 DOM 元素上（最可靠）
+  const loggerEl = document.getElementById('memoraid-weixin-logger');
+  if (loggerEl) {
+    (loggerEl as any).__memoraidLogger = logger;
+    console.log('[Memoraid] Logger 已存储在 DOM 元素上');
+  }
+  
+  // 方法2: 尝试通过 window 对象导出（可能在某些环境有效）
+  (window as any).memoraidWeixinRunFlow = runPublishFlow;
+  (window as any).memoraidWeixinRunImageFlow = runSmartImageFlow;
+  (window as any).memoraidWeixinFillTitle = fillTitle;
+  (window as any).memoraidWeixinFillContent = fillContent;
+  (window as any).memoraidWeixinGenerateAI = generateAIImage;
+  (window as any).memoraidWeixinSetCover = setCoverFromContent;
+  (window as any).memoraidWeixinDeclareOriginal = declareOriginal;
+  (window as any).memoraidWeixinPreview = clickPreview;
+  (window as any).memoraidWeixinPublish = publishArticle;
+  (window as any).memoraidWeixinLogger = logger;
+  
+  console.log('[Memoraid] 全局变量已导出');
+} catch (e) {
+  console.warn('[Memoraid] 导出全局变量失败:', e);
+}
 
 // 消息监听
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -5177,7 +5311,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 // ============================================
 // 远程调试功能
 // ============================================
-import { showDebugPanel, startDebugSession, stopDebugSession, getDebugSessionStatus } from '../utils/remoteDebug';
 
 // 导出远程调试功能到全局
 (window as any).memoraidDebug = {

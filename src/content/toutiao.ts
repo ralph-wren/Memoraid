@@ -1907,6 +1907,9 @@ const installPublishReporting = () => {
       sessionStorage.removeItem('memoraid_token_usage');
     }
 
+    // 【新增2026-03-28】获取发布日志
+    const publishLogs = logger.getLogs();
+
     reportArticlePublish({
       platform: 'toutiao',
       title: finalTitle,
@@ -1919,7 +1922,8 @@ const installPublishReporting = () => {
         completionTokens: tokenUsage?.completionTokens,
         totalTokens: tokenUsage?.totalTokens,
       },
-      generatedId // 使用读取的 generatedId
+      generatedId, // 使用读取的 generatedId
+      logs: publishLogs // 【新增2026-03-28】传递日志
     });
     
     console.log('[Toutiao] 文章上报成功');

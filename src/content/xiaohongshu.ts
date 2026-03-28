@@ -271,6 +271,7 @@ class XiaohongshuLogger {
     private logContent: HTMLDivElement;
     private stopBtn: HTMLButtonElement;
     private onStop?: () => void;
+    private logs: Array<{ time: number; level: string; message: string }> = []; // 【新增2026-03-28】存储日志数据
 
     constructor() {
         this.container = document.createElement('div');
@@ -331,10 +332,21 @@ class XiaohongshuLogger {
     hide() { this.container.style.display = 'none'; }
     setStopCallback(cb: () => void) { this.onStop = cb; this.stopBtn.style.display = 'block'; }
     hideStopButton() { this.stopBtn.style.display = 'none'; }
-    clear() { this.logContent.innerHTML = ''; }
+    clear() { 
+        this.logContent.innerHTML = ''; 
+        this.logs = []; // 【新增2026-03-28】清空日志数据
+    }
 
     log(message: string, type: 'info' | 'action' | 'error' | 'success' | 'warn' = 'info') {
         this.show();
+        
+        // 【新增2026-03-28】保存日志到数组
+        this.logs.push({
+            time: Date.now(),
+            level: type,
+            message: message
+        });
+        
         const line = document.createElement('div');
         line.style.cssText = 'margin-top:4px;word-wrap:break-word;white-space:pre-wrap;line-height:1.4;';
         const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
@@ -344,6 +356,11 @@ class XiaohongshuLogger {
         this.logContent.appendChild(line);
         this.logContent.scrollTop = this.logContent.scrollHeight;
         if (type === 'error') { reportError(message, { type, context: 'XiaohongshuContentScript' }); }
+    }
+    
+    // 【新增2026-03-28】获取日志数据
+    getLogs(): Array<{ time: number; level: string; message: string }> {
+        return [...this.logs]; // 返回副本
     }
 }
 
@@ -1400,6 +1417,9 @@ const clickPublish = async (): Promise<boolean> => {
             hasTokenUsage: !!tokenUsage
         });
         
+        // 【新增2026-03-28】获取发布日志
+        const publishLogs = logger.getLogs();
+        
         // 关键：不在这里清除数据，让 URL 监听器在检测到 published=true 后再清除
         // 这样可以确保标题和 token 数据在最终上报时仍然可用
         
@@ -1408,6 +1428,7 @@ const clickPublish = async (): Promise<boolean> => {
             title: finalTitle,
             url: window.location.href,
             status: 'published',  // 添加status字段,标记为已发布
+            logs: publishLogs, // 【新增2026-03-28】传递发布日志
             extra: {
                 sourceUrl: pendingSourceUrl,
                 // 记录 token 消耗数据
@@ -1707,6 +1728,9 @@ const installPublishReporting = () => {
                     hasTokenUsage: !!tokenUsage
                 });
 
+                // 【新增2026-03-28】获取发布日志
+                const publishLogs = logger.getLogs();
+
                 // 清除保存的数据
                 if (pendingTitle) {
                     sessionStorage.removeItem('memoraid_pending_title');
@@ -1722,6 +1746,7 @@ const installPublishReporting = () => {
                     url: currentUrl,
                     status: 'published',
                     generatedId, // 传递generatedId，确保同一篇文章不会重复计费
+                    logs: publishLogs, // 【新增2026-03-28】传递发布日志
                     extra: {
                         sourceUrl: pendingSourceUrl,
                         // 记录 token 消耗数据

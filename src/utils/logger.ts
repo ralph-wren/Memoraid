@@ -18,6 +18,7 @@ export class UnifiedLogger {
   private stopBtn: HTMLButtonElement;
   private onStop?: () => void;
   private options: LoggerOptions;
+  private logs: Array<{ time: number; level: string; message: string }> = []; // 【新增2026-03-28】存储日志数据
 
   constructor(options: LoggerOptions) {
     this.options = options;
@@ -191,9 +192,16 @@ export class UnifiedLogger {
   
   clear() { 
     this.logContent.innerHTML = ''; 
+    this.logs = []; // 【新增2026-03-28】清空日志数据
   }
 
   log(message: string, type: LogLevel = 'info') {
+    // 【新增2026-03-28】保存日志到数组
+    this.logs.push({
+      time: Date.now(),
+      level: type,
+      message: message
+    });
     this.show();
     const line = document.createElement('div');
     line.style.cssText = `
@@ -267,5 +275,10 @@ export class UnifiedLogger {
     if (this.container && this.container.parentNode) {
       this.container.parentNode.removeChild(this.container);
     }
+  }
+
+  // 【新增2026-03-28】获取日志数据
+  getLogs(): Array<{ time: number; level: string; message: string }> {
+    return [...this.logs]; // 返回副本
   }
 }

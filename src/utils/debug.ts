@@ -59,6 +59,7 @@ export const reportArticlePublish = async (args: {
   status?: string;
   extra?: Record<string, unknown>;
   generatedId?: string;
+  logs?: Array<{ time: number; level: string; message: string }>; // 【新增2026-03-28】发布日志
 }) => {
   try {
     console.log('[reportArticlePublish] 开始上报文章:', {
@@ -66,7 +67,8 @@ export const reportArticlePublish = async (args: {
       title: args.title,
       status: args.status,
       hasUrl: !!args.url,
-      hasGeneratedId: !!args.generatedId
+      hasGeneratedId: !!args.generatedId,
+      hasLogs: !!args.logs && args.logs.length > 0
     });
 
     let urlText = typeof args.url === 'string' ? args.url.trim() : '';
@@ -132,7 +134,8 @@ export const reportArticlePublish = async (args: {
           url: isGenerated ? '' : urlText, // 生成的文章 URL 留空，或者是真实的 URL
           publishTime: args.publishTime || Math.floor(Date.now() / 1000),
           status: args.status || 'published',
-          extra: args.extra || {}
+          extra: args.extra || {},
+          logs: args.logs || [] // 【新增2026-03-28】传递发布日志
         }
       ]
     };

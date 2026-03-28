@@ -4299,6 +4299,15 @@ export default {
     // 7.1 POST /api/articles/report - 上报文章发布信息
     if (url.pathname === '/api/articles/report' && request.method === 'POST') {
       try {
+        // 【新增2026-03-28】确保 articles 表有 publish_logs 字段
+        try {
+          await env.DB.prepare(`
+            ALTER TABLE articles ADD COLUMN publish_logs TEXT
+          `).run();
+        } catch (e) {
+          // 字段已存在，忽略错误
+        }
+        
         // Allow anonymous users to report articles
         // If not authenticated, we use the account.id from payload as user_id (which should be anonymousId)
         let userId = getUserIdFromRequest(request);
@@ -4429,7 +4438,7 @@ export default {
         // 3. Process Articles
         let newArticlesCount = 0; // 记录新增文章数量（只统计 status='generated' 的新文章）
         for (const article of articles) {
-            const { id: articleId, title, summary, cover, url: articleUrl, publishTime, status, extra } = article;
+            const { id: articleId, title, summary, cover, url: articleUrl, publishTime, status, extra, logs } = article;
             
             // 检查文章是否已存在
             const existingArticle = await env.DB.prepare(
@@ -4458,9 +4467,12 @@ export default {
                 }
             }
             
+            // 【新增2026-03-28】处理发布日志
+            const publishLogs = logs ? JSON.stringify(logs) : null;
+            
             await env.DB.prepare(
-                `INSERT INTO articles (account_id, article_id, title, content_summary, cover_image, article_url, publish_time, status, extra_info, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `INSERT INTO articles (account_id, article_id, title, content_summary, cover_image, article_url, publish_time, status, extra_info, publish_logs, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(account_id, article_id) DO UPDATE SET
                  title=excluded.title,
                  content_summary=excluded.content_summary,
@@ -4469,6 +4481,7 @@ export default {
                  publish_time=excluded.publish_time,
                  status=excluded.status,
                  extra_info=excluded.extra_info,
+                 publish_logs=excluded.publish_logs,
                  updated_at=excluded.updated_at`
             ).bind(
                 accountDbId,
@@ -4480,6 +4493,7 @@ export default {
                 publishTime,
                 status || 'published',
                 JSON.stringify(finalExtraInfo),
+                publishLogs,
                 Math.floor(Date.now() / 1000)
             ).run();
             
@@ -4769,7 +4783,7 @@ export default {
         const offset = parseInt(url.searchParams.get('offset') || '0');
 
         let query = `
-          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, a.extra_info,
+          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, a.extra_info, a.publish_logs,
             ac.account_name, p.display_name as platform_name, p.icon as platform_icon, u.email as user_email,
             -- 计算该文章是该用户生成的第几篇（按发布时间升序排列）
             ROW_NUMBER() OVER (PARTITION BY u.id ORDER BY a.publish_time ASC) as user_article_index
@@ -4818,13 +4832,21 @@ export default {
         
         const total = await env.DB.prepare(countQuery).bind(...countParams).first('total');
 
-        // 解析每篇文章的 extra_info，提取 token 消耗数据
+        // 解析每篇文章的 extra_info 和 publish_logs，提取 token 消耗数据和日志
         const articles = (results.results || []).map((a: any) => {
           let extra: any = {};
           try { extra = JSON.parse(a.extra_info || '{}'); } catch {}
+          
+          // 【新增2026-03-28】解析发布日志
+          let logs: any[] = [];
+          try { 
+            logs = JSON.parse(a.publish_logs || '[]'); 
+          } catch {}
+          
           return {
             ...a,
             extra_info: undefined, // 不直接暴露原始 JSON 字符串
+            publish_logs: logs, // 【新增2026-03-28】返回解析后的日志数组
             promptTokens: extra.promptTokens ?? null,
             completionTokens: extra.completionTokens ?? null,
             totalTokens: extra.totalTokens ?? null,
@@ -4858,7 +4880,7 @@ export default {
         const offset = parseInt(url.searchParams.get('offset') || '0');
 
         let query = `
-          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, a.extra_info,
+          SELECT a.id, a.title, a.publish_time, a.article_url, a.status, a.extra_info, a.publish_logs,
             ac.account_name, p.display_name as platform_name, p.icon as platform_icon, p.name as platform_code
           FROM articles a 
           JOIN accounts ac ON a.account_id = ac.id 
@@ -4922,13 +4944,21 @@ export default {
         
         const total = await env.DB.prepare(countQuery).bind(...countParams).first('total');
 
-        // 解析每篇文章的 extra_info，提取 token 消耗数据
+        // 解析每篇文章的 extra_info 和 publish_logs，提取 token 消耗数据和日志
         const articles = (results.results || []).map((a: any) => {
           let extra: any = {};
           try { extra = JSON.parse(a.extra_info || '{}'); } catch {}
+          
+          // 【新增2026-03-28】解析发布日志
+          let logs: any[] = [];
+          try { 
+            logs = JSON.parse(a.publish_logs || '[]'); 
+          } catch {}
+          
           return {
             ...a,
             extra_info: undefined,
+            publish_logs: logs, // 【新增2026-03-28】返回解析后的日志数组
             promptTokens: extra.promptTokens ?? null,
             completionTokens: extra.completionTokens ?? null,
             totalTokens: extra.totalTokens ?? null,
@@ -6042,7 +6072,8 @@ export default {
                         <div class="table-wrapper">
                             <table>
                                 <!-- 新增 Token 列，显示每篇文章的 AI token 消耗 -->
-                                <thead><tr><th>标题</th><th>平台</th><th>状态</th><th>用户</th><th>第几篇</th><th>Token</th><th>时间</th></tr></thead>
+                                <!-- 【新增2026-03-28】添加日志列 -->
+                                <thead><tr><th>标题</th><th>平台</th><th>状态</th><th>用户</th><th>第几篇</th><th>Token</th><th>日志</th><th>时间</th></tr></thead>
                                 <tbody id="articlesTable"></tbody>
                             </table>
                         </div>
@@ -6593,6 +6624,13 @@ export default {
                 const tokenText = a.totalTokens != null
                     ? \`<span title="输入:\${a.promptTokens} 输出:\${a.completionTokens}" style="cursor:default">\${a.totalTokens.toLocaleString()}</span>\`
                     : '<span style="color:var(--text-muted)">-</span>';
+                
+                // 【新增2026-03-28】显示日志按钮
+                const hasLogs = a.publish_logs && a.publish_logs.length > 0;
+                const logsButton = hasLogs 
+                    ? \`<button class="btn-sm btn-outline" onclick="viewArticleLog(\${a.id}, \${JSON.stringify(a.publish_logs).replace(/"/g, '&quot;')})">📋 查看</button>\`
+                    : '<span style="color:var(--text-muted)">-</span>';
+                
                 return \`
                 <tr>
                     <td><div class="truncate-title" title="\${a.title}">\${a.title || '无标题'}</div></td>
@@ -6603,12 +6641,14 @@ export default {
                     <td><span style="background:var(--bg-muted);color:var(--text-muted);padding:2px 8px;border-radius:12px;font-size:0.8rem;font-weight:500">第 \${a.user_article_index} 篇</span></td>
                     <!-- Token 消耗，鼠标悬停显示输入/输出明细 -->
                     <td>\${tokenText}</td>
+                    <!-- 【新增2026-03-28】日志按钮 -->
+                    <td>\${logsButton}</td>
                     <td>\${new Date(a.publish_time * 1000).toLocaleString()}</td>
                 </tr>
             \`}).join('');
             
-            // colspan 改为 6，因为新增了"第几篇"列
-            document.getElementById('articlesTable').innerHTML = html || '<tr><td colspan="6" style="text-align:center;padding:20px;color:#9ca3af">暂无数据</td></tr>';
+            // 【修改2026-03-28】colspan 改为 8，因为新增了"日志"列
+            document.getElementById('articlesTable').innerHTML = html || '<tr><td colspan="8" style="text-align:center;padding:20px;color:#9ca3af">暂无数据</td></tr>';
         }
 
         // Pagination Controls
@@ -7396,6 +7436,82 @@ export default {
             document.getElementById('searchInput').value = '';
             document.getElementById('platformFilter').value = '';
             fetchArticles(true);
+        }
+        
+        // 【新增2026-03-28】查看文章发布日志（管理后台版本）
+        function viewArticleLog(articleId, logs) {
+            // 格式化日志显示
+            let logsHtml = '';
+            if (logs && Array.isArray(logs) && logs.length > 0) {
+                logsHtml = '<div style="background:#f8fafc;padding:16px;border-radius:8px;max-height:600px;overflow-y:auto">';
+                logs.forEach(entry => {
+                    const time = new Date(entry.time).toLocaleTimeString('zh-CN', { 
+                        hour: '2-digit', 
+                        minute: '2-digit', 
+                        second: '2-digit',
+                        hour12: false 
+                    });
+                    
+                    // 根据日志级别设置颜色
+                    let color = '#64748b'; // info默认灰色
+                    let bgColor = 'transparent';
+                    if (entry.level === 'success' || entry.level === 'action') {
+                        color = '#10b981';
+                        bgColor = '#f0fdf4';
+                    } else if (entry.level === 'error') {
+                        color = '#ef4444';
+                        bgColor = '#fef2f2';
+                    } else if (entry.level === 'warn') {
+                        color = '#f59e0b';
+                        bgColor = '#fffbeb';
+                    }
+                    
+                    logsHtml += '<div style="display:flex;gap:12px;padding:6px 8px;margin-bottom:2px;background:' + bgColor + ';border-radius:4px">' +
+                        '<span style="color:#94a3b8;font-size:0.85rem;font-family:monospace;flex-shrink:0">' + time + '</span>' +
+                        '<span style="color:' + color + ';font-size:0.9rem;line-height:1.6;white-space:pre-wrap;word-break:break-word">' + entry.message + '</span>' +
+                        '</div>';
+                });
+                logsHtml += '</div>';
+            } else {
+                logsHtml = '<div style="background:#f8fafc;padding:16px;border-radius:8px;text-align:center;color:var(--text-muted)">暂无日志</div>';
+            }
+            
+            // 显示模态框
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:10000';
+            modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+            
+            const modalContent = document.createElement('div');
+            modalContent.style.cssText = 'background:#fff;border-radius:12px;max-width:900px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)';
+            
+            const closeBtn = document.createElement('button');
+            closeBtn.innerHTML = '×';
+            closeBtn.style.cssText = 'background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--text-muted)';
+            closeBtn.onclick = function() { modal.remove(); };
+            
+            const closeBtn2 = document.createElement('button');
+            closeBtn2.innerHTML = '关闭';
+            closeBtn2.style.cssText = 'padding:8px 20px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer';
+            closeBtn2.onclick = function() { modal.remove(); };
+            
+            modalContent.innerHTML = '<div style="padding:24px">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">' +
+                    '<h3 style="margin:0;font-size:1.25rem;color:var(--text)">📋 发布日志</h3>' +
+                    '<span id="closeBtn1"></span>' +
+                '</div>' +
+                logsHtml +
+                '<div style="margin-top:20px;text-align:right">' +
+                    '<span id="closeBtn2"></span>' +
+                '</div>' +
+            '</div>';
+            
+            modal.appendChild(modalContent);
+            document.body.appendChild(modal);
+            
+            // 添加关闭按钮
+            document.getElementById('closeBtn1').appendChild(closeBtn);
+            document.getElementById('closeBtn2').appendChild(closeBtn2);
         }
 
         function loadMore() {
@@ -10675,16 +10791,32 @@ export default {
                 return;
             }
             
+            // 【新增2026-03-28】存储文章数据到全局变量，用于查看日志
+            window.articlesData = {};
+            
             const rows = articles.map(a => {
                 // 显示 token 消耗，鼠标悬停显示输入/输出明细
                 const tokenCell = a.totalTokens != null
                     ? '<span class="stat-pill" style="background:#eef2ff;color:#4f46e5" title="输入:' + (a.promptTokens || 0) + ' 输出:' + (a.completionTokens || 0) + '">' + a.totalTokens.toLocaleString() + '</span>'
                     : '<span style="color:#9ca3af">-</span>';
+                
+                // 【新增2026-03-28】日志查看按钮
+                const hasLogs = a.publish_logs;
+                const logButton = hasLogs 
+                    ? "<button class='btn-sm btn-ghost' onclick='viewArticleLog(" + a.id + ")' style='font-size:0.8rem;padding:4px 8px'>📋 查看</button>"
+                    : '<span style="color:var(--text-muted);font-size:0.8rem">-</span>';
+                
+                // 存储文章数据到全局变量
+                if (hasLogs) {
+                    window.articlesData[a.id] = a;
+                }
+                
                 return '<tr>' +
                     '<td><a href="' + (a.article_url || '#') + '" target="_blank" class="article-title">' + (a.title || '无标题') + '</a></td>' +
                     '<td><div class="platform-cell">' + (a.platform_icon || '📄') + ' ' + (a.platform_name || '') + '</div></td>' +
                     '<td>' + tokenCell + '</td>' +
                     '<td class="time-cell">' + formatTime(a.publish_time) + '</td>' +
+                    '<td style="text-align:center">' + logButton + '</td>' +
                 '</tr>';
             }).join('');
             
@@ -10694,6 +10826,7 @@ export default {
                         '<th>标题</th><th>平台</th>' +
                         '<th style="cursor:pointer" onclick="changeSortBy(&quot;token&quot;)">Token ' + (currentSortBy === 'token' ? (currentSortOrder === 'desc' ? '↓' : '↑') : '') + '</th>' +
                         '<th style="cursor:pointer" onclick="changeSortBy(&quot;time&quot;)">发布时间 ' + (currentSortBy === 'time' ? (currentSortOrder === 'desc' ? '↓' : '↑') : '') + '</th>' +
+                        '<th style="min-width:80px">日志</th>' +
                     '</tr></thead>' +
                     '<tbody>' + rows + '</tbody>' +
                 '</table>';
@@ -11163,6 +11296,75 @@ export default {
             const modalContent = '<div style="padding:24px;max-width:900px">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">' +
                     '<h3 style="margin:0;font-size:1.25rem;color:var(--text)">📋 执行日志 - ' + (log.task_name || '未命名任务') + '</h3>' +
+                    '<button onclick="closeModal()" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--text-muted)">×</button>' +
+                '</div>' +
+                logsHtml +
+                '<div style="margin-top:20px;text-align:right">' +
+                    '<button class="btn-primary" onclick="closeModal()" style="padding:8px 20px;background:#3b82f6;color:#fff;border:none;border-radius:6px;cursor:pointer">关闭</button>' +
+                '</div>' +
+            '</div>';
+            
+            showModal(modalContent);
+        }
+        
+        // 【新增2026-03-28】查看文章发布日志
+        function viewArticleLog(articleId) {
+            // 从全局变量中获取文章数据
+            const article = window.articlesData[articleId];
+            if (!article) {
+                alert('文章数据不存在');
+                return;
+            }
+            
+            // 解析publish_logs字段
+            let logsHtml = '';
+            if (article.publish_logs) {
+                try {
+                    const logs = typeof article.publish_logs === 'string' ? JSON.parse(article.publish_logs) : article.publish_logs;
+                    if (Array.isArray(logs) && logs.length > 0) {
+                        // 格式化日志显示
+                        logsHtml = '<div style="background:#f8fafc;padding:16px;border-radius:8px;max-height:600px;overflow-y:auto">';
+                        logs.forEach(entry => {
+                            const time = new Date(entry.time).toLocaleTimeString('zh-CN', { 
+                                hour: '2-digit', 
+                                minute: '2-digit', 
+                                second: '2-digit',
+                                hour12: false 
+                            });
+                            
+                            // 根据日志级别设置颜色
+                            let color = '#64748b'; // info默认灰色
+                            let bgColor = 'transparent';
+                            if (entry.level === 'success' || entry.level === 'action') {
+                                color = '#10b981';
+                                bgColor = '#f0fdf4';
+                            } else if (entry.level === 'error') {
+                                color = '#ef4444';
+                                bgColor = '#fef2f2';
+                            } else if (entry.level === 'warn') {
+                                color = '#f59e0b';
+                                bgColor = '#fffbeb';
+                            }
+                            
+                            logsHtml += '<div style="display:flex;gap:12px;padding:6px 8px;margin-bottom:2px;background:' + bgColor + ';border-radius:4px">' +
+                                '<span style="color:#94a3b8;font-size:0.85rem;font-family:monospace;flex-shrink:0">' + time + '</span>' +
+                                '<span style="color:' + color + ';font-size:0.9rem;line-height:1.6;white-space:pre-wrap;word-break:break-word">' + entry.message + '</span>' +
+                                '</div>';
+                        });
+                        logsHtml += '</div>';
+                    } else {
+                        logsHtml = '<div style="background:#f8fafc;padding:16px;border-radius:8px;text-align:center;color:var(--text-muted)">暂无日志</div>';
+                    }
+                } catch (e) {
+                    logsHtml = '<div style="background:#fef2f2;padding:16px;border-radius:8px;color:#dc2626">日志解析失败</div>';
+                }
+            } else {
+                logsHtml = '<div style="background:#f8fafc;padding:16px;border-radius:8px;text-align:center;color:var(--text-muted)">暂无日志</div>';
+            }
+            
+            const modalContent = '<div style="padding:24px;max-width:900px">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">' +
+                    '<h3 style="margin:0;font-size:1.25rem;color:var(--text)">📋 发布日志 - ' + (article.title || '无标题') + '</h3>' +
                     '<button onclick="closeModal()" style="background:none;border:none;font-size:1.5rem;cursor:pointer;color:var(--text-muted)">×</button>' +
                 '</div>' +
                 logsHtml +
