@@ -12431,8 +12431,8 @@ export default {
           }
         });
 
-        // 生成访问URL
-        const imageUrl = `https://r2.memoraid.dpdns.org/${fileName}`;
+        // 生成访问URL - 使用imgcdn.dpdns.org域名访问R2
+        const imageUrl = `https://imgcdn.dpdns.org/${fileName}`;
 
         // 更新或插入用户收款方式
         const existing = await env.DB.prepare(

@@ -18,10 +18,11 @@
 16. 每次执行npm run release前，更新一下版本信息
 17. 需要遵守.cursor目录下的规则
 18. 通过 bash -lc "CI=1 npx wrangler r2 object put pothos-images/memoraid/feature-extract.png --file ../store-assets/feature-extract.png --content-type image/png --remote" 的方式可以上传图片到cloudflare r2
-19. 生成的说明文档统一放到docs目录,文件名称格式{日期如202601241230}-{功能，几个字}-{具体解决的问题}.md，我让你生成你再生成
-20. 每生成一篇文章，都要通过omni-recall skills同步一次记忆到远程数据库,如果skills没有安装，通过`npx skills add ralph-wren/omni-recall`命令进行安装，全局安装不要放在项目下面
-21. 测试文件、临时文件统一放到test目录
-22. 创建远程数据库表之前先查看有哪些表，别创建相似的表了，不要重复建表
-23. skills安装地址在~/.agent/skills或~/.kiro/skills或~/.claude/skills
-24. 如果涉及网页操作的代码你不确定或者写不好，可以写一些验证代码我粘贴在控制台测试，能正确执行了你再生成、完善代码
-25. 所有关于时间的都是中国时区，默认东八区
+19. https://imgcdn.dpdns.org/作为R2图片的访问域名
+20. 生成的说明文档统一放到docs目录,文件名称格式{日期如202601241230}-{功能，几个字}-{具体解决的问题}.md，我让你生成你再生成
+21. 每生成一篇文章，都要通过omni-recall skills同步一次记忆到远程数据库,如果skills没有安装，通过`npx skills add ralph-wren/omni-recall`命令进行安装，全局安装不要放在项目下面
+22. 测试文件、临时文件统一放到test目录
+23. 创建远程数据库表之前先查看有哪些表，别创建相似的表了，不要重复建表
+24. skills安装地址在~/.agent/skills或~/.kiro/skills或~/.claude/skills
+25. 如果涉及网页操作的代码你不确定或者写不好，可以写一些验证代码我粘贴在控制台测试，能正确执行了你再生成、完善代码
+26. 所有关于时间的都是中国时区，默认东八区
