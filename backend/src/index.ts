@@ -6213,6 +6213,33 @@ export default {
             <div id="tab-settings" class="tab-content" style="display:none">
                 <div class="section">
                     <h2 class="section-title">⚙️ 系统设置</h2>
+                    
+                    <!-- 分佣比例设置 -->
+                    <div class="card" style="padding: 24px; max-width: 600px; margin-bottom: 24px;">
+                        <h3 style="margin-bottom: 12px; font-size: 1.1rem;">💰 推广分佣设置</h3>
+                        <div style="background: linear-gradient(135deg, rgba(251,191,36,0.1) 0%, rgba(249,115,22,0.1) 100%); padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; border-left: 3px solid #f59e0b;">
+                            <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0;">
+                                <strong>💡 提示：</strong>设置推广用户的佣金比例。<br>
+                                用户通过推广链接邀请新用户充值后，推广者将获得充值金额的相应比例作为佣金。
+                            </p>
+                        </div>
+                        
+                        <form id="commissionConfigForm" onsubmit="saveCommissionConfig(event)">
+                            <div class="form-group">
+                                <label class="form-label">佣金比例 (%)</label>
+                                <input type="number" id="commission_rate" class="form-input" style="width:100%" placeholder="10" min="0" max="100" step="0.1" required>
+                                <p style="font-size:0.8rem;color:var(--text-muted);margin-top:4px">
+                                    推广者获得的佣金比例，例如：10 表示 10%（被邀请人充值100元，推广者获得10元）
+                                </p>
+                            </div>
+
+                            <div style="margin-top: 24px;">
+                                <button type="submit" class="btn-sm btn-success">保存配置</button>
+                            </div>
+                        </form>
+                    </div>
+                    
+                    <!-- 邮件配置 -->
                     <div class="card" style="padding: 24px; max-width: 600px;">
                         <h3 style="margin-bottom: 12px; font-size: 1.1rem;">📧 支付邮件配置</h3>
                         <div style="background: linear-gradient(135deg, rgba(16,185,129,0.1) 0%, rgba(167,139,250,0.1) 100%); padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; border-left: 3px solid var(--accent-secondary);">
@@ -7528,6 +7555,7 @@ export default {
             
             if (tabId === 'settings') {
                 fetchEmailConfig();
+                loadCommissionConfig(); // 加载分佣比例配置
             }
             
             history.pushState(null, null, '#' + tabId);
@@ -8352,6 +8380,58 @@ export default {
             }
         }
 
+        // 保存分佣比例配置
+        async function saveCommissionConfig(e) {
+            e.preventDefault();
+            const btn = e.submitter;
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '保存中...';
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const commissionRate = document.getElementById('commission_rate').value;
+                
+                const res = await fetch('/api/admin/config/commission', {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ commission_rate: parseFloat(commissionRate) })
+                });
+                
+                // 保存成功时静默结束，避免后台频繁配置时反复弹窗打断操作。
+                if (!res.ok) {
+                    alert('保存失败');
+                }
+            } catch (e) {
+                alert('网络错误: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        // 加载分佣比例配置
+        async function loadCommissionConfig() {
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch('/api/admin/config/commission', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.commission_rate !== undefined) {
+                        document.getElementById('commission_rate').value = data.commission_rate;
+                    }
+                }
+            } catch (e) {
+                console.error('加载分佣比例失败:', e);
+            }
+        }
+
         async function testEmailConfig() {
             const btn = document.querySelector('button[onclick="testEmailConfig()"]');
             const originalText = btn.textContent;
@@ -8705,6 +8785,71 @@ export default {
         } catch (e: any) {
             console.error('Test email failed:', e);
             return new Response(JSON.stringify({ error: '发送失败: ' + e.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+    }
+
+    // 7.0.7.2 GET /api/admin/config/commission - 获取分佣比例配置
+    if (url.pathname === '/api/admin/config/commission' && request.method === 'GET') {
+        try {
+            const userId = getUserIdFromRequest(request);
+            if (!userId) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+
+            const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+            if (!admin) return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+
+            // 从system_settings表获取分佣比例配置
+            const config = await env.DB.prepare('SELECT value FROM system_settings WHERE key = ?').bind('commission_rate').first();
+            
+            // 默认分佣比例为10%
+            const commissionRate = config ? parseFloat(config.value as string) : 10;
+
+            return new Response(JSON.stringify({ commission_rate: commissionRate }), { 
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+            });
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    // 7.0.7.3 POST /api/admin/config/commission - 保存分佣比例配置
+    if (url.pathname === '/api/admin/config/commission' && request.method === 'POST') {
+        try {
+            const userId = getUserIdFromRequest(request);
+            if (!userId) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
+
+            const admin = await env.DB.prepare('SELECT * FROM admins WHERE id = ?').bind(userId).first();
+            if (!admin) return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: corsHeaders });
+
+            const body = await request.json() as any;
+            const commissionRate = parseFloat(body.commission_rate);
+
+            // 验证分佣比例范围
+            if (isNaN(commissionRate) || commissionRate < 0 || commissionRate > 100) {
+                return new Response(JSON.stringify({ error: '分佣比例必须在0-100之间' }), { 
+                    status: 400, 
+                    headers: corsHeaders 
+                });
+            }
+
+            // 保存到system_settings表
+            await env.DB.prepare(`
+                INSERT INTO system_settings (key, value, description, updated_at) 
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET 
+                    value=excluded.value, 
+                    updated_at=excluded.updated_at
+            `).bind(
+                'commission_rate', 
+                commissionRate.toString(), 
+                '推广分佣比例（百分比）',
+                Math.floor(Date.now() / 1000)
+            ).run();
+
+            return new Response(JSON.stringify({ success: true }), { 
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+            });
+        } catch (e: any) {
+            return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
         }
     }
 
@@ -9925,6 +10070,10 @@ export default {
                                 <div style="font-size: 2rem; font-weight: 700; color: var(--accent);" id="inviteeCount">0</div>
                             </div>
                             <div style="background: var(--card-bg); border-radius: var(--radius); padding: 20px; border: 1px solid var(--border);">
+                                <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">佣金比例</div>
+                                <div style="font-size: 2rem; font-weight: 700; color: var(--amber);" id="commissionRate">10<span style="font-size: 1rem; color: var(--text-muted); margin-left: 4px;">%</span></div>
+                            </div>
+                            <div style="background: var(--card-bg); border-radius: var(--radius); padding: 20px; border: 1px solid var(--border);">
                                 <div style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">累计佣金</div>
                                 <div style="font-size: 2rem; font-weight: 700; color: var(--accent);" id="totalCommission">0<span style="font-size: 1rem; color: var(--text-muted); margin-left: 4px;">元</span></div>
                             </div>
@@ -9950,8 +10099,8 @@ export default {
                                 <!-- 复制成功提示显示在这里 -->
                                 <div id="inviteLinkAlert" style="margin-top: 8px;"></div>
                             </div>
-                            <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0;">
-                                分享此链接给好友，好友通过链接注册并充值后，您将获得充值金额10%的佣金奖励
+                            <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0;" id="commissionDesc">
+                                分享此链接给好友，好友通过链接注册并充值后，您将获得充值金额<span id="commissionRateText">10</span>%的佣金奖励
                             </p>
                         </div>
 
@@ -11537,8 +11686,28 @@ export default {
                     withdrawBtn.style.opacity = '0.5';
                     withdrawBtn.style.cursor = 'not-allowed';
                 }
+                
+                // 加载佣金比例配置
+                await loadCommissionRate();
             } catch (e) {
                 console.error('加载推广统计失败:', e);
+            }
+        }
+
+        // 加载佣金比例配置（用户端）
+        async function loadCommissionRate() {
+            try {
+                const res = await fetch(API_BASE + '/api/referral/commission-rate', {
+                    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('memoraid_token') }
+                });
+                const data = await res.json();
+                const rate = data.commission_rate || 10;
+                
+                // 更新佣金比例显示
+                document.getElementById('commissionRate').innerHTML = rate + '<span style="font-size: 1rem; color: var(--text-muted); margin-left: 4px;">%</span>';
+                document.getElementById('commissionRateText').textContent = rate;
+            } catch (e) {
+                console.error('加载佣金比例失败:', e);
             }
         }
 
@@ -12334,6 +12503,34 @@ export default {
           available_amount: availableAmount,
           can_withdraw: availableAmount >= 100 // 满100元可提现
         }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.2.1 GET /api/referral/commission-rate - 获取佣金比例配置（用户端）
+    if (url.pathname === '/api/referral/commission-rate' && request.method === 'GET') {
+      try {
+        const userId = getUserIdFromRequest(request);
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 从system_settings表获取分佣比例配置
+        const config = await env.DB.prepare('SELECT value FROM system_settings WHERE key = ?').bind('commission_rate').first();
+        
+        // 默认分佣比例为10%
+        const commissionRate = config ? parseFloat(config.value as string) : 10;
+
+        return new Response(JSON.stringify({ commission_rate: commissionRate }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       } catch (e: any) {

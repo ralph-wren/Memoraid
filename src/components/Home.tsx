@@ -1184,12 +1184,23 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                         : quota === undefined ? '正在获取额度信息...' : ''}
                     </span>
                   </div>
-                  <button
-                    onClick={() => window.open('https://memoraid.dpdns.org/user', '_blank')}
-                    className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-4 py-2 rounded-lg text-xs font-medium hover:from-blue-600 hover:to-purple-700 transition shadow-sm"
-                  >
-                    充值
-                  </button>
+                  {/* 按钮组 - 充值和推广赚钱 */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => window.open('https://memoraid.dpdns.org/user', '_blank')}
+                      className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-4 py-2 rounded-lg text-xs font-medium hover:from-blue-600 hover:to-purple-700 transition shadow-sm"
+                    >
+                      充值
+                    </button>
+                    {/* 推广赚钱按钮 - 醒目提示 */}
+                    <button
+                      onClick={() => window.open('https://memoraid.dpdns.org/user#referral', '_blank')}
+                      className="bg-gradient-to-r from-amber-400 via-orange-500 to-red-500 text-white px-4 py-2 rounded-lg text-xs font-medium hover:from-amber-500 hover:via-orange-600 hover:to-red-600 transition shadow-lg animate-pulse"
+                      title="邀请好友，赚取收益"
+                    >
+                      💰 推广赚钱
+                    </button>
+                  </div>
                 </div>
               </div>
 
