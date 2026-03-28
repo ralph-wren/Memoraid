@@ -5252,6 +5252,57 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
 installPublishReporting();
 
+// 【新增2026-03-29】请求 Background Script 注入调试桥接到页面 MAIN world
+// 这样 memoraidDebug 对象就可以在控制台直接使用
+try {
+  chrome.runtime.sendMessage({ type: 'INJECT_DEBUG_BRIDGE' }, (response) => {
+    if (response?.success) {
+      console.log('[Memoraid] 调试桥接已注入到页面');
+    } else {
+      console.warn('[Memoraid] 调试桥接注入失败:', response?.error);
+    }
+  });
+} catch (e) {
+  console.warn('[Memoraid] 无法请求调试桥接注入:', e);
+}
+
+// 【新增2026-03-29】监听来自页面的调试命令
+window.addEventListener('message', (event) => {
+  // 只处理来自同一页面的消息
+  if (event.source !== window) return;
+  
+  const { type } = event.data;
+  
+  if (type === 'MEMORAID_SHOW_DEBUG_PANEL') {
+    showDebugPanel();
+  } else if (type === 'MEMORAID_START_DEBUG_SESSION') {
+    startDebugSession()
+      .then((code) => {
+        window.postMessage({ 
+          type: 'MEMORAID_DEBUG_SESSION_STARTED', 
+          verificationCode: code 
+        }, '*');
+      })
+      .catch((error) => {
+        window.postMessage({ 
+          type: 'MEMORAID_DEBUG_SESSION_ERROR', 
+          error: error.message 
+        }, '*');
+      });
+  } else if (type === 'MEMORAID_STOP_DEBUG_SESSION') {
+    stopDebugSession()
+      .then(() => {
+        window.postMessage({ type: 'MEMORAID_DEBUG_SESSION_STOPPED' }, '*');
+      });
+  } else if (type === 'MEMORAID_GET_DEBUG_STATUS') {
+    const status = getDebugSessionStatus();
+    window.postMessage({ 
+      type: 'MEMORAID_DEBUG_STATUS', 
+      status 
+    }, '*');
+  }
+});
+
 // 【修复2026-03-28】Content Script 运行在 ISOLATED world，无法直接设置页面的全局变量
 // 解决方案：将 logger 对象存储在 DOM 元素的属性上，这样 reportOnce 可以访问
 // 同时也通过 window 对象尝试导出（在某些情况下可能有效）

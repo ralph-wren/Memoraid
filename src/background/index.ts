@@ -12,6 +12,141 @@ console.log('Background service worker started');
 let currentTask: ActiveTask | null = null;
 let abortController: AbortController | null = null;
 
+// ============================================
+// 调试桥接代码 - 注入到页面 MAIN world
+// ============================================
+// 【新增2026-03-29】为了让 memoraidDebug 对象在页面控制台可用，
+// 需要通过 chrome.scripting.executeScript 在 MAIN world 中注入代码
+const DEBUG_BRIDGE_CODE = `
+(function() {
+  // 避免重复注入
+  if (window.memoraidDebug) {
+    console.log('[Memoraid] Debug bridge already exists');
+    return;
+  }
+
+  // 导入远程调试功能
+  window.memoraidDebug = {
+    help: function() {
+      console.log(\`
+%cMemoraidDebug 远程调试工具
+
+%c可用命令：
+  memoraidDebug.help()        - 显示此帮助信息
+  memoraidDebug.showPanel()   - 显示调试面板
+  memoraidDebug.start()       - 启动调试会话（返回验证码）
+  memoraidDebug.stop()        - 停止调试会话
+  memoraidDebug.status()      - 获取调试状态
+
+%c注意：
+  - 调试会话需要连接到后端服务器
+  - 验证码用于远程发送调试命令
+  - 会话在5分钟无活动后自动过期
+      \`, 'color: #00d9ff; font-size: 16px; font-weight: bold;', 'color: #e8e8e8;', 'color: #888;');
+    },
+    
+    showPanel: function() {
+      // 发送消息给 content script
+      window.postMessage({ type: 'MEMORAID_SHOW_DEBUG_PANEL' }, '*');
+    },
+    
+    start: function() {
+      return new Promise((resolve, reject) => {
+        window.postMessage({ type: 'MEMORAID_START_DEBUG_SESSION' }, '*');
+        
+        // 监听响应
+        const handler = (event) => {
+          if (event.data.type === 'MEMORAID_DEBUG_SESSION_STARTED') {
+            window.removeEventListener('message', handler);
+            console.log('%c[Memoraid] 调试会话已启动', 'color: #00ff88; font-weight: bold;');
+            console.log('%c验证码: ' + event.data.verificationCode, 'color: #ffcc00; font-size: 16px; font-weight: bold;');
+            resolve(event.data.verificationCode);
+          } else if (event.data.type === 'MEMORAID_DEBUG_SESSION_ERROR') {
+            window.removeEventListener('message', handler);
+            reject(new Error(event.data.error));
+          }
+        };
+        window.addEventListener('message', handler);
+        
+        // 超时处理
+        setTimeout(() => {
+          window.removeEventListener('message', handler);
+          reject(new Error('启动调试会话超时'));
+        }, 10000);
+      });
+    },
+    
+    stop: function() {
+      return new Promise((resolve) => {
+        window.postMessage({ type: 'MEMORAID_STOP_DEBUG_SESSION' }, '*');
+        
+        const handler = (event) => {
+          if (event.data.type === 'MEMORAID_DEBUG_SESSION_STOPPED') {
+            window.removeEventListener('message', handler);
+            console.log('%c[Memoraid] 调试会话已停止', 'color: #ff6b6b; font-weight: bold;');
+            resolve();
+          }
+        };
+        window.addEventListener('message', handler);
+        
+        setTimeout(() => {
+          window.removeEventListener('message', handler);
+          resolve();
+        }, 5000);
+      });
+    },
+    
+    status: function() {
+      return new Promise((resolve) => {
+        window.postMessage({ type: 'MEMORAID_GET_DEBUG_STATUS' }, '*');
+        
+        const handler = (event) => {
+          if (event.data.type === 'MEMORAID_DEBUG_STATUS') {
+            window.removeEventListener('message', handler);
+            const status = event.data.status;
+            console.log(\`%c[Memoraid] 调试状态: \${status.isActive ? '运行中' : '未启动'}\`, 
+              \`color: \${status.isActive ? '#00ff88' : '#888'}; font-weight: bold;\`);
+            if (status.verificationCode) {
+              console.log('%c验证码: ' + status.verificationCode, 'color: #ffcc00; font-size: 14px;');
+            }
+            resolve(status);
+          }
+        };
+        window.addEventListener('message', handler);
+        
+        setTimeout(() => {
+          window.removeEventListener('message', handler);
+          resolve({ isActive: false });
+        }, 5000);
+      });
+    }
+  };
+
+  console.log('%c[Memoraid] Debug bridge injected', 'color: #00d9ff; font-weight: bold;');
+  console.log('%c输入 memoraidDebug.help() 查看可用命令', 'color: #888;');
+})();
+`;
+
+/**
+ * 注入调试桥接到页面
+ * 【新增2026-03-29】使用 chrome.scripting.executeScript 在 MAIN world 中注入
+ */
+async function injectDebugBridge(tabId: number): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN', // 关键：在页面主上下文执行，不受 CSP 限制
+      func: (code: string) => {
+        eval(code);
+      },
+      args: [DEBUG_BRIDGE_CODE]
+    });
+    console.log('[Background] Debug bridge injected to tab', tabId);
+  } catch (e) {
+    console.error('[Background] Failed to inject debug bridge:', e);
+  }
+}
+
 /**
  * 创建 OpenAI 客户端的公共函数
  * 统一处理 Memoraid provider 的特殊认证逻辑：
@@ -200,6 +335,19 @@ async function updatePlatformCookie(platform: 'toutiao' | 'zhihu' | 'weixin' | '
 
 // Listen for messages from Popup
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // 【新增2026-03-29】处理调试桥接注入请求
+  if (message.type === 'INJECT_DEBUG_BRIDGE') {
+    const tabId = message.payload?.tabId || _sender.tab?.id;
+    if (tabId) {
+      injectDebugBridge(tabId)
+        .then(() => sendResponse({ success: true }))
+        .catch((e: any) => sendResponse({ success: false, error: e.message }));
+    } else {
+      sendResponse({ success: false, error: 'No tab ID provided' });
+    }
+    return true;
+  }
+
   if (message.type === 'START_LOGIN') {
     handleLogin(message.payload.provider)
       .then(() => sendResponse({ success: true }))
