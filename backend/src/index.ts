@@ -5856,6 +5856,10 @@ export default {
                 <a href="#orders" class="nav-item" id="nav-orders" onclick="switchTab('orders')">
                     <span>💰</span> 支付记录
                 </a>
+                <!-- 推广赚钱导航项 -->
+                <a href="#referral" class="nav-item" id="nav-referral" onclick="switchTab('referral')">
+                    <span>🎁</span> 推广赚钱
+                </a>
                 <!-- 排行榜导航项 -->
                 <a href="#leaderboards" class="nav-item" id="nav-leaderboards" onclick="switchTab('leaderboards')">
                     <span>🏆</span> 排行榜
@@ -6243,6 +6247,112 @@ export default {
                             <button id="prevOrdersBtn" class="btn-sm btn-outline" disabled onclick="changeOrderPage(-1)">上一页</button>
                             <span id="orderPageInfo" style="font-size:0.875rem;color:var(--text-muted)"></span>
                             <button id="nextOrdersBtn" class="btn-sm btn-outline" disabled onclick="changeOrderPage(1)">下一页</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Referral Tab -->
+            <div id="tab-referral" class="tab-content" style="display:none">
+                <div class="section">
+                    <h2 class="section-title">🎁 推广赚钱统计</h2>
+                    
+                    <!-- 统计卡片 -->
+                    <div class="stats-grid" style="margin-bottom: 32px;">
+                        <div class="stat-card">
+                            <div class="stat-label">总邀请人数</div>
+                            <div class="stat-value" id="totalInvitees">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">总佣金金额</div>
+                            <div class="stat-value" style="color: #10b981;" id="totalCommission">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">待结算佣金</div>
+                            <div class="stat-value" style="color: #f59e0b;" id="pendingCommission">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">已提现金额</div>
+                            <div class="stat-value" style="color: #3b82f6;" id="withdrawnAmount">-</div>
+                        </div>
+                    </div>
+
+                    <!-- 佣金记录 -->
+                    <div style="margin-bottom: 32px;">
+                        <h3 style="font-size: 1.2rem; font-weight: 600; margin-bottom: 16px;">💰 佣金记录</h3>
+                        <!-- 搜索工具栏 -->
+                        <div class="toolbar" style="margin-bottom: 16px;">
+                            <input id="commissionKeyword" type="text" class="form-input" placeholder="搜索邀请人或被邀请人邮箱..." style="flex:1;max-width:300px" oninput="fetchCommissions(true)">
+                            <select id="commissionStatusFilter" class="form-select" onchange="fetchCommissions(true)">
+                                <option value="">全部状态</option>
+                                <option value="pending">待结算</option>
+                                <option value="settled">已结算</option>
+                                <option value="withdrawn">已提现</option>
+                            </select>
+                            <button onclick="fetchCommissions(true)" class="btn-sm btn-outline">刷新</button>
+                        </div>
+                        <div class="card">
+                            <div class="table-wrapper">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>时间</th>
+                                            <th>邀请人</th>
+                                            <th>被邀请人</th>
+                                            <th>充值金额</th>
+                                            <th>佣金金额</th>
+                                            <th>佣金比例</th>
+                                            <th>状态</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="commissionsTable"></tbody>
+                                </table>
+                            </div>
+                            <div style="padding:12px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border)">
+                                <button id="prevCommissionsBtn" class="btn-sm btn-outline" disabled onclick="changeCommissionPage(-1)">上一页</button>
+                                <span id="commissionPageInfo" style="font-size:0.875rem;color:var(--text-muted)"></span>
+                                <button id="nextCommissionsBtn" class="btn-sm btn-outline" disabled onclick="changeCommissionPage(1)">下一页</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 提现记录 -->
+                    <div>
+                        <h3 style="font-size: 1.2rem; font-weight: 600; margin-bottom: 16px;">💸 提现记录</h3>
+                        <!-- 搜索工具栏 -->
+                        <div class="toolbar" style="margin-bottom: 16px;">
+                            <input id="withdrawalKeyword" type="text" class="form-input" placeholder="搜索用户邮箱..." style="flex:1;max-width:300px" oninput="fetchWithdrawals(true)">
+                            <select id="withdrawalStatusFilter" class="form-select" onchange="fetchWithdrawals(true)">
+                                <option value="">全部状态</option>
+                                <option value="pending">待审核</option>
+                                <option value="approved">已通过</option>
+                                <option value="rejected">已拒绝</option>
+                                <option value="completed">已完成</option>
+                            </select>
+                            <button onclick="fetchWithdrawals(true)" class="btn-sm btn-outline">刷新</button>
+                        </div>
+                        <div class="card">
+                            <div class="table-wrapper">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>申请时间</th>
+                                            <th>用户</th>
+                                            <th>提现金额</th>
+                                            <th>提现方式</th>
+                                            <th>状态</th>
+                                            <th>备注</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="withdrawalsTable"></tbody>
+                                </table>
+                            </div>
+                            <div style="padding:12px;display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border)">
+                                <button id="prevWithdrawalsBtn" class="btn-sm btn-outline" disabled onclick="changeWithdrawalPage(-1)">上一页</button>
+                                <span id="withdrawalPageInfo" style="font-size:0.875rem;color:var(--text-muted)"></span>
+                                <button id="nextWithdrawalsBtn" class="btn-sm btn-outline" disabled onclick="changeWithdrawalPage(1)">下一页</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -7659,6 +7769,14 @@ export default {
                 window.ordersLoaded = true;
             }
             
+            // 加载推广统计数据
+            if (tabId === 'referral' && !window.referralLoaded) {
+                loadReferralStats();
+                fetchCommissions(true);
+                fetchWithdrawals(true);
+                window.referralLoaded = true;
+            }
+            
             // 加载排行榜数据
             if (tabId === 'leaderboards' && !window.leaderboardsLoaded) {
                 fetchLeaderboards();
@@ -7768,6 +7886,215 @@ export default {
         async function changeOrderPage(delta) {
             ordersPage += delta;
             await fetchOrders();
+        }
+        
+        // ============================================
+        // 推广统计相关函数
+        // ============================================
+        
+        // 加载推广统计数据
+        async function loadReferralStats() {
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch('/api/admin/referral/stats', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                if (!res.ok) throw new Error('Failed to fetch referral stats');
+                
+                const data = await res.json();
+                
+                // 更新统计卡片
+                document.getElementById('totalInvitees').textContent = data.totalInvitees || 0;
+                document.getElementById('totalCommission').textContent = '¥' + (data.totalCommission || 0).toFixed(2);
+                document.getElementById('pendingCommission').textContent = '¥' + (data.pendingCommission || 0).toFixed(2);
+                document.getElementById('withdrawnAmount').textContent = '¥' + (data.withdrawnAmount || 0).toFixed(2);
+            } catch (e) {
+                console.error('加载推广统计失败:', e);
+            }
+        }
+        
+        // 佣金记录分页
+        let commissionsPage = 1;
+        const commissionsLimit = 20;
+        
+        async function fetchCommissions(reset = false) {
+            if (reset) commissionsPage = 1;
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                // 获取搜索参数
+                const keyword = document.getElementById('commissionKeyword')?.value || '';
+                const status = document.getElementById('commissionStatusFilter')?.value || '';
+                
+                // 构建查询参数
+                let queryParams = \`page=\${commissionsPage}&pageSize=\${commissionsLimit}\`;
+                if (keyword) queryParams += \`&keyword=\${encodeURIComponent(keyword)}\`;
+                if (status) queryParams += \`&status=\${status}\`;
+                
+                const res = await fetch(\`/api/admin/referral/commissions?\${queryParams}\`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                if (!res.ok) throw new Error('Failed to fetch commissions');
+                
+                const data = await res.json();
+                renderCommissions(data);
+            } catch (e) {
+                console.error('加载佣金记录失败:', e);
+                document.getElementById('commissionsTable').innerHTML = '<tr><td colspan="7" style="text-align:center;color:red">加载失败</td></tr>';
+            }
+        }
+        
+        function renderCommissions(data) {
+            const tbody = document.getElementById('commissionsTable');
+            const statusMap = { 'pending': '待结算', 'settled': '已结算', 'withdrawn': '已提现' };
+            const statusColors = { 'pending': '#f59e0b', 'settled': '#10b981', 'withdrawn': '#3b82f6' };
+            
+            if (!data.records || data.records.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">暂无佣金记录</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = data.records.map(r => \`
+                <tr>
+                    <td>\${new Date(r.created_at).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}</td>
+                    <td>\${r.inviter_email || r.inviter_id}</td>
+                    <td>\${r.invitee_email || r.invitee_id}</td>
+                    <td>¥\${r.recharge_amount.toFixed(2)}</td>
+                    <td style="color: #10b981; font-weight: 600;">¥\${r.amount.toFixed(2)}</td>
+                    <td>\${(r.commission_rate * 100).toFixed(1)}%</td>
+                    <td><span class="status-pill" style="background: \${statusColors[r.status]}22; color: \${statusColors[r.status]};">\${statusMap[r.status]}</span></td>
+                </tr>
+            \`).join('');
+            
+            // 更新分页信息
+            document.getElementById('commissionPageInfo').textContent = \`第 \${commissionsPage} 页 / 共 \${Math.ceil(data.total / commissionsLimit)} 页\`;
+            document.getElementById('prevCommissionsBtn').disabled = commissionsPage === 1;
+            document.getElementById('nextCommissionsBtn').disabled = commissionsPage >= Math.ceil(data.total / commissionsLimit);
+        }
+        
+        async function changeCommissionPage(delta) {
+            commissionsPage += delta;
+            await fetchCommissions();
+        }
+        
+        // 提现记录分页
+        let withdrawalsPage = 1;
+        const withdrawalsLimit = 20;
+        
+        async function fetchWithdrawals(reset = false) {
+            if (reset) withdrawalsPage = 1;
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                // 获取搜索参数
+                const keyword = document.getElementById('withdrawalKeyword')?.value || '';
+                const status = document.getElementById('withdrawalStatusFilter')?.value || '';
+                
+                // 构建查询参数
+                let queryParams = \`page=\${withdrawalsPage}&pageSize=\${withdrawalsLimit}\`;
+                if (keyword) queryParams += \`&keyword=\${encodeURIComponent(keyword)}\`;
+                if (status) queryParams += \`&status=\${status}\`;
+                
+                const res = await fetch(\`/api/admin/referral/withdrawals?\${queryParams}\`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                if (!res.ok) throw new Error('Failed to fetch withdrawals');
+                
+                const data = await res.json();
+                renderWithdrawals(data);
+            } catch (e) {
+                console.error('加载提现记录失败:', e);
+                document.getElementById('withdrawalsTable').innerHTML = '<tr><td colspan="7" style="text-align:center;color:red">加载失败</td></tr>';
+            }
+        }
+        
+        function renderWithdrawals(data) {
+            const tbody = document.getElementById('withdrawalsTable');
+            const statusMap = { 'pending': '待审核', 'approved': '已通过', 'rejected': '已拒绝', 'completed': '已完成' };
+            const statusColors = { 'pending': '#f59e0b', 'approved': '#10b981', 'rejected': '#ef4444', 'completed': '#10b981' };
+            
+            if (!data.records || data.records.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">暂无提现记录</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = data.records.map(r => \`
+                <tr>
+                    <td>\${new Date(r.created_at).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}</td>
+                    <td>\${r.user_email || r.user_id}</td>
+                    <td style="font-weight: 600;">¥\${r.amount.toFixed(2)}</td>
+                    <td>\${r.payment_method === 'alipay' ? '支付宝' : '微信'}</td>
+                    <td><span class="status-pill" style="background: \${statusColors[r.status]}22; color: \${statusColors[r.status]};">\${statusMap[r.status]}</span></td>
+                    <td style="color: var(--text-muted); font-size: 0.85rem;">\${r.admin_note || '-'}</td>
+                    <td>
+                        \${r.status === 'pending' ? \`
+                            <button class="btn-sm btn-success" onclick="approveWithdrawal(\${r.id})" style="margin-right: 8px;">通过</button>
+                            <button class="btn-sm btn-outline" onclick="rejectWithdrawal(\${r.id})">拒绝</button>
+                        \` : '-'}
+                    </td>
+                </tr>
+            \`).join('');
+            
+            // 更新分页信息
+            document.getElementById('withdrawalPageInfo').textContent = \`第 \${withdrawalsPage} 页 / 共 \${Math.ceil(data.total / withdrawalsLimit)} 页\`;
+            document.getElementById('prevWithdrawalsBtn').disabled = withdrawalsPage === 1;
+            document.getElementById('nextWithdrawalsBtn').disabled = withdrawalsPage >= Math.ceil(data.total / withdrawalsLimit);
+        }
+        
+        async function changeWithdrawalPage(delta) {
+            withdrawalsPage += delta;
+            await fetchWithdrawals();
+        }
+        
+        // 审核提现申请
+        async function approveWithdrawal(id) {
+            if (!confirm('确认通过此提现申请？')) return;
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch(\`/api/admin/referral/withdrawals/\${id}/approve\`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                
+                if (!res.ok) throw new Error('Failed to approve withdrawal');
+                
+                alert('审核通过！');
+                await fetchWithdrawals();
+                await loadReferralStats();
+            } catch (e) {
+                console.error('审核失败:', e);
+                alert('审核失败：' + e.message);
+            }
+        }
+        
+        // 拒绝提现申请
+        async function rejectWithdrawal(id) {
+            const reason = prompt('请输入拒绝原因：');
+            if (!reason) return;
+            
+            try {
+                const token = localStorage.getItem('memoraid_admin_token');
+                const res = await fetch(\`/api/admin/referral/withdrawals/\${id}/reject\`, {
+                    method: 'POST',
+                    headers: { 
+                        'Authorization': 'Bearer ' + token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ reason })
+                });
+                
+                if (!res.ok) throw new Error('Failed to reject withdrawal');
+                
+                alert('已拒绝！');
+                await fetchWithdrawals();
+            } catch (e) {
+                console.error('操作失败:', e);
+                alert('操作失败：' + e.message);
+            }
         }
         
         // 排行榜相关函数
@@ -13169,6 +13496,279 @@ export default {
           page,
           pageSize
         }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // ============================================
+    // 管理员推广统计 API - 用于管理后台查看推广数据
+    // ============================================
+
+    // 7.9.9 GET /api/admin/referral/stats - 获取推广统计数据（管理员）
+    if (url.pathname === '/api/admin/referral/stats' && request.method === 'GET') {
+      try {
+        // 验证管理员权限
+        const adminCheck = verifyAdminToken(request);
+        if (!adminCheck.valid) {
+          const status = adminCheck.error === 'Forbidden' ? 403 : 401;
+          return new Response(JSON.stringify({ error: adminCheck.error }), {
+            status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 统计总邀请人数
+        const totalInvitees = await env.DB.prepare(
+          'SELECT COUNT(*) as count FROM user_invitations WHERE invitee_id IS NOT NULL'
+        ).first<{ count: number }>();
+
+        // 统计总佣金金额（已结算+已提现）
+        const totalCommission = await env.DB.prepare(
+          'SELECT COALESCE(SUM(amount), 0) as total FROM commission_records WHERE status IN ("settled", "withdrawn")'
+        ).first<{ total: number }>();
+
+        // 统计待结算佣金
+        const pendingCommission = await env.DB.prepare(
+          'SELECT COALESCE(SUM(amount), 0) as total FROM commission_records WHERE status = "pending"'
+        ).first<{ total: number }>();
+
+        // 统计已提现金额
+        const withdrawnAmount = await env.DB.prepare(
+          'SELECT COALESCE(SUM(amount), 0) as total FROM withdrawal_records WHERE status = "completed"'
+        ).first<{ total: number }>();
+
+        return new Response(JSON.stringify({
+          totalInvitees: totalInvitees?.count || 0,
+          totalCommission: totalCommission?.total || 0,
+          pendingCommission: pendingCommission?.total || 0,
+          withdrawnAmount: withdrawnAmount?.total || 0
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.10 GET /api/admin/referral/commissions - 获取佣金记录列表（管理员）
+    if (url.pathname === '/api/admin/referral/commissions' && request.method === 'GET') {
+      try {
+        // 验证管理员权限
+        const adminCheck = verifyAdminToken(request);
+        if (!adminCheck.valid) {
+          const status = adminCheck.error === 'Forbidden' ? 403 : 401;
+          return new Response(JSON.stringify({ error: adminCheck.error }), {
+            status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const page = parseInt(url.searchParams.get('page') || '1');
+        const pageSize = parseInt(url.searchParams.get('pageSize') || '20');
+        const offset = (page - 1) * pageSize;
+        const keyword = url.searchParams.get('keyword') || '';
+        const statusFilter = url.searchParams.get('status') || '';
+
+        // 构建查询条件
+        let whereConditions = [];
+        let params: any[] = [];
+
+        if (keyword) {
+          whereConditions.push('(u1.email LIKE ? OR u2.email LIKE ?)');
+          params.push(`%${keyword}%`, `%${keyword}%`);
+        }
+
+        if (statusFilter) {
+          whereConditions.push('c.status = ?');
+          params.push(statusFilter);
+        }
+
+        const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
+
+        // 获取佣金记录（关联用户邮箱）
+        const records = await env.DB.prepare(`
+          SELECT 
+            c.id,
+            c.inviter_id,
+            c.invitee_id,
+            c.order_id,
+            c.amount,
+            c.recharge_amount,
+            c.commission_rate,
+            c.status,
+            c.created_at,
+            u1.email as inviter_email,
+            u2.email as invitee_email
+          FROM commission_records c
+          LEFT JOIN users u1 ON c.inviter_id = u1.id
+          LEFT JOIN users u2 ON c.invitee_id = u2.id
+          ${whereClause}
+          ORDER BY c.created_at DESC
+          LIMIT ? OFFSET ?
+        `).bind(...params, pageSize, offset).all();
+
+        // 获取总数
+        const totalRow = await env.DB.prepare(`
+          SELECT COUNT(*) as total 
+          FROM commission_records c
+          LEFT JOIN users u1 ON c.inviter_id = u1.id
+          LEFT JOIN users u2 ON c.invitee_id = u2.id
+          ${whereClause}
+        `).bind(...params).first<{ total: number }>();
+
+        return new Response(JSON.stringify({
+          records: records.results || [],
+          total: totalRow?.total || 0,
+          page,
+          pageSize
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.11 GET /api/admin/referral/withdrawals - 获取提现记录列表（管理员）
+    if (url.pathname === '/api/admin/referral/withdrawals' && request.method === 'GET') {
+      try {
+        // 验证管理员权限
+        const adminCheck = verifyAdminToken(request);
+        if (!adminCheck.valid) {
+          const status = adminCheck.error === 'Forbidden' ? 403 : 401;
+          return new Response(JSON.stringify({ error: adminCheck.error }), {
+            status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const page = parseInt(url.searchParams.get('page') || '1');
+        const pageSize = parseInt(url.searchParams.get('pageSize') || '20');
+        const offset = (page - 1) * pageSize;
+        const keyword = url.searchParams.get('keyword') || '';
+        const statusFilter = url.searchParams.get('status') || '';
+
+        // 构建查询条件
+        let whereConditions = [];
+        let params: any[] = [];
+
+        if (keyword) {
+          whereConditions.push('u.email LIKE ?');
+          params.push(`%${keyword}%`);
+        }
+
+        if (statusFilter) {
+          whereConditions.push('w.status = ?');
+          params.push(statusFilter);
+        }
+
+        const whereClause = whereConditions.length > 0 ? 'WHERE ' + whereConditions.join(' AND ') : '';
+
+        // 获取提现记录（关联用户邮箱）
+        const records = await env.DB.prepare(`
+          SELECT 
+            w.id,
+            w.user_id,
+            w.amount,
+            w.payment_method,
+            w.payment_qrcode_url,
+            w.status,
+            w.admin_note,
+            w.created_at,
+            w.processed_at,
+            u.email as user_email
+          FROM withdrawal_records w
+          LEFT JOIN users u ON w.user_id = u.id
+          ${whereClause}
+          ORDER BY w.created_at DESC
+          LIMIT ? OFFSET ?
+        `).bind(...params, pageSize, offset).all();
+
+        // 获取总数
+        const totalRow = await env.DB.prepare(`
+          SELECT COUNT(*) as total 
+          FROM withdrawal_records w
+          LEFT JOIN users u ON w.user_id = u.id
+          ${whereClause}
+        `).bind(...params).first<{ total: number }>();
+
+        return new Response(JSON.stringify({
+          records: records.results || [],
+          total: totalRow?.total || 0,
+          page,
+          pageSize
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.12 POST /api/admin/referral/withdrawals/:id/approve - 审核通过提现申请（管理员）
+    if (url.pathname.match(/^\/api\/admin\/referral\/withdrawals\/\d+\/approve$/) && request.method === 'POST') {
+      try {
+        // 验证管理员权限
+        const adminCheck = verifyAdminToken(request);
+        if (!adminCheck.valid) {
+          const status = adminCheck.error === 'Forbidden' ? 403 : 401;
+          return new Response(JSON.stringify({ error: adminCheck.error }), {
+            status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const id = parseInt(url.pathname.split('/')[5]);
+
+        // 更新提现记录状态
+        await env.DB.prepare(
+          'UPDATE withdrawal_records SET status = "completed", processed_at = ?, admin_note = "审核通过" WHERE id = ?'
+        ).bind(Date.now(), id).run();
+
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // 7.9.13 POST /api/admin/referral/withdrawals/:id/reject - 拒绝提现申请（管理员）
+    if (url.pathname.match(/^\/api\/admin\/referral\/withdrawals\/\d+\/reject$/) && request.method === 'POST') {
+      try {
+        // 验证管理员权限
+        const adminCheck = verifyAdminToken(request);
+        if (!adminCheck.valid) {
+          const status = adminCheck.error === 'Forbidden' ? 403 : 401;
+          return new Response(JSON.stringify({ error: adminCheck.error }), {
+            status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const id = parseInt(url.pathname.split('/')[5]);
+        const body: any = await request.json();
+        const reason = body.reason || '审核未通过';
+
+        // 更新提现记录状态
+        await env.DB.prepare(
+          'UPDATE withdrawal_records SET status = "rejected", processed_at = ?, admin_note = ? WHERE id = ?'
+        ).bind(Date.now(), reason, id).run();
+
+        return new Response(JSON.stringify({ success: true }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       } catch (e: any) {
