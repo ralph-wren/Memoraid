@@ -144,7 +144,8 @@ async function getUserQuotaSnapshot(env: Env, userId: string): Promise<UserQuota
     SELECT provider FROM users WHERE id = ?
   `).bind(userId).first<{ provider?: string }>();
   
-  const freeLimit = (user?.provider === 'anonymous') ? 5 : 20;
+  // 【修复2026-03-29】未登录用户（user不存在）也应该是5额度
+  const freeLimit = (user?.provider === 'anonymous' || !user) ? 5 : 20;
   
   // 2. 获取付费总额度（累计充值）
   const paidTotalRow = await env.DB.prepare(`
