@@ -4304,6 +4304,57 @@ export default {
       }
     }
 
+    // 7.0.6 GET /api/feedback/my - 获取用户的反馈列表（包含管理员回复）
+    if (url.pathname === '/api/feedback/my' && request.method === 'GET') {
+      try {
+        // 获取用户ID（支持匿名用户）
+        let userId = getUserIdFromRequest(request);
+        if (!userId) {
+          const anonymousId = request.headers.get('X-Anonymous-ID');
+          if (anonymousId) {
+            userId = anonymousId;
+          }
+        }
+
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+            status: 401,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 查询用户的反馈列表，只返回有管理员回复的记录
+        const feedbacks = await env.DB.prepare(`
+          SELECT id, type, content, status, admin_reply, created_at, updated_at
+          FROM feedback
+          WHERE user_id = ? AND admin_reply IS NOT NULL AND admin_reply != ''
+          ORDER BY updated_at DESC
+          LIMIT 10
+        `).bind(userId).all();
+
+        // 统计有未读回复的数量（status为resolved且有admin_reply的）
+        const unreadCount = await env.DB.prepare(`
+          SELECT COUNT(*) as count
+          FROM feedback
+          WHERE user_id = ? AND admin_reply IS NOT NULL AND admin_reply != '' AND status = 'resolved'
+        `).bind(userId).first<{ count: number }>();
+
+        return new Response(JSON.stringify({
+          feedbacks: feedbacks.results || [],
+          unreadCount: unreadCount?.count || 0
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (error: any) {
+        console.error('Feedback list error:', error);
+        return new Response(JSON.stringify({ error: error.message || '获取失败' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
     // 7.1 POST /api/articles/report - 上报文章发布信息
     if (url.pathname === '/api/articles/report' && request.method === 'POST') {
       try {
@@ -8387,25 +8438,98 @@ export default {
             }
         }
         
-        // 显示回复弹窗
+        // 显示回复弹窗（美化版 - 居中显示）v4-20260329
         function showReplyModal(feedbackId, content, existingReply) {
-            const modal = document.createElement('div');
-            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000';
+            console.log('[Memoraid] showReplyModal v4-20260329 - 强制居中版本');
             
-            modal.innerHTML = 
-                '<div style="background:white;border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto">' +
-                '<h3 style="margin:0 0 16px 0;font-size:1.25rem;font-weight:600">回复用户反馈</h3>' +
-                '<div style="padding:12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:16px">' +
-                '<p style="margin:0;color:var(--text);line-height:1.6;white-space:pre-wrap">' + content + '</p>' +
+            // 移除可能存在的旧弹窗
+            const oldModal = document.querySelector('div[data-modal-type="reply"]');
+            if (oldModal) oldModal.remove();
+            
+            // 创建遮罩层
+            const modal = document.createElement('div');
+            modal.setAttribute('data-modal-type', 'reply');
+            modal.style.position = 'fixed';
+            modal.style.top = '0';
+            modal.style.left = '0';
+            modal.style.width = '100%';
+            modal.style.height = '100%';
+            modal.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+            modal.style.zIndex = '99999';
+            modal.style.display = 'flex';
+            modal.style.alignItems = 'center';
+            modal.style.justifyContent = 'center';
+            modal.style.padding = '20px';
+            modal.style.overflow = 'auto';
+            
+            // 创建弹窗容器
+            const dialogBox = document.createElement('div');
+            dialogBox.style.backgroundColor = 'white';
+            dialogBox.style.borderRadius = '16px';
+            dialogBox.style.maxWidth = '600px';
+            dialogBox.style.width = '100%';
+            dialogBox.style.maxHeight = '85vh';
+            dialogBox.style.boxShadow = '0 20px 60px rgba(0, 0, 0, 0.3)';
+            dialogBox.style.display = 'flex';
+            dialogBox.style.flexDirection = 'column';
+            dialogBox.style.overflow = 'hidden';
+            dialogBox.style.margin = 'auto';
+            
+            dialogBox.innerHTML = 
+                // 标题栏
+                '<div style="padding:24px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;background:linear-gradient(135deg, #f0f9ff 0%, #ffffff 100%)">' +
+                '<h3 style="margin:0;font-size:1.25rem;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:10px">' +
+                '<span style="font-size:1.75rem">💬</span>' +
+                '<span>回复用户反馈</span>' +
+                '</h3>' +
+                '<button onclick="this.closest(&apos;div[style*=fixed]&apos;).remove()" style="width:36px;height:36px;border:none;background:#f3f4f6;color:#6b7280;cursor:pointer;border-radius:8px;display:flex;align-items:center;justify-content:center;transition:all 0.2s;flex-shrink:0" onmouseover="this.style.background=&apos;#e5e7eb&apos;;this.style.color=&apos;#111827&apos;" onmouseout="this.style.background=&apos;#f3f4f6&apos;;this.style.color=&apos;#6b7280&apos;">' +
+                '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+                '</button>' +
                 '</div>' +
-                '<textarea id="replyContent" placeholder="输入回复内容..." style="width:100%;min-height:120px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:vertical;font-family:inherit" >' + existingReply + '</textarea>' +
-                '<div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">' +
-                '<button onclick="this.closest(&apos;[style*=fixed]&apos;).remove()" class="btn-sm btn-outline">取消</button>' +
-                '<button onclick="submitReply(' + feedbackId + ')" class="btn-sm btn-primary">提交回复</button>' +
+                // 内容区域
+                '<div style="padding:24px;overflow-y:auto;flex:1;min-height:0">' +
+                '<div style="margin-bottom:24px">' +
+                '<label style="display:block;margin-bottom:10px;font-size:0.875rem;font-weight:700;color:#374151;letter-spacing:0.025em">📝 用户反馈内容</label>' +
+                '<div style="padding:18px;background:linear-gradient(135deg, #f0f9ff 0%, #f9fafb 100%);border:1px solid #dbeafe;border-radius:12px;border-left:4px solid #3b82f6;box-shadow:0 2px 8px rgba(59, 130, 246, 0.08)">' +
+                '<p style="margin:0;color:#1f2937;line-height:1.7;white-space:pre-wrap;font-size:0.9375rem">' + content + '</p>' +
                 '</div>' +
+                '</div>' +
+                '<div>' +
+                '<label for="replyContent" style="display:block;margin-bottom:10px;font-size:0.875rem;font-weight:700;color:#374151;letter-spacing:0.025em">✍️ 管理员回复</label>' +
+                '<textarea id="replyContent" placeholder="请输入您的回复内容..." style="width:100%;min-height:150px;padding:16px;border:2px solid #e5e7eb;border-radius:12px;resize:vertical;font-family:inherit;font-size:0.9375rem;line-height:1.7;transition:all 0.2s;outline:none;box-shadow:0 2px 8px rgba(0, 0, 0, 0.04)" onfocus="this.style.borderColor=&apos;#3b82f6&apos;;this.style.boxShadow=&apos;0 4px 12px rgba(59, 130, 246, 0.15)&apos;" onblur="this.style.borderColor=&apos;#e5e7eb&apos;;this.style.boxShadow=&apos;0 2px 8px rgba(0, 0, 0, 0.04)&apos;">' + existingReply + '</textarea>' +
+                '<p style="margin:8px 0 0 0;font-size:0.75rem;color:#9ca3af">提示：回复后用户将在插件面板中收到通知</p>' +
+                '</div>' +
+                '</div>' +
+                // 底部按钮栏
+                '<div style="padding:20px 24px;border-top:1px solid #e5e7eb;display:flex;gap:12px;justify-content:flex-end;background:#fafbfc">' +
+                '<button onclick="this.closest(&apos;div[style*=fixed]&apos;).remove()" style="padding:11px 24px;border:2px solid #e5e7eb;background:white;color:#374151;border-radius:10px;font-weight:600;font-size:0.9375rem;cursor:pointer;transition:all 0.2s;box-shadow:0 2px 4px rgba(0, 0, 0, 0.04)" onmouseover="this.style.background=&apos;#f9fafb&apos;;this.style.borderColor=&apos;#d1d5db&apos;;this.style.transform=&apos;translateY(-1px)&apos;;this.style.boxShadow=&apos;0 4px 8px rgba(0, 0, 0, 0.08)&apos;" onmouseout="this.style.background=&apos;white&apos;;this.style.borderColor=&apos;#e5e7eb&apos;;this.style.transform=&apos;translateY(0)&apos;;this.style.boxShadow=&apos;0 2px 4px rgba(0, 0, 0, 0.04)&apos;">取消</button>' +
+                '<button onclick="submitReply(' + feedbackId + ')" style="padding:11px 28px;border:none;background:linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);color:white;border-radius:10px;font-weight:700;font-size:0.9375rem;cursor:pointer;box-shadow:0 4px 12px rgba(59, 130, 246, 0.35);transition:all 0.2s;letter-spacing:0.025em" onmouseover="this.style.transform=&apos;translateY(-2px)&apos;;this.style.boxShadow=&apos;0 8px 20px rgba(59, 130, 246, 0.45)&apos;" onmouseout="this.style.transform=&apos;translateY(0)&apos;;this.style.boxShadow=&apos;0 4px 12px rgba(59, 130, 246, 0.35)&apos;">✓ 提交回复</button>' +
                 '</div>';
             
+            modal.appendChild(dialogBox);
             document.body.appendChild(modal);
+            
+            // 点击背景关闭弹窗
+            modal.addEventListener('click', function(e) {
+                if (e.target === modal) {
+                    modal.remove();
+                }
+            });
+            
+            // 阻止弹窗内部点击事件冒泡
+            dialogBox.addEventListener('click', function(e) {
+                e.stopPropagation();
+            });
+            
+            // 自动聚焦到输入框
+            setTimeout(() => {
+                const textarea = document.getElementById('replyContent');
+                if (textarea) {
+                    textarea.focus();
+                    // 将光标移到末尾
+                    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+                }
+            }, 100);
         }
         
         // 提交回复
@@ -8952,7 +9076,7 @@ export default {
     </script>
 </body>
 </html>`;
-      return new Response(html, { headers: { 'Content-Type': 'text/html; charset=UTF-8' } });
+      return new Response(html, { headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0' } });
     }
 
     // 7.0.4 GET /api/admin/orders - 获取订单列表

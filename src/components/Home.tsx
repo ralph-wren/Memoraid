@@ -88,6 +88,11 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [feedbackSubmitStatus, setFeedbackSubmitStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [feedbackErrorMessage, setFeedbackErrorMessage] = useState('');
+  
+  // 【新增】反馈回复相关状态
+  const [feedbackReplies, setFeedbackReplies] = useState<any[]>([]); // 反馈回复列表
+  const [unreadReplyCount, setUnreadReplyCount] = useState(0); // 未读回复数量
+  const [isViewingReplies, setIsViewingReplies] = useState(false); // 是否正在查看回复列表
 
   useEffect(() => {
     userClosedResultRef.current = userClosedResult;
@@ -193,6 +198,9 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     
     // 首次加载额度信息（强制刷新，不使用缓存）
     loadQuota(true);
+    
+    // 【新增】首次加载反馈回复数量
+    loadFeedbackReplies();
   }, [loadQuota]);
 
   // History State
@@ -1034,6 +1042,50 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     }
   };
 
+  // 【新增】加载反馈回复列表
+  const loadFeedbackReplies = async () => {
+    try {
+      const settings = await getSettings();
+      const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+      const token = settings.sync?.token;
+      const anonymousId = settings.anonymousId;
+
+      // 构建请求头
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+
+      // 优先使用 token，如果没有则使用匿名 ID
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      } else if (anonymousId) {
+        headers['X-Anonymous-ID'] = anonymousId;
+      }
+
+      const response = await fetch(`${backendUrl}/api/feedback/my`, {
+        method: 'GET',
+        headers
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setFeedbackReplies(data.feedbacks || []);
+        setUnreadReplyCount(data.unreadCount || 0);
+      } else {
+        console.error('Failed to load feedback replies');
+      }
+    } catch (error) {
+      console.error('Failed to load feedback replies:', error);
+    }
+  };
+
+  // 【新增】打开反馈弹窗时加载回复列表
+  useEffect(() => {
+    if (isFeedbackModalOpen) {
+      loadFeedbackReplies();
+    }
+  }, [isFeedbackModalOpen]);
+
   const handlePush = async () => {
     setIsPushing(true);
     try {
@@ -1121,12 +1173,19 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
           >
             <BarChart3 className="w-5 h-5 text-indigo-500" />
           </button>
+          {/* 【修改】用户反馈按钮 - 添加气泡提示 */}
           <button
             onClick={() => setIsFeedbackModalOpen(true)}
-            className="p-2 hover:bg-gray-100 rounded-full text-gray-600"
+            className="p-2 hover:bg-gray-100 rounded-full text-gray-600 relative"
             title="用户反馈"
           >
             <MessageSquare className="w-5 h-5 text-blue-500" />
+            {/* 未读回复气泡提示 */}
+            {unreadReplyCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+                {unreadReplyCount}
+              </span>
+            )}
           </button>
           <a
             href="https://github.com/ralph-wren/Memoraid"
@@ -1722,7 +1781,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
             <div className="sticky top-0 bg-white border-b px-4 py-3 flex justify-between items-center">
               <h3 className="font-semibold text-gray-800 flex items-center gap-2">
                 <MessageSquare className="w-5 h-5 text-blue-500" />
-                用户反馈
+                {isViewingReplies ? '管理员回复' : '用户反馈'}
               </h3>
               <button
                 onClick={() => {
@@ -1731,6 +1790,7 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
                   setFeedbackType('experience');
                   setFeedbackSubmitStatus('idle');
                   setFeedbackErrorMessage('');
+                  setIsViewingReplies(false);
                 }}
                 className="text-gray-400 hover:text-gray-600"
               >
@@ -1739,101 +1799,182 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
             </div>
 
             <div className="p-4 space-y-4">
-              {/* 反馈类型选择 */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700">反馈类型</label>
-                <div className="flex gap-2">
+              {/* 【新增】切换按钮 - 在提交反馈和查看回复之间切换 */}
+              {feedbackReplies.length > 0 && (
+                <div className="flex gap-2 pb-2 border-b">
                   <button
-                    onClick={() => setFeedbackType('experience')}
+                    onClick={() => setIsViewingReplies(false)}
                     className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
-                      feedbackType === 'experience'
+                      !isViewingReplies
                         ? 'bg-blue-500 text-white'
                         : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                     }`}
                   >
-                    使用体验
-                  </button>
-                  <button
-                    onClick={() => setFeedbackType('suggestion')}
-                    className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
-                      feedbackType === 'suggestion'
-                        ? 'bg-green-500 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    优化建议
-                  </button>
-                  <button
-                    onClick={() => setFeedbackType('bug')}
-                    className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
-                      feedbackType === 'bug'
-                        ? 'bg-red-500 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    问题反馈
-                  </button>
-                </div>
-              </div>
-
-              {/* 反馈内容输入 */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-700">反馈内容</label>
-                <textarea
-                  value={feedbackContent}
-                  onChange={(e) => setFeedbackContent(e.target.value)}
-                  placeholder={
-                    feedbackType === 'experience'
-                      ? '请分享您的使用体验...'
-                      : feedbackType === 'suggestion'
-                      ? '请提出您的优化建议...'
-                      : '请描述您遇到的问题...'
-                  }
-                  className="w-full p-3 border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  rows={6}
-                />
-                <p className="text-xs text-gray-400">
-                  {feedbackContent.length} / 500 字符
-                </p>
-              </div>
-
-              {/* 状态提示 */}
-              {feedbackSubmitStatus === 'success' && (
-                <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
-                  <Check className="w-4 h-4" />
-                  <span>感谢您的反馈！我们会认真查看并改进。</span>
-                </div>
-              )}
-              {feedbackSubmitStatus === 'error' && (
-                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
-                  <X className="w-4 h-4" />
-                  <span>{feedbackErrorMessage}</span>
-                </div>
-              )}
-
-              {/* 提交按钮 */}
-              <button
-                onClick={handleSubmitFeedback}
-                disabled={isSubmittingFeedback || !feedbackContent.trim() || feedbackSubmitStatus === 'success'}
-                className="w-full bg-blue-500 text-white py-2.5 rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
-              >
-                {isSubmittingFeedback ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    提交中...
-                  </>
-                ) : feedbackSubmitStatus === 'success' ? (
-                  <>
-                    <Check className="w-4 h-4" />
-                    提交成功
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" />
                     提交反馈
-                  </>
-                )}
-              </button>
+                  </button>
+                  <button
+                    onClick={() => setIsViewingReplies(true)}
+                    className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition relative ${
+                      isViewingReplies
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    查看回复
+                    {unreadReplyCount > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+                        {unreadReplyCount}
+                      </span>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* 【新增】回复列表视图 */}
+              {isViewingReplies ? (
+                <div className="space-y-3">
+                  {feedbackReplies.length === 0 ? (
+                    <div className="text-center py-8 text-gray-400">
+                      <MessageSquare className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">暂无管理员回复</p>
+                    </div>
+                  ) : (
+                    feedbackReplies.map((feedback: any) => (
+                      <div key={feedback.id} className="border rounded-lg p-3 space-y-2">
+                        {/* 用户反馈内容 */}
+                        <div className="bg-gray-50 rounded p-2">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`text-xs px-2 py-0.5 rounded ${
+                              feedback.type === 'experience' ? 'bg-blue-100 text-blue-700' :
+                              feedback.type === 'suggestion' ? 'bg-green-100 text-green-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {feedback.type === 'experience' ? '使用体验' :
+                               feedback.type === 'suggestion' ? '优化建议' : '问题反馈'}
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              {new Date(feedback.created_at * 1000).toLocaleString('zh-CN')}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-700">{feedback.content}</p>
+                        </div>
+                        
+                        {/* 管理员回复 */}
+                        {feedback.admin_reply && (
+                          <div className="bg-blue-50 rounded p-2 border-l-4 border-blue-500">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs font-medium text-blue-700">管理员回复</span>
+                              <span className="text-xs text-gray-400">
+                                {new Date(feedback.updated_at * 1000).toLocaleString('zh-CN')}
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-700">{feedback.admin_reply}</p>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : (
+                <>
+                  {/* 原有的提交反馈表单 */}
+                  {/* 反馈类型选择 */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">反馈类型</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setFeedbackType('experience')}
+                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
+                          feedbackType === 'experience'
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        使用体验
+                      </button>
+                      <button
+                        onClick={() => setFeedbackType('suggestion')}
+                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
+                          feedbackType === 'suggestion'
+                            ? 'bg-green-500 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        优化建议
+                      </button>
+                      <button
+                        onClick={() => setFeedbackType('bug')}
+                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
+                          feedbackType === 'bug'
+                            ? 'bg-red-500 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        问题反馈
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 反馈内容输入 */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-gray-700">反馈内容</label>
+                    <textarea
+                      value={feedbackContent}
+                      onChange={(e) => setFeedbackContent(e.target.value)}
+                      placeholder={
+                        feedbackType === 'experience'
+                          ? '请分享您的使用体验...'
+                          : feedbackType === 'suggestion'
+                          ? '请提出您的优化建议...'
+                          : '请描述您遇到的问题...'
+                      }
+                      className="w-full p-3 border rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      rows={6}
+                    />
+                    <p className="text-xs text-gray-400">
+                      {feedbackContent.length} / 500 字符
+                    </p>
+                  </div>
+
+                  {/* 状态提示 */}
+                  {feedbackSubmitStatus === 'success' && (
+                    <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
+                      <Check className="w-4 h-4" />
+                      <span>感谢您的反馈！我们会认真查看并改进。</span>
+                    </div>
+                  )}
+                  {feedbackSubmitStatus === 'error' && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
+                      <X className="w-4 h-4" />
+                      <span>{feedbackErrorMessage}</span>
+                    </div>
+                  )}
+
+                  {/* 提交按钮 */}
+                  <button
+                    onClick={handleSubmitFeedback}
+                    disabled={isSubmittingFeedback || !feedbackContent.trim() || feedbackSubmitStatus === 'success'}
+                    className="w-full bg-blue-500 text-white py-2.5 rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+                  >
+                    {isSubmittingFeedback ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        提交中...
+                      </>
+                    ) : feedbackSubmitStatus === 'success' ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        提交成功
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        提交反馈
+                      </>
+                    )}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
