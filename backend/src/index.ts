@@ -5099,6 +5099,8 @@ export default {
           (SELECT COALESCE(SUM(quota_amount), 0) FROM payment_orders po WHERE po.user_id = u.id AND po.status IN ('paid', 'approved')) as paid_quota_total,
           -- 只统计文章生成次数（从 ai_usage_logs 中筛选 model = 'article-generation' 的记录）
           (SELECT COUNT(*) FROM ai_usage_logs WHERE (user_id = u.id OR anonymous_id = u.id) AND model = 'article-generation') as ai_usage,
+          -- 【新增2026-03-29】当日生成文章数（今天0点到现在）
+          (SELECT COUNT(*) FROM articles a1 JOIN accounts ac1 ON a1.account_id = ac1.id WHERE ac1.user_id = u.id AND a1.publish_time >= ${todayStart}) as articles_1d,
           -- 最近3天生成文章数
           (SELECT COUNT(*) FROM articles a3 JOIN accounts ac3 ON a3.account_id = ac3.id WHERE ac3.user_id = u.id AND a3.publish_time >= ${now - 3 * 86400}) as articles_3d,
           -- 最近7天生成文章数
@@ -5151,6 +5153,7 @@ export default {
         if (sort === 'created_at') sortField = 'u.created_at';
         if (sort === 'last_active') sortField = 'last_active';
         if (sort === 'paid_quota') sortField = 'q.paid_quota_remaining';
+        if (sort === 'articles_1d') sortField = 'articles_1d'; // 【新增2026-03-29】支持按当日文章数排序
         if (sort === 'articles_3d') sortField = 'articles_3d';
         if (sort === 'articles_7d') sortField = 'articles_7d';
         if (sort === 'total_tokens') sortField = 'total_tokens'; // 新增：支持按消耗token排序
@@ -5755,7 +5758,7 @@ export default {
         .nav-item.active { background: var(--bg-subtle); color: var(--accent); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
         
         .main-content { flex: 1; overflow-y: auto; background: var(--bg-subtle); position: relative; }
-        .content-body { padding: 32px; max-width: 1600px; margin: 0 auto; width: 100%; }
+        .content-body { padding: 32px; max-width: 2200px; margin: 0 auto; width: 100%; } /* 增加最大宽度到2200px，让表格有更多空间 */
         
         /* Components */
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px; margin-bottom: 40px; }
@@ -5770,10 +5773,10 @@ export default {
         .section-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 24px; color: var(--text); display: flex; align-items: center; gap: 10px; }
         
         .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); margin-bottom: 24px; }
-        .table-wrapper { overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; }
-        th { text-align: left; padding: 16px 24px; background: var(--bg-subtle); color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); white-space: nowrap; }
-        td { padding: 16px 24px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 0.875rem; white-space: nowrap; }
+        .table-wrapper { overflow-x: visible; } /* 去掉横向滚动条 */
+        table { width: 100%; border-collapse: collapse; } /* 表格占满容器宽度 */
+        th { text-align: left; padding: 12px 16px; background: var(--bg-subtle); color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border); white-space: nowrap; }
+        td { padding: 12px 16px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 0.875rem; white-space: nowrap; }
         .truncate-title { max-width: 300px; overflow: hidden; text-overflow: ellipsis; display: block; }
         tr:last-child td { border-bottom: none; }
         tr:hover { background: var(--bg-subtle); }
@@ -6098,6 +6101,8 @@ export default {
                                         <th class="sortable" id="sort-paid_quota" onclick="toggleSort('paid_quota')" title="付费额度：剩余/总充值">付费额度</th>
                                         <!-- 【修改2026-03-28】累计文章支持排序 -->
                                         <th class="sortable" id="sort-total_articles" onclick="toggleSort('total_articles')" title="累计生成的文章总数">累计文章</th>
+                                        <!-- 【新增2026-03-29】当日文章数，支持排序 -->
+                                        <th class="sortable" id="sort-articles_1d" onclick="toggleSort('articles_1d')" title="今天生成的文章数量">当日文章</th>
                                         <!-- 新增：3日/7日文章数，支持排序 -->
                                         <th class="sortable" id="sort-articles_3d" onclick="toggleSort('articles_3d')" title="最近3天生成的文章数量">3日文章</th>
                                         <th class="sortable" id="sort-articles_7d" onclick="toggleSort('articles_7d')" title="最近7天生成的文章数量">7日文章</th>
@@ -6776,6 +6781,7 @@ export default {
                     <td title="免费额度：已使用 \${freeUsed} 次，剩余 \${freeRemaining} 次"><span class="status-pill \${freeQuotaClass}">\${freeQuotaText}</span></td>
                     <td title="付费额度：已使用 \${paidUsed} 次，剩余 \${paidRemaining} 次"><span class="status-pill \${paidQuotaClass}">\${paidQuotaText}</span></td>
                     <td title="累计生成文章数：\${totalArticles} 篇"><span class="status-pill \${totalArticles > 0 ? 'info' : ''}">\${totalArticles}</span></td>
+                    <td title="今天生成文章数：\${u.articles_1d || 0} 篇"><span class="status-pill \${u.articles_1d > 0 ? 'warning' : ''}">\${u.articles_1d || 0}</span></td>
                     <td><span class="status-pill \${u.articles_3d > 0 ? 'success' : ''}">\${u.articles_3d || 0}</span></td>
                     <td><span class="status-pill \${u.articles_7d > 0 ? 'success' : ''}">\${u.articles_7d || 0}</span></td>
                     <td><span class="status-pill \${u.total_tokens > 0 ? 'info' : ''}" title="\${u.total_tokens || 0} tokens">\${formatTokens(u.total_tokens)}</span></td>
@@ -6783,7 +6789,7 @@ export default {
                     <td>\${u.last_active ? new Date(u.last_active * 1000).toLocaleString() : '-'}</td>
                 </tr>
             \`}).join('');
-            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="10" style="text-align:center">暂无数据</td></tr>';
+            document.getElementById('recentUsers').innerHTML = html || '<tr><td colspan="11" style="text-align:center">暂无数据</td></tr>';
         }
 
         function renderArticles(articles) {

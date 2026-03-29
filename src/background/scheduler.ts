@@ -379,6 +379,36 @@ function shouldRunTask(task: ScheduledTask, now: Date): boolean {
  * 2. AI 选择模式：让 AI 从热榜中选择指定数量的话题生成多篇文章
  */
 async function executeTask(task: ScheduledTask) {
+  // 【新增2026-03-29】双重检查锁：防止同一任务在同一分钟内被多次执行
+  const lockKey = `task_execution_lock_${task.id}`;
+  const currentMinute = Math.floor(Date.now() / 60000); // 当前分钟的时间戳（精确到分钟）
+  
+  try {
+    // 检查是否已经有锁
+    const lockData = await chrome.storage.local.get(lockKey);
+    const existingLock = lockData[lockKey];
+    
+    if (existingLock && existingLock.minute === currentMinute) {
+      console.log(`[Scheduler] ⚠️ 任务 "${task.name}" 在当前分钟已被锁定，跳过执行（防止重复）`);
+      await taskLog(task.id, 'warn', `⚠️ 检测到重复执行请求，已自动跳过`);
+      return;
+    }
+    
+    // 设置锁（记录当前分钟）
+    await chrome.storage.local.set({
+      [lockKey]: {
+        minute: currentMinute,
+        timestamp: Date.now(),
+        taskId: task.id
+      }
+    });
+    console.log(`[Scheduler] 🔒 已为任务 "${task.name}" 设置执行锁（分钟：${currentMinute}）`);
+  } catch (e) {
+    console.error('[Scheduler] 设置执行锁失败:', e);
+    // 如果锁设置失败，为了安全起见，不执行任务
+    return;
+  }
+  
   // 注册任务到运行列表，初始化取消标志为false（持久化到storage）
   await markTaskAsRunning(task.id);
   
