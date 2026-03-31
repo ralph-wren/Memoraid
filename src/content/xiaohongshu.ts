@@ -1771,10 +1771,23 @@ const installPublishReporting = () => {
 // 初始化
 // ============================================
 
+// 【修复2026-03-29】只在发布页面才自动启动，避免在其他小红书页面弹出悬浮窗
+const initAutoFill = () => {
+    const currentUrl = window.location.href;
+    
+    // 只在创作者发布页面才自动启动
+    if (currentUrl.includes('creator.xiaohongshu.com/publish')) {
+        console.log('[Memoraid] 检测到小红书发布页面，准备自动填充');
+        autoFillContent();
+    } else {
+        console.log('[Memoraid] 非发布页面，跳过自动填充');
+    }
+};
+
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => autoFillContent());
+    document.addEventListener('DOMContentLoaded', initAutoFill);
 } else {
-    autoFillContent();
+    initAutoFill();
 }
 
 installPublishReporting();
