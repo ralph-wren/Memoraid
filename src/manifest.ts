@@ -3,7 +3,7 @@ import { defineManifest } from '@crxjs/vite-plugin'
 export default defineManifest({
   name: 'Memoraid - AI自动化发文到小红书、公众号、知乎、头条等自媒体平台',
   description: 'Memoraid 是一款强大的 AI 内容处理工具，帮助您高效地总结网页内容、生成自媒体文章，并一键发布到头条号、知乎专栏和微信公众号。',
-  version: '1.3.3',
+  version: '1.3.5',
   manifest_version: 3,
   action: {
     default_popup: 'index.html',

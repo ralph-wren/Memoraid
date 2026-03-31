@@ -1472,6 +1472,36 @@ const autoFillContent = async (): Promise<void> => {
 
         isProcessing = true;
         isFlowCancelled = false;
+        
+        // 【新增2026-03-31】定义检查任务是否被取消的辅助函数
+        // 用于定时任务：定期检查 background 中的取消标志
+        const checkIfCancelled = async (): Promise<boolean> => {
+            if (isFlowCancelled) return true; // 手动取消
+            
+            // 检查是否是定时任务，如果是则检查 background 中的取消标志
+            try {
+                // 从 pending 数据中获取 taskId
+                const result = await chrome.storage.local.get('pending_xiaohongshu_publish');
+                const pendingData = result.pending_xiaohongshu_publish;
+                
+                if (pendingData && pendingData.taskId) {
+                    // 检查这个任务是否被取消了（使用正确的 storage key）
+                    const cancelledResult = await chrome.storage.local.get('scheduler_cancelled_tasks');
+                    const cancelledTaskIds: string[] = cancelledResult.scheduler_cancelled_tasks || [];
+                    
+                    if (cancelledTaskIds.includes(pendingData.taskId)) {
+                        console.log('[小红书发布] 检测到任务已被取消，中断发布流程');
+                        isFlowCancelled = true; // 设置本地取消标志
+                        return true;
+                    }
+                }
+                
+                return false;
+            } catch (e) {
+                console.error('[小红书发布] 检查取消标志失败:', e);
+                return isFlowCancelled;
+            }
+        };
 
         logger.log('🚀 开始自动填充...', 'info');
         logger.log(`标题: ${pending.title}`, 'info');
@@ -1552,7 +1582,7 @@ const autoFillContent = async (): Promise<void> => {
             }
         }
 
-        if (isFlowCancelled) return;
+        if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
 
         // 步骤2: 填充标题
         const titleSuccess = await fillTitle(pending.title);
@@ -1562,7 +1592,7 @@ const autoFillContent = async (): Promise<void> => {
             return;
         }
 
-        if (isFlowCancelled) return;
+        if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
 
         // 步骤3: 填充正文
         const contentSuccess = await fillContent(pending.content);
@@ -1572,7 +1602,7 @@ const autoFillContent = async (): Promise<void> => {
             return;
         }
 
-        if (isFlowCancelled) return;
+        if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
 
         // 关键增强：标题保护 - 检查正文填充后标题是否被意外清空
         const currentTitleInput = findElement(SELECTORS.titleInput);
@@ -1588,7 +1618,7 @@ const autoFillContent = async (): Promise<void> => {
         // 步骤4: 一键排版（可选）
         await clickAutoFormat();
 
-        if (isFlowCancelled) return;
+        if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
 
         // 步骤5: 随机选择图文模板（可选）
         // ⚠️ 默认不自动执行：避免影响你手动选模板/排查问题。
@@ -1600,7 +1630,7 @@ const autoFillContent = async (): Promise<void> => {
         // 步骤6: 选择模板封面（可选）
         await selectTemplateCover();
 
-        if (isFlowCancelled) return;
+        if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
 
         // 步骤6: 点击"下一步"进入发布设置
         const nextSuccess = await clickNextStep();
@@ -1610,7 +1640,7 @@ const autoFillContent = async (): Promise<void> => {
             return;
         }
 
-        if (isFlowCancelled) return;
+        if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
 
         // 等待页面完全加载
         logger.log('等待发布设置页面加载...', 'info');
@@ -1620,21 +1650,21 @@ const autoFillContent = async (): Promise<void> => {
         logger.log('开始设置原创声明...', 'info');
         await setOriginalityDeclaration();
 
-        if (isFlowCancelled) return;
+        if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
 
         // 步骤8: 添加简介和话题
         // 注意: 简介和话题在同一个输入框中,先输入简介,再输入话题
         logger.log(`准备添加简介和话题 - 简介: ${pending.intro ? '有' : '无'}, 话题数: ${pending.topics?.length || 0}`, 'info');
         await addIntroAndTopics(pending.intro, pending.topics || []);
 
-        if (isFlowCancelled) return;
+        if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
 
         // 步骤9: 设置内容类型声明
         if (pending.declaration) {
             await setContentTypeDeclaration(pending.declaration);
         }
 
-        if (isFlowCancelled) return;
+        if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
 
         // 步骤10: 检查是否开启自动发布
         // 优先使用 pending 对象中的 autoPublish 标识（定时任务会强制设置为 true）

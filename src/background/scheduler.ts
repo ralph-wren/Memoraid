@@ -442,6 +442,18 @@ async function executeTask(task: ScheduledTask) {
 
   // 追踪任务打开的所有标签页 ID
   const taskTabIds: number[] = [];
+  
+  // 【新增2026-03-31】将这些变量定义移到 try 块外，以便 catch 块也能访问
+  let successCount = 0;
+  let failCount = 0;
+  const articleResults: Array<{
+    title: string;
+    sourceUrl: string;
+    platforms: string[];
+    status: 'success' | 'failed';
+    publishTime: string;
+    errorMessage?: string;
+  }> = [];
 
   try {
     await taskLog(task.id, 'info', `🚀 开始执行任务: ${task.name}`);
@@ -481,18 +493,6 @@ async function executeTask(task: ScheduledTask) {
     await taskLog(task.id, 'success', `✅ AI 已选择 ${selectedArticles.length} 个话题`);
 
     // 循环处理每个选中的文章
-    let successCount = 0;
-    let failCount = 0;
-    // 记录每篇文章的详细信息（用于邮件通知）
-    const articleResults: Array<{
-      title: string;
-      sourceUrl: string;
-      platforms: string[];
-      status: 'success' | 'failed';
-      publishTime: string;
-      errorMessage?: string;
-    }> = [];
-
     for (let i = 0; i < selectedArticles.length; i++) {
       // 检查任务是否被取消
       if (await isTaskCancelled(task.id)) {
@@ -751,6 +751,19 @@ async function executeTask(task: ScheduledTask) {
     await taskLog(task.id, 'info', `🧹 正在关闭任务打开的 ${taskTabIds.length} 个页面...`);
     await closeAllTaskTabs(taskTabIds);
     await taskLog(task.id, 'success', `✅ 页面已全部关闭`);
+    
+    // 【新增2026-03-31】任务失败或取消时也发送邮件通知
+    if (task.notificationEmail) {
+      await taskLog(task.id, 'info', `📧 正在发送失败通知邮件到: ${task.notificationEmail}...`);
+      try {
+        // 发送失败通知，successCount 和 failCount 都为 0（因为没有完成任何文章）
+        await sendTaskNotification(task, articleResults, successCount, failCount);
+        await taskLog(task.id, 'success', `✅ 失败通知邮件已发送`);
+      } catch (emailError: any) {
+        await taskLog(task.id, 'error', `❌ 邮件发送失败: ${emailError.message}`);
+        // 邮件发送失败不影响任务状态
+      }
+    }
   } finally {
     // 清理任务运行记录（从内存和storage中移除）
     await unmarkTaskAsRunning(task.id);

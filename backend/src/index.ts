@@ -1121,7 +1121,8 @@ function renderMarketingHome(origin: string): string {
       <h2>真实运营效果</h2>
       <p>使用 Memoraid 自动化运营的真实数据</p>
     </div>
-    <div style="max-width:900px;margin:0 auto">
+    <!-- 运营效果图 - 宽度与下方功能卡片保持一致 -->
+    <div style="max-width:1160px;margin:0 auto;padding:0 20px">
       <div style="margin-bottom:48px">
         <div style="text-align:center;margin-bottom:16px">
           <h3 style="margin:0 0 8px;font-size:24px;color:var(--text)">📱 小红书运营一周</h3>
@@ -2099,7 +2100,7 @@ function renderMarketingDownload(origin: string): string {
           <div style="color:var(--text-2);font-size:13px;line-height:1.6">
             <div style="margin-bottom:6px">✓ 无需访问应用店</div>
             <div style="margin-bottom:6px">✓ 支持开发者模式安装</div>
-            <div>✓ 版本：<span id="versionNumber">1.3.0</span></div>
+            <div>✓ 版本：<span id="versionNumber">1.3.5</span></div>
           </div>
         </div>
       </div>
@@ -3157,6 +3158,13 @@ export default {
             dbConnected: !!env.DB
         };
         return new Response(JSON.stringify(config, null, 2), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+    }
+    
+    // 【新增2026-03-31】0.0.1 GET /api/version - 获取最新版本号
+    if (url.pathname === '/api/version' && request.method === 'GET') {
+        return new Response(JSON.stringify({ version: '1.3.5' }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
     }

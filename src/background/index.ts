@@ -641,6 +641,15 @@ export async function handleInitiateProcess(platform: 'toutiao' | 'zhihu' | 'wei
     const maxRetries = 10; // 增加重试次数，应对微博等慢加载页面
 
     while (retryCount < maxRetries) {
+      // 【新增2026-03-31】在重试循环中检查任务是否被取消
+      if (taskId && isScheduledTask) {
+        const { isTaskCancelled } = await import('./scheduler');
+        if (await isTaskCancelled(taskId)) {
+          console.log('[抓取内容] 检测到定时任务已取消，中断抓取');
+          throw new Error('任务已被用户取消');
+        }
+      }
+      
       try {
         // 每次重试前检查 Tab 是否还存在且 url 没变（这就太复杂了，先只发消息）
         response = await chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_CONTENT' });
@@ -1928,7 +1937,7 @@ async function handlePublishToZhihu(payload: {
   }
 }
 
-// 添加 isScheduledTask 参数，用于标识是否来自定时任务
+// 添加 isScheduledTask 和 taskId 参数，用于标识是否来自定时任务
 async function handlePublishToWeixin(payload: { 
   title: string; 
   content: string; 
@@ -1937,6 +1946,7 @@ async function handlePublishToWeixin(payload: {
   generatedId?: string; 
   tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
   isScheduledTask?: boolean; // 定时任务标识
+  taskId?: string; // 【新增2026-03-31】任务ID，用于content script检查取消标志
 }) {
   try {
     const settings = await getSettings();
@@ -2019,7 +2029,8 @@ async function handlePublishToWeixin(payload: {
         timestamp: Date.now(),
         generatedId: payload.generatedId,
         tokenUsage: payload.tokenUsage, // 传递 token 数据
-        autoPublish // 传递自动发布标识（定时任务强制为 true）
+        autoPublish, // 传递自动发布标识（定时任务强制为 true）
+        taskId: payload.taskId // 【新增2026-03-31】传递任务ID，用于content script检查取消标志
       }
     });
 
@@ -2116,7 +2127,7 @@ async function handlePublishToWeixin(payload: {
   }
 }
 
-// 添加 isScheduledTask 参数，用于标识是否来自定时任务
+// 添加 isScheduledTask 和 taskId 参数，用于标识是否来自定时任务
 async function handlePublishToXiaohongshu(payload: { 
   title: string, 
   content: string, 
@@ -2124,7 +2135,8 @@ async function handlePublishToXiaohongshu(payload: {
   sourceImages?: string[], 
   generatedId?: string, 
   tokenUsage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number },
-  isScheduledTask?: boolean // 定时任务标识
+  isScheduledTask?: boolean, // 定时任务标识
+  taskId?: string // 【新增2026-03-31】任务ID，用于content script检查取消标志
 }) {
   try {
     console.log('Handling publish to Xiaohongshu:', payload.title);
@@ -2254,7 +2266,8 @@ async function handlePublishToXiaohongshu(payload: {
       timestamp: Date.now(),
       generatedId: payload.generatedId,
       tokenUsage: payload.tokenUsage, // 传递 token 数据
-      autoPublish // 传递自动发布标识（定时任务强制为 true）
+      autoPublish, // 传递自动发布标识（定时任务强制为 true）
+      taskId: payload.taskId // 【新增2026-03-31】传递任务ID，用于content script检查取消标志
     };
 
     await chrome.storage.local.set({
@@ -2665,6 +2678,15 @@ ${platformPrompt}
       }
     ];
 
+    // 【新增2026-03-31】在 AI 调用之前检查任务是否被取消
+    if (taskId && isScheduledTask) {
+      const { isTaskCancelled } = await import('./scheduler');
+      if (await isTaskCancelled(taskId)) {
+        console.log('[AI生成] 检测到定时任务已取消，中断流程（AI调用前）');
+        throw new Error('任务已被用户取消');
+      }
+    }
+
     const timeoutId = setTimeout(() => {
       if (abortController) {
         abortController.abort();
@@ -2854,6 +2876,15 @@ ${platformPrompt}
       generatedId
     });
 
+    // 【新增2026-03-31】在发布之前检查任务是否被取消
+    if (taskId && isScheduledTask) {
+      const { isTaskCancelled } = await import('./scheduler');
+      if (await isTaskCancelled(taskId)) {
+        console.log('[发布流程] 检测到定时任务已取消，中断发布');
+        throw new Error('任务已被用户取消');
+      }
+    }
+
     // 根据平台发布，传递 isScheduledTask 参数
     if (platform === 'toutiao') {
       await handlePublishToToutiao({
@@ -2883,7 +2914,8 @@ ${platformPrompt}
         sourceImages: extraction.images,
         generatedId, // 传递 generatedId
         tokenUsage, // 传递 token 数据
-        isScheduledTask // 传递定时任务标识
+        isScheduledTask, // 传递定时任务标识
+        taskId // 【修复2026-03-31】传递 taskId，用于 content script 检查取消标志
       });
     } else if (platform === 'xiaohongshu') {
       await handlePublishToXiaohongshu({
@@ -2893,7 +2925,8 @@ ${platformPrompt}
         sourceImages: extraction.images,
         generatedId, // 传递 generatedId
         tokenUsage, // 传递 token 数据
-        isScheduledTask // 传递定时任务标识
+        isScheduledTask, // 传递定时任务标识
+        taskId // 【修复2026-03-31】传递 taskId，用于 content script 检查取消标志
       });
     }
 

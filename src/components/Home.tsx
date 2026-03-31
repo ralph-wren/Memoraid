@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, Square, Github, Folder, UploadCloud, Check, Newspaper, BookOpen, MessageCircle, BookHeart, Bug, BarChart3, MessageSquare } from 'lucide-react';
+import { Download, FileText, Settings as SettingsIcon, Loader2, Copy, Eye, Code, Send, History, Trash2, ArrowLeft, X, Square, Github, Folder, UploadCloud, Check, Newspaper, BookOpen, MessageCircle, BookHeart, Bug, BarChart3, MessageSquare, Globe } from 'lucide-react';
 import { getHistory, deleteHistoryItem, HistoryItem, clearHistory, getSettings } from '../utils/storage';
 import { getDirectories, pushToGitHub } from '../utils/github';
 import { ExtractionResult } from '../utils/types';
@@ -93,6 +93,11 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
   const [feedbackReplies, setFeedbackReplies] = useState<any[]>([]); // 反馈回复列表
   const [unreadReplyCount, setUnreadReplyCount] = useState(0); // 未读回复数量
   const [isViewingReplies, setIsViewingReplies] = useState(false); // 是否正在查看回复列表
+  
+  // 【新增2026-03-31】版本更新检查相关状态
+  const [latestVersion, setLatestVersion] = useState<string | null>(null); // 官网最新版本
+  const [hasNewVersion, setHasNewVersion] = useState(false); // 是否有新版本
+  const [currentVersion, setCurrentVersion] = useState<string>(''); // 当前版本
 
   useEffect(() => {
     userClosedResultRef.current = userClosedResult;
@@ -199,9 +204,59 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
     // 首次加载额度信息（强制刷新，不使用缓存）
     loadQuota(true);
     
-    // 【新增】首次加载反馈回复数量
-    loadFeedbackReplies();
+    // 【新增2026-03-31】检查版本更新
+    checkVersionUpdate();
   }, [loadQuota]);
+  
+  // 【新增2026-03-31】检查版本更新
+  const checkVersionUpdate = async () => {
+    try {
+      // 获取当前版本（从 manifest）
+      const manifest = chrome.runtime.getManifest();
+      const current = manifest.version;
+      setCurrentVersion(current);
+      
+      // 从后端 API 获取最新版本
+      const settings = await getSettings();
+      const backendUrl = settings.sync?.backendUrl || 'https://memoraid.dpdns.org';
+      
+      const response = await fetch(`${backendUrl}/api/version`);
+      if (response.ok) {
+        const data = await response.json();
+        const latest = data.version;
+        setLatestVersion(latest);
+        
+        // 比较版本号（简单的字符串比较，假设格式为 x.y.z）
+        const hasUpdate = compareVersions(latest, current) > 0;
+        setHasNewVersion(hasUpdate);
+        
+        console.log('[版本检查]', { current, latest, hasUpdate });
+      }
+    } catch (error) {
+      console.error('[版本检查] 失败:', error);
+    }
+  };
+  
+  // 【新增2026-03-31】版本号比较函数
+  const compareVersions = (v1: string, v2: string): number => {
+    const parts1 = v1.split('.').map(Number);
+    const parts2 = v2.split('.').map(Number);
+    
+    for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+      const p1 = parts1[i] || 0;
+      const p2 = parts2[i] || 0;
+      
+      if (p1 > p2) return 1;
+      if (p1 < p2) return -1;
+    }
+    
+    return 0;
+  };
+  
+  // 【新增】首次加载反馈回复数量
+  useEffect(() => {
+    loadFeedbackReplies();
+  }, []);
 
   // History State
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
@@ -1187,6 +1242,18 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
               </span>
             )}
           </button>
+          {/* 【新增2026-03-31】官网按钮 - 有新版本时显示红点提示 */}
+          <button
+            onClick={() => window.open('https://memoraid.dpdns.org', '_blank')}
+            className="p-2 hover:bg-gray-100 rounded-full text-gray-600 relative"
+            title={hasNewVersion ? `官网 - 发现新版本 ${latestVersion}` : '官网'}
+          >
+            <Globe className="w-5 h-5 text-green-500" />
+            {/* 新版本提示红点 */}
+            {hasNewVersion && (
+              <span className="absolute -top-1 -right-1 bg-red-500 rounded-full w-2 h-2"></span>
+            )}
+          </button>
           <a
             href="https://github.com/ralph-wren/Memoraid"
             target="_blank"
@@ -1213,12 +1280,29 @@ const Home: React.FC<HomeProps> = ({ onOpenSettings }) => {
 
       {/* 版本更新通知 - 自动滚动跑马灯 */}
       <div className="mb-3 px-4">
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg px-3 py-1.5 overflow-hidden">
-          <div className="animate-marquee whitespace-nowrap text-xs inline-block">
-            <span className="text-blue-600 font-medium">🎉 v1.3.0 新功能：</span>
-            <span className="text-gray-600">支持定时任务创建文章 | 支持充值文章额度 | 新增用户反馈功能 | 完善文章数据统计功能 | 优化账号同步功能</span>
+        {hasNewVersion ? (
+          // 有新版本时显示更新提示
+          <div className="bg-gradient-to-r from-orange-50 to-red-50 border border-orange-300 rounded-lg px-3 py-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-orange-600 font-bold text-sm">🎉 发现新版本 {latestVersion}</span>
+              <span className="text-gray-600 text-xs">当前版本: {currentVersion}</span>
+            </div>
+            <button
+              onClick={() => window.open('https://memoraid.dpdns.org', '_blank')}
+              className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded text-xs font-medium transition"
+            >
+              立即更新
+            </button>
           </div>
-        </div>
+        ) : (
+          // 没有新版本时显示功能介绍
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg px-3 py-1.5 overflow-hidden">
+            <div className="animate-marquee whitespace-nowrap text-xs inline-block">
+              <span className="text-blue-600 font-medium">🎉 v1.3.5 新功能：</span>
+              <span className="text-gray-600">修复定时任务取消响应问题 | 支持定时任务创建文章 | 支持充值文章额度 | 新增用户反馈功能</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center space-y-4 w-full">

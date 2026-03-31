@@ -4163,6 +4163,36 @@ const runPublishFlow = async (options: {
   logger.setStopCallback(() => { isFlowCancelled = true; });
   logger.log('🚀 开始微信公众号发布流程...', 'info');
   
+  // 【新增2026-03-31】定义检查任务是否被取消的辅助函数
+  // 用于定时任务：定期检查 background 中的取消标志
+  const checkIfCancelled = async (): Promise<boolean> => {
+    if (isFlowCancelled) return true; // 手动取消
+    
+    // 检查是否是定时任务，如果是则检查 background 中的取消标志
+    try {
+      // 从 pending 数据中获取 taskId
+      const result = await chrome.storage.local.get('pending_weixin_publish');
+      const pending = result.pending_weixin_publish;
+      
+      if (pending && pending.taskId) {
+        // 检查这个任务是否被取消了（使用正确的 storage key）
+        const cancelledResult = await chrome.storage.local.get('scheduler_cancelled_tasks');
+        const cancelledTaskIds: string[] = cancelledResult.scheduler_cancelled_tasks || [];
+        
+        if (cancelledTaskIds.includes(pending.taskId)) {
+          console.log('[微信发布] 检测到任务已被取消，中断发布流程');
+          isFlowCancelled = true; // 设置本地取消标志
+          return true;
+        }
+      }
+      
+      return false;
+    } catch (e) {
+      console.error('[微信发布] 检查取消标志失败:', e);
+      return isFlowCancelled;
+    }
+  };
+  
   try {
     // 1. 填充标题
     // Playwright: await page1.getByRole('textbox', { name: '请在这里输入标题' }).click();
@@ -4172,7 +4202,7 @@ const runPublishFlow = async (options: {
       logger.log('标题填充失败', 'error');
       return;
     }
-    if (isFlowCancelled) return;
+    if (await checkIfCancelled()) return;
     
     await new Promise(r => setTimeout(r, 500));
     
@@ -4184,7 +4214,7 @@ const runPublishFlow = async (options: {
       logger.log('正文填充失败', 'error');
       return;
     }
-    if (isFlowCancelled) return;
+    if (await checkIfCancelled()) return;
     
     await new Promise(r => setTimeout(r, 1000));
     
@@ -4226,7 +4256,7 @@ const runPublishFlow = async (options: {
         }
         
         for (let i = 0; i < placeholders.length; i++) {
-          if (isFlowCancelled) return;
+          if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
           
           const currentPlaceholders = findImagePlaceholders();
           const placeholder = currentPlaceholders.find(p => !failedPlaceholders.has(p.text)) || currentPlaceholders[0];
@@ -4302,7 +4332,7 @@ const runPublishFlow = async (options: {
         logger.log(`找到 ${placeholders.length} 个图片占位符，开始逐个处理...`, 'info');
         
         for (let i = 0; i < placeholders.length; i++) {
-          if (isFlowCancelled) return;
+          if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
           
           const placeholder = placeholders[i];
           logger.log(`📷 处理第 ${i + 1}/${placeholders.length} 个图片: ${placeholder.keyword}`, 'info');
@@ -4327,25 +4357,25 @@ const runPublishFlow = async (options: {
         if (!await openImageDialog()) {
           logger.log('无法打开图片对话框，跳过 AI 配图', 'warn');
         } else {
-          if (isFlowCancelled) return;
+          if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
           
           if (!await clickAIImage()) {
             logger.log('无法点击 AI 配图，跳过', 'warn');
           } else {
-            if (isFlowCancelled) return;
+            if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
             
             const aiPrompt = options.aiPrompt || generateImagePrompt(options.title, options.content);
             logger.log(`AI 提示词: ${aiPrompt}`, 'info');
             
             if (await generateAIImage(aiPrompt)) {
-              if (isFlowCancelled) return;
+              if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
               await insertAIImage();
             }
           }
         }
       }
     }
-    if (isFlowCancelled) return;
+    if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
     
     await new Promise(r => setTimeout(r, 1000));
 
@@ -4365,7 +4395,7 @@ const runPublishFlow = async (options: {
     }
     logger.log('🖼️ 步骤4: 设置封面图片（从正文选择）', 'info');
     await setCoverFromContent({ preferredIndex: 0 });
-    if (isFlowCancelled) return;
+    if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
     
     await new Promise(r => setTimeout(r, 1000));
     
@@ -4376,7 +4406,7 @@ const runPublishFlow = async (options: {
       logger.log('📝 步骤4.5: 填充封面摘要', 'info');
       await fillCoverSummary(summaryData.summary);
     }
-    if (isFlowCancelled) return;
+    if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
     
     await new Promise(r => setTimeout(r, 500));
     
@@ -4389,7 +4419,7 @@ const runPublishFlow = async (options: {
       logger.log('✍️ 步骤5: 声明原创', 'info');
       await declareOriginal(options.authorName);
     }
-    if (isFlowCancelled) return;
+    if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
     
     await new Promise(r => setTimeout(r, 1000));
     
@@ -4402,7 +4432,7 @@ const runPublishFlow = async (options: {
       await new Promise(r => setTimeout(r, 3000));
       await cancelPreview();
     }
-    if (isFlowCancelled) return;
+    if (await checkIfCancelled()) return; // 【修复2026-03-31】检查定时任务取消标志
     
     // 7. 自动发布（可选）
     // Playwright: await page1.getByRole('button', { name: '发表' }).click();
@@ -4468,7 +4498,7 @@ const runSmartImageFlow = async (_autoPublish = false) => {
       let successCount = 0;
       
       for (let i = 0; i < placeholders.length; i++) {
-        if (isFlowCancelled) break;
+        if (isFlowCancelled) break; // 检查手动取消标志
         
         const placeholder = placeholders[i];
         logger.log(`📷 处理第 ${i + 1}/${placeholders.length} 个: ${placeholder.keyword}`, 'info');

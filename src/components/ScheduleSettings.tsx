@@ -51,6 +51,8 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   // 正在执行的任务 ID
   const [runningTaskId, setRunningTaskId] = useState<string | null>(null);
+  // 【新增2026-03-31】正在取消的任务 ID（用于显示取消中的加载特效）
+  const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
   // 从后端加载的任务列表
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   // 加载状态
@@ -361,9 +363,12 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
     }, 3000);
   };
 
-  // 【新增2026-03-28】暂停正在执行的任务
+  // 【修改2026-03-31】暂停正在执行的任务，添加取消中的加载状态
   const stopTaskNow = async (taskId: string) => {
     if (runningTaskId !== taskId) return;
+    
+    // 设置取消中状态，显示加载特效
+    setCancellingTaskId(taskId);
     
     try {
       // 发送暂停任务消息到后台
@@ -372,13 +377,19 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
         payload: { taskId }
       });
       
-      // 立即清除运行状态
+      // 等待一小段时间，让后台有时间处理取消请求
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // 清除运行状态和取消中状态
       setRunningTaskId(null);
+      setCancellingTaskId(null);
       
       // 刷新任务状态
       await loadTasksFromBackend(true);
     } catch (e) {
       console.error('发送暂停任务消息失败:', e);
+      // 即使失败也清除取消中状态
+      setCancellingTaskId(null);
     }
   };
 
@@ -534,10 +545,29 @@ const ScheduleSettings: React.FC<ScheduleSettingsProps> = ({ settings, onSetting
                           runTaskNow(task.id);
                         }
                       }}
-                      className={`p-1 rounded transition ${runningTaskId === task.id ? 'text-red-500 hover:text-red-700 hover:bg-red-50' : 'text-blue-500 hover:text-blue-700 hover:bg-blue-50'}`}
-                      title={runningTaskId === task.id ? '点击取消执行' : '立即执行'}
+                      disabled={cancellingTaskId === task.id}
+                      className={`p-1 rounded transition ${
+                        cancellingTaskId === task.id 
+                          ? 'text-gray-400 cursor-not-allowed' 
+                          : runningTaskId === task.id 
+                            ? 'text-red-500 hover:text-red-700 hover:bg-red-50' 
+                            : 'text-blue-500 hover:text-blue-700 hover:bg-blue-50'
+                      }`}
+                      title={
+                        cancellingTaskId === task.id 
+                          ? '取消中...' 
+                          : runningTaskId === task.id 
+                            ? '点击取消执行' 
+                            : '立即执行'
+                      }
                     >
-                      {runningTaskId === task.id ? <X className="w-4 h-4" /> : <Zap className="w-4 h-4" />}
+                      {cancellingTaskId === task.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : runningTaskId === task.id ? (
+                        <X className="w-4 h-4" />
+                      ) : (
+                        <Zap className="w-4 h-4" />
+                      )}
                     </button>
 
                     {/* 查看日志按钮 */}
