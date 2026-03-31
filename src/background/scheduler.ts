@@ -515,11 +515,35 @@ async function executeTask(task: ScheduledTask) {
       };
 
       try {
+        // 【修复2026-03-29】确保浏览器窗口可用，解决最小化时无法打开标签页的问题
+        // 检查是否有正常的浏览器窗口（非最小化）
+        const windows = await chrome.windows.getAll({ windowTypes: ['normal'] });
+        let targetWindowId: number | undefined;
+        
+        // 查找一个非最小化的窗口
+        const normalWindow = windows.find(w => w.state !== 'minimized');
+        
+        if (!normalWindow) {
+          // 如果所有窗口都最小化了，创建一个新窗口
+          await taskLog(task.id, 'info', `📱 检测到浏览器最小化，正在创建新窗口...`);
+          const newWindow = await chrome.windows.create({
+            state: 'normal',
+            focused: false, // 不抢占焦点
+            width: 1200,
+            height: 800
+          });
+          targetWindowId = newWindow.id;
+          await taskLog(task.id, 'success', `✅ 已创建新窗口用于自动化任务`);
+        } else {
+          targetWindowId = normalWindow.id;
+        }
+        
         // 打开文章详情页
         await taskLog(task.id, 'info', `🌐 正在打开文章页面...`);
         const tab = await chrome.tabs.create({
           url: article.url,
           active: false,
+          windowId: targetWindowId, // 指定窗口ID
         });
 
         if (!tab.id) throw new Error('无法创建标签页');
@@ -570,10 +594,14 @@ async function executeTask(task: ScheduledTask) {
             // 传递 isScheduledTask = true 和 taskId，用于定时任务取消检查
             await handleInitiateProcess(platform, tab.id!, true, task.id);
             
-            // 【修复】等待发布流程完全完成
+            // 【修复2026-03-31】等待发布流程完全完成
             // 检查 pending 数据是否已被清除（表示发布完成）
-            // 最多等待 120 秒（2 分钟）
-            const maxWaitTime = 120000; // 120 秒
+            // 最多等待 300 秒（5 分钟），因为微信发布流程包括：
+            // - AI 生成多张图片（每张约 15-20 秒）
+            // - 图片上传和处理
+            // - 发布确认等待（30 秒）
+            // 总计可能需要 3-4 分钟
+            const maxWaitTime = 300000; // 300 秒（5 分钟）
             const checkInterval = 2000; // 每 2 秒检查一次
             const startTime = Date.now();
             let publishCompleted = false;
@@ -600,7 +628,7 @@ async function executeTask(task: ScheduledTask) {
             }
             
             if (!publishCompleted) {
-              await taskLog(task.id, 'warn', `⚠️ ${platform} 发布超时（120秒），继续下一个平台`);
+              await taskLog(task.id, 'warn', `⚠️ ${platform} 发布超时（300秒），继续下一个平台`);
               // 超时算作失败，抛出错误让外层catch处理
               throw new Error(`${platform} 发布超时（可能需要重新登录）`);
             }
@@ -787,10 +815,31 @@ async function fetchFromTophub(task: ScheduledTask): Promise<Array<{ title: stri
   await taskLog(task.id, 'info', `📰 今日热榜: ${tophubUrl}`);
   await taskLog(task.id, 'info', `🔍 正在打开热榜页面...`);
 
+  // 【修复2026-03-29】确保浏览器窗口可用，解决最小化时无法打开标签页的问题
+  const windows = await chrome.windows.getAll({ windowTypes: ['normal'] });
+  let targetWindowId: number | undefined;
+  
+  const normalWindow = windows.find(w => w.state !== 'minimized');
+  
+  if (!normalWindow) {
+    await taskLog(task.id, 'info', `📱 检测到浏览器最小化，正在创建新窗口...`);
+    const newWindow = await chrome.windows.create({
+      state: 'normal',
+      focused: false,
+      width: 1200,
+      height: 800
+    });
+    targetWindowId = newWindow.id;
+    await taskLog(task.id, 'success', `✅ 已创建新窗口用于自动化任务`);
+  } else {
+    targetWindowId = normalWindow.id;
+  }
+
   // 创建一个隐藏标签页打开今日热榜
   const tab = await chrome.tabs.create({
     url: tophubUrl,
     active: false,
+    windowId: targetWindowId, // 指定窗口ID
   });
 
   if (!tab.id) throw new Error('无法创建标签页');

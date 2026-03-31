@@ -3081,8 +3081,10 @@ const generateAndInsertImageForPlaceholder = async (
     return false;
   }
   
-  // 步骤6: 等待图片插入完成，弹窗会自动关闭
+  // 【修复2026-03-29】步骤6: 显式关闭 AI 配图弹窗，确保下次处理时状态正确
   await new Promise(r => setTimeout(r, 1000));
+  await closeAIImageDialog();
+  await new Promise(r => setTimeout(r, 500)); // 等待弹窗完全关闭
   
   // 步骤7: 删除占位符文本，避免重复处理和显示问题
   if (!deletePlaceholderText(placeholder.text)) {
