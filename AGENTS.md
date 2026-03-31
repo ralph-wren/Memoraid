@@ -26,3 +26,4 @@
 24. skills安装地址在~/.agent/skills或~/.kiro/skills或~/.claude/skills
 25. 如果涉及网页操作的代码你不确定或者写不好，可以写一些验证代码我粘贴在控制台测试，能正确执行了你再生成、完善代码
 26. 所有关于时间的都是中国时区，默认东八区
+27. bash -lc "CI=1 npx wrangler r2 object put pothos-images/memoraid/memoraid-release.zip --file ../release/memoraid-release.zip --content-type application/zip" 通过这个命令把最新版本插件更新到官网

@@ -983,6 +983,7 @@ function renderMarketingNav(origin: string): string {
         <a href="/#features">功能</a>
         <a href="/#usecases">场景</a>
         <a href="/pricing">定价</a>
+        <a href="/download">下载</a>
       </nav>
       <div class="nav-actions">
         <a class="nav-login" href="/login" data-auth-login>登录</a>
@@ -1034,6 +1035,7 @@ function renderMarketingFooter(origin: string): string {
         <h5>产品</h5>
         <a href="/">官网首页</a>
         <a href="/pricing">定价</a>
+        <a href="/download">下载</a>
       </div>
       <div>
         <h5>资源</h5>
@@ -2043,6 +2045,232 @@ ${footer}`;
   });
 }
 
+// 下载页面渲染函数
+function renderMarketingDownload(origin: string): string {
+  const nav = renderMarketingNav(origin);
+  const footer = renderMarketingFooter(origin);
+  const ASSETS_BASE = `${origin}/assets/memoraid`;
+
+  const body = `${nav}
+<main class="hero">
+  <div class="container">
+    <div class="section-head" style="margin-bottom:32px">
+      <h2 style="font-size:34px;margin:0;letter-spacing:-.03em">下载 Memoraid</h2>
+      <p style="margin-top:10px">选择适合您的安装方式，开始使用 AI 自媒体运营助手</p>
+    </div>
+
+    <div class="grid" style="grid-template-columns:repeat(2,1fr);gap:20px;max-width:900px;margin:0 auto">
+      <!-- Chrome 网上应用店 -->
+      <div class="card" style="padding:32px;text-align:center">
+        <div style="width:80px;height:80px;margin:0 auto 20px;background:linear-gradient(135deg,#EA4335 0%,#FBBC05 50%,#34A853 100%);border-radius:20px;display:flex;align-items:center;justify-content:center">
+          <svg viewBox="0 0 24 24" style="width:48px;height:48px" aria-hidden="true">
+            <path fill="#ffffff" d="M12 2a10 10 0 0 1 8.66 5H12a5 5 0 0 0-4.33 2.5L4.2 4.2A10 10 0 0 1 12 2z"/>
+            <path fill="#ffffff" d="M3.34 6.1A10 10 0 0 0 12 22c1.9 0 3.68-.53 5.2-1.44L12 14.5a5 5 0 0 1-4.33-2.5L3.34 6.1z"/>
+            <path fill="#ffffff" d="M20.66 7A10 10 0 0 1 12 22l5.2-9.02A5 5 0 0 0 12 7h8.66z"/>
+          </svg>
+        </div>
+        <h3 style="margin:0 0 12px;font-size:20px">Chrome 网上应用店</h3>
+        <p style="margin:0 0 24px;color:var(--text-3);font-size:14px">推荐方式，自动更新，安全可靠</p>
+        <a class="btn btn-primary" href="https://chromewebstore.google.com/detail/memoraid/leonoilddlplhmmahjmnendflfnlnlmg" target="_blank" rel="noreferrer" style="width:100%">
+          前往安装
+        </a>
+        <div style="margin-top:16px;padding:12px;background:rgba(16,185,129,.05);border:1px solid rgba(16,185,129,.2);border-radius:8px;text-align:left">
+          <div style="color:var(--text-2);font-size:13px;line-height:1.6">
+            <div style="margin-bottom:6px">✓ 自动更新到最新版本</div>
+            <div style="margin-bottom:6px">✓ Chrome 官方审核认证</div>
+            <div>✓ 一键安装，简单快捷</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 离线安装包 -->
+      <div class="card" style="padding:32px;text-align:center">
+        <div style="width:80px;height:80px;margin:0 auto 20px;background:linear-gradient(135deg,#3b82f6 0%,#8b5cf6 100%);border-radius:20px;display:flex;align-items:center;justify-content:center">
+          <svg viewBox="0 0 24 24" style="width:48px;height:48px;fill:#ffffff" aria-hidden="true">
+            <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+          </svg>
+        </div>
+        <h3 style="margin:0 0 12px;font-size:20px">离线安装包</h3>
+        <p style="margin:0 0 24px;color:var(--text-3);font-size:14px">适合无法访问 Chrome 应用店的用户</p>
+        <button class="btn btn-ghost" onclick="downloadExtension()" style="width:100%">
+          下载 ZIP 安装包
+        </button>
+        <div style="margin-top:16px;padding:12px;background:rgba(59,130,246,.05);border:1px solid rgba(59,130,246,.2);border-radius:8px;text-align:left">
+          <div style="color:var(--text-2);font-size:13px;line-height:1.6">
+            <div style="margin-bottom:6px">✓ 无需访问应用店</div>
+            <div style="margin-bottom:6px">✓ 支持开发者模式安装</div>
+            <div>✓ 版本：<span id="versionNumber">1.3.0</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 安装说明 -->
+    <div style="margin-top:48px;max-width:900px;margin-left:auto;margin-right:auto">
+      <h3 style="margin:0 0 24px;font-size:24px;text-align:center">离线安装包使用说明</h3>
+      
+      <div class="grid" style="grid-template-columns:1fr;gap:16px">
+        <div class="card" style="padding:24px">
+          <div style="display:flex;align-items:flex-start;gap:16px">
+            <div style="width:40px;height:40px;flex-shrink:0;background:var(--accent-2);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px">1</div>
+            <div style="flex:1">
+              <h4 style="margin:0 0 8px;font-size:16px">下载并解压</h4>
+              <p style="margin:0;color:var(--text-3);font-size:14px;line-height:1.6">点击上方"下载 ZIP 安装包"按钮，下载完成后解压到任意文件夹（建议放在不会被删除的位置）</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="padding:24px">
+          <div style="display:flex;align-items:flex-start;gap:16px">
+            <div style="width:40px;height:40px;flex-shrink:0;background:var(--accent-2);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px">2</div>
+            <div style="flex:1">
+              <h4 style="margin:0 0 8px;font-size:16px">打开扩展程序管理</h4>
+              <p style="margin:0;color:var(--text-3);font-size:14px;line-height:1.6">在 Chrome 浏览器中，打开菜单 → 更多工具 → 扩展程序，或直接访问 <code style="background:var(--bg-soft);padding:2px 6px;border-radius:4px;font-size:13px">chrome://extensions/</code></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="padding:24px">
+          <div style="display:flex;align-items:flex-start;gap:16px">
+            <div style="width:40px;height:40px;flex-shrink:0;background:var(--accent-2);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px">3</div>
+            <div style="flex:1">
+              <h4 style="margin:0 0 8px;font-size:16px">启用开发者模式</h4>
+              <p style="margin:0;color:var(--text-3);font-size:14px;line-height:1.6">在扩展程序页面右上角，打开"开发者模式"开关</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="padding:24px">
+          <div style="display:flex;align-items:flex-start;gap:16px">
+            <div style="width:40px;height:40px;flex-shrink:0;background:var(--accent-2);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px">4</div>
+            <div style="flex:1">
+              <h4 style="margin:0 0 8px;font-size:16px">加载解压后的扩展</h4>
+              <p style="margin:0;color:var(--text-3);font-size:14px;line-height:1.6">点击"加载已解压的扩展程序"按钮，选择刚才解压的文件夹，即可完成安装</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="padding:24px">
+          <div style="display:flex;align-items:flex-start;gap:16px">
+            <div style="width:40px;height:40px;flex-shrink:0;background:var(--accent-2);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px">5</div>
+            <div style="flex:1">
+              <h4 style="margin:0 0 8px;font-size:16px">开始使用</h4>
+              <p style="margin:0;color:var(--text-3);font-size:14px;line-height:1.6">安装完成后，点击浏览器工具栏中的 Memoraid 图标，即可开始使用。首次使用建议先访问<a href="/pricing" style="color:#10b981;text-decoration:none;margin:0 4px">定价页面</a>了解额度说明</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 常见问题 -->
+    <div style="margin-top:48px;max-width:900px;margin-left:auto;margin-right:auto">
+      <h3 style="margin:0 0 24px;font-size:24px;text-align:center">常见问题</h3>
+      
+      <div class="grid" style="grid-template-columns:1fr;gap:12px">
+        <div class="card" style="padding:20px">
+          <h4 style="margin:0 0 8px;font-size:15px">为什么推荐使用 Chrome 网上应用店安装？</h4>
+          <p style="margin:0;color:var(--text-3);font-size:14px;line-height:1.6">通过 Chrome 网上应用店安装可以自动获取更新，无需手动下载新版本。同时经过 Chrome 官方审核，更加安全可靠。</p>
+        </div>
+
+        <div class="card" style="padding:20px">
+          <h4 style="margin:0 0 8px;font-size:15px">离线安装包会自动更新吗？</h4>
+          <p style="margin:0;color:var(--text-3);font-size:14px;line-height:1.6">不会。离线安装包需要手动下载新版本并重新安装。如果您希望自动更新，建议使用 Chrome 网上应用店安装。</p>
+        </div>
+
+        <div class="card" style="padding:20px">
+          <h4 style="margin:0 0 8px;font-size:15px">安装后如何配置？</h4>
+          <p style="margin:0;color:var(--text-3);font-size:14px;line-height:1.6">点击浏览器工具栏中的 Memoraid 图标，在弹出窗口中点击"设置"按钮，即可配置 AI 模型、平台 Cookie 等信息。详细配置说明请参考<a href="https://github.com/ralph-wren/Memoraid" target="_blank" style="color:#10b981;text-decoration:none;margin-left:4px">GitHub 文档</a>。</p>
+        </div>
+
+        <div class="card" style="padding:20px">
+          <h4 style="margin:0 0 8px;font-size:15px">支持哪些浏览器？</h4>
+          <p style="margin:0;color:var(--text-3);font-size:14px;line-height:1.6">目前支持 Chrome 浏览器及基于 Chromium 内核的浏览器（如 Edge、Brave 等）。暂不支持 Firefox 和 Safari。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- CTA -->
+    <div style="margin-top:48px">
+      <div class="cta">
+        <h3>需要帮助？</h3>
+        <p>如果在安装或使用过程中遇到问题，欢迎联系我们</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="https://github.com/ralph-wren/Memoraid/issues" target="_blank" rel="noreferrer">提交问题</a>
+          <a class="btn btn-ghost" href="/">返回首页</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+// 下载扩展程序
+async function downloadExtension() {
+  try {
+    // 显示下载提示
+    const btn = event.target;
+    const originalText = btn.textContent;
+    btn.textContent = '准备下载...';
+    btn.disabled = true;
+    
+    // 调用下载 API
+    const response = await fetch('/api/download/extension');
+    
+    if (!response.ok) {
+      throw new Error('下载失败');
+    }
+    
+    // 获取文件名（从响应头或使用默认值）
+    const contentDisposition = response.headers.get('Content-Disposition');
+    let filename = 'memoraid-release.zip';
+    if (contentDisposition) {
+      const matches = /filename[^;=\\n]*=((['"]).*?\\2|[^;\\n]*)/.exec(contentDisposition);
+      if (matches != null && matches[1]) {
+        filename = matches[1].replace(/['"]/g, '');
+      }
+    }
+    
+    // 创建下载链接
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    
+    // 清理
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    
+    // 恢复按钮状态
+    btn.textContent = '下载成功 ✓';
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.disabled = false;
+    }, 2000);
+  } catch (error) {
+    console.error('下载失败:', error);
+    alert('下载失败，请稍后重试或直接访问 GitHub 下载');
+    
+    // 恢复按钮状态
+    const btn = event.target;
+    btn.textContent = '下载 ZIP 安装包';
+    btn.disabled = false;
+  }
+}
+</script>
+
+${footer}`;
+
+  return renderMarketingShell({
+    origin,
+    title: 'Memoraid 下载 - AI 自媒体运营助手',
+    description: '下载 Memoraid Chrome 扩展，支持 Chrome 网上应用店安装和离线安装包下载。',
+    body,
+  });
+}
+
 function renderMarketingLogin(origin: string, error?: string | null): string {
   const nav = renderMarketingNav(origin);
   const footer = renderMarketingFooter(origin);
@@ -2494,6 +2722,31 @@ export default {
     // 定价页
     if (request.method === 'GET' && url.pathname === '/pricing') {
       return buildHtmlResponse(renderMarketingPricing(effectiveOrigin));
+    }
+
+    // 下载页
+    if (request.method === 'GET' && url.pathname === '/download') {
+      return buildHtmlResponse(renderMarketingDownload(effectiveOrigin));
+    }
+
+    // 下载扩展程序 API
+    if (request.method === 'GET' && url.pathname === '/api/download/extension') {
+      try {
+        const object = await env.R2.get('memoraid/memoraid-release.zip');
+        if (!object) {
+          return new Response('文件不存在', { status: 404 });
+        }
+        
+        const headers = new Headers();
+        headers.set('Content-Type', 'application/zip');
+        headers.set('Content-Disposition', 'attachment; filename="memoraid-release.zip"');
+        headers.set('Cache-Control', 'public, max-age=3600');
+        
+        return new Response(object.body, { headers });
+      } catch (e: any) {
+        console.error('下载文件失败:', e);
+        return new Response('下载失败', { status: 500 });
+      }
     }
 
     // 官方网站首页 - MaxAI风格重新设计
