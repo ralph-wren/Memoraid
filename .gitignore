@@ -148,3 +148,4 @@ vite.config.ts.timestamp-*
 test
 .shared/ui-ux-pro-max/scripts/__pycache__/core.cpython-314.pyc
 .vscode/settings.json
+/.playwright-mcp/

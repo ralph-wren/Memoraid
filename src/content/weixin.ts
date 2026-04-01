@@ -4857,47 +4857,43 @@ const autoFillContent = async () => {
       const initialUrlParams = new URLSearchParams(window.location.search);
       const initialToken = initialUrlParams.get('token') || '';
       
-      // 【新增2026-04-01】监听登录成功后的页面跳转
-      // 当用户扫码登录成功后，页面会从登录页跳转到首页
-      // 这时候需要通知 Background script 重新打开编辑器
+      // 【修复2026-04-01】监听登录成功后的页面跳转
+      // 策略：检测到页面跳转后，提示用户刷新首页以获取最新 token
+      // 原因：扫码后跳转的 token 很快就过期，需要刷新首页获取新 token
       const checkLoginSuccess = async () => {
-        // 【修复2026-04-01】正确的登录检测逻辑：
-        // 检查 token 参数是否发生了变化
-        const urlParams = new URLSearchParams(window.location.search);
-        const currentToken = urlParams.get('token') || '';
+        const currentPathname = window.location.pathname;
         
-        // 如果 token 发生了变化，并且新 token 不为空，说明登录成功
-        if (currentToken !== initialToken && currentToken.trim() !== '') {
-          logger.log('✅ 登录成功，正在打开编辑器...', 'info');
+        // 检测是否已经跳转到首页或其他页面（不再是登录页）
+        // 登录页的特征：pathname 是 / 且 token 参数为空或很短
+        const isLoginPage = currentPathname === '/' && (!initialToken || initialToken.length < 5);
+        const hasLeftLoginPage = !isLoginPage;
+        
+        if (hasLeftLoginPage) {
+          logger.log('✅ 检测到登录成功！', 'success');
+          logger.log('⚠️ 请手动刷新当前页面（按 F5 或 Ctrl+R）', 'warn');
+          logger.log('刷新后将自动打开编辑器继续填充内容', 'info');
           
           // 清除登录标记
           sessionStorage.removeItem('memoraid_cookie_cleared');
           sessionStorage.removeItem('memoraid_login_monitoring');
           
-          // 通知 Background script 重新处理待发布任务
-          try {
-            await chrome.runtime.sendMessage({ 
-              type: 'REOPEN_WEIXIN_EDITOR'
-            });
-          } catch (e) {
-            console.warn('[Memoraid] 通知 Background 失败:', e);
-          }
+          // 设置一个标记，表示需要在刷新后继续
+          sessionStorage.setItem('memoraid_need_reopen_editor', 'true');
+          
+          return true; // 返回 true 表示检测到登录成功
         }
+        
+        return false;
       };
       
       // 每秒检查一次，最多检查60秒
       let checkCount = 0;
       const checkInterval = setInterval(async () => {
         checkCount++;
-        await checkLoginSuccess();
+        const loginSuccess = await checkLoginSuccess();
         
-        // 检查 token 是否发生了变化
-        const urlParams = new URLSearchParams(window.location.search);
-        const currentToken = urlParams.get('token') || '';
-        const tokenChanged = currentToken !== initialToken && currentToken.trim() !== '';
-        
-        // 如果 token 已经变化，或者超过60秒，停止检查
-        if (tokenChanged || checkCount >= 60) {
+        // 如果检测到登录成功，或者超过60秒，停止检查
+        if (loginSuccess || checkCount >= 60) {
           clearInterval(checkInterval);
           // 清除监听标记
           sessionStorage.removeItem('memoraid_login_monitoring');
@@ -4910,6 +4906,29 @@ const autoFillContent = async () => {
     
     // 登录成功后清除标记
     sessionStorage.removeItem('memoraid_cookie_cleared');
+    
+    // 【新增2026-04-01】检查是否需要在刷新后重新打开编辑器
+    const needReopenEditor = sessionStorage.getItem('memoraid_need_reopen_editor');
+    if (needReopenEditor === 'true') {
+      sessionStorage.removeItem('memoraid_need_reopen_editor');
+      
+      // 检查是否有待发布的任务
+      const data = await chrome.storage.local.get('pending_weixin_publish');
+      if (data && data.pending_weixin_publish) {
+        logger.log('✅ 检测到待发布任务，正在打开编辑器...', 'info');
+        
+        // 通知 Background script 重新打开编辑器
+        try {
+          await chrome.runtime.sendMessage({ 
+            type: 'REOPEN_WEIXIN_EDITOR'
+          });
+        } catch (e) {
+          console.warn('[Memoraid] 通知 Background 失败:', e);
+        }
+        
+        return; // 等待编辑器打开
+      }
+    }
     
     // 【修复】不再处理首页情况，因为 Background script 已经直接打开编辑器 URL
     // 如果在首页，说明是 Background 为了获取 token 而打开的，不需要 content script 处理
