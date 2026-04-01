@@ -452,6 +452,69 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  // 【新增2026-04-01】重新打开微信编辑器（当用户扫码登录成功后由 content script 触发）
+  // 用于在登录成功后自动继续填充内容
+  if (message.type === 'REOPEN_WEIXIN_EDITOR') {
+    (async () => {
+      try {
+        // 检查是否有待发布的微信任务
+        const data = await chrome.storage.local.get('pending_weixin_publish');
+        if (!data || !data.pending_weixin_publish) {
+          console.log('[Weixin] 没有待发布的任务');
+          return;
+        }
+
+        const payload = data.pending_weixin_publish;
+        
+        // 检查任务是否过期（5分钟）
+        if (Date.now() - payload.timestamp > 5 * 60 * 1000) {
+          console.log('[Weixin] 任务已过期，清除');
+          await chrome.storage.local.remove('pending_weixin_publish');
+          return;
+        }
+
+        console.log('[Weixin] 登录成功，重新打开编辑器...');
+        
+        // 【修复2026-04-01】立即从当前页面提取 token，不要等待
+        // 因为等待可能导致 token 过期
+        const tabs = await chrome.tabs.query({ url: 'https://mp.weixin.qq.com/*' });
+        let token: string | null = null;
+        
+        for (const tab of tabs) {
+          if (tab.url) {
+            const match = tab.url.match(/[?&]token=(\d+)/);
+            if (match) {
+              token = match[1];
+              console.log(`[Weixin] 提取到 token: ${token}`);
+              break;
+            }
+          }
+        }
+        
+        if (!token) {
+          console.error('[Weixin] 无法提取 token，请手动打开微信公众平台');
+          return;
+        }
+        
+        // 构造编辑器 URL
+        const timestamp = Date.now();
+        const editorUrl = `https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&isNew=1&type=77&createType=0&token=${token}&lang=zh_CN&timestamp=${timestamp}`;
+        
+        // 打开编辑器
+        await chrome.tabs.create({
+          url: editorUrl,
+          active: true
+        });
+        
+        console.log('[Weixin] 已打开编辑器');
+      } catch (e) {
+        console.error('[Weixin] 重新打开编辑器失败:', e);
+      }
+    })();
+    sendResponse({ success: true });
+    return true;
+  }
+
   if (message.type === 'PUBLISH_TO_XIAOHONGSHU') {
     handlePublishToXiaohongshu(message.payload);
     sendResponse({ success: true });
@@ -2080,6 +2143,14 @@ async function handlePublishToWeixin(payload: {
       if (homeTab.id) {
         const updatedTab = await chrome.tabs.get(homeTab.id);
         if (updatedTab.url) {
+          // 【修复2026-04-01】检查是否跳转到了登录页面
+          if (updatedTab.url.includes('/cgi-bin/loginpage')) {
+            console.log('[Weixin] 页面跳转到登录页面，等待用户登录...');
+            // 不抛出错误，让 content script 处理登录流程
+            // pending_weixin_publish 数据保留，登录成功后会自动继续
+            return;
+          }
+          
           const match = updatedTab.url.match(/[?&]token=(\d+)/);
           if (match) {
             token = match[1];
@@ -2091,7 +2162,9 @@ async function handlePublishToWeixin(payload: {
     
     if (!token) {
       console.error('[Weixin] 无法获取 token，请先登录微信公众平台');
-      throw new Error('无法获取 token，请先登录微信公众平台');
+      // 【修复2026-04-01】不抛出错误，避免影响后续流程
+      // throw new Error('无法获取 token，请先登录微信公众平台');
+      return;
     }
     
     // 构造编辑器 URL

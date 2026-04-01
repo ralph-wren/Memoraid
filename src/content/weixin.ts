@@ -4736,50 +4736,6 @@ const waitForPageReady = async (maxWait = 10000): Promise<'login' | 'home' | 'ed
   return 'unknown';
 };
 
-/**
- * 尝试刷新二维码（如果二维码加载失败）
- * 【新增2026-04-01】修复二维码刷新不了的问题
- * 【修复2026-04-01】二维码刷新失败时，刷新整个页面以获取新的 login_appid
- */
-const tryRefreshQRCode = async (): Promise<void> => {
-  try {
-    // 查找刷新按钮（位于二维码加载失败的提示中）
-    // HTML 结构: <div class="login__type__container__scan_mask__inner">
-    //              <p>二维码加载失败</p>
-    //              <p><a href="javascript:;">点击刷新</a></p>
-    //            </div>
-    const refreshLink = document.querySelector('.login__type__container__scan_mask__inner a[href="javascript:;"]');
-    
-    if (refreshLink && isElementVisible(refreshLink as HTMLElement)) {
-      logger.log('检测到二维码加载失败', 'warn');
-      
-      // 检查是否已经尝试过刷新页面（使用页面加载时间作为标记，避免无限刷新）
-      // 如果页面加载时间小于5秒，说明刚刚刷新过，不再重复刷新
-      const pageLoadTime = performance.now();
-      
-      if (pageLoadTime < 5000) {
-        // 页面刚加载不到5秒，说明刚刚刷新过但二维码仍然加载失败
-        logger.log('⚠️ 二维码仍然无法加载，请检查网络连接或手动刷新页面', 'warn');
-        return;
-      }
-      
-      // 方案：刷新整个页面以获取新的 login_appid
-      // 原因：点击刷新按钮时，二维码 URL 缺少 login_appid 参数导致加载失败
-      // 只有重新加载页面才能从服务器获取新的 login_appid
-      logger.log('🔄 正在刷新页面以重新获取二维码...', 'info');
-      
-      // 延迟1秒后刷新，让用户看到提示信息
-      await new Promise(r => setTimeout(r, 1000));
-      
-      // 刷新页面
-      window.location.reload();
-    }
-  } catch (e) {
-    // 刷新失败不影响主流程，只记录日志
-    console.warn('[Memoraid] 刷新二维码失败:', e);
-  }
-};
-
 // ============================================
 // 自动填充逻辑
 // ============================================
@@ -4868,13 +4824,18 @@ const autoFillContent = async () => {
       const clearTime = clearFlag ? parseInt(clearFlag, 10) : 0;
       const now = Date.now();
       
+      // 【修复2026-04-01】检查是否已经在监听登录状态
+      // 避免重复启动定时器导致无限循环
+      const isMonitoring = sessionStorage.getItem('memoraid_login_monitoring');
+      if (isMonitoring) {
+        console.log('[Memoraid] 已经在监听登录状态，跳过重复处理');
+        return;
+      }
+      
       // 如果 60 秒内已经处理过，不再重复，只提示用户扫码
       if (now - clearTime < 60000) {
         logger.log('⚠️ 请扫码登录微信公众平台', 'warn');
         logger.log('登录成功后将自动继续填充内容', 'info');
-        
-        // 【新增2026-04-01】尝试刷新二维码（如果二维码加载失败）
-        await tryRefreshQRCode();
       } else {
         // 首次检测到需要登录，清除插件存储中的过期 Cookie
         logger.log('⚠️ 检测到未登录，请扫码登录微信公众平台', 'warn');
@@ -4887,11 +4848,63 @@ const autoFillContent = async () => {
           logger.log('清除存储 Cookie 失败，不影响登录', 'warn');
         }
         logger.log('请扫码登录，登录成功后将自动继续填充内容', 'info');
-        
-        // 【新增2026-04-01】尝试刷新二维码（如果二维码加载失败）
-        await tryRefreshQRCode();
       }
-      // 不清除 pending 数据，等用户登录后刷新页面再继续
+      
+      // 【新增2026-04-01】标记正在监听登录状态
+      sessionStorage.setItem('memoraid_login_monitoring', 'true');
+      
+      // 【新增2026-04-01】记录初始的 token 值
+      const initialUrlParams = new URLSearchParams(window.location.search);
+      const initialToken = initialUrlParams.get('token') || '';
+      
+      // 【新增2026-04-01】监听登录成功后的页面跳转
+      // 当用户扫码登录成功后，页面会从登录页跳转到首页
+      // 这时候需要通知 Background script 重新打开编辑器
+      const checkLoginSuccess = async () => {
+        // 【修复2026-04-01】正确的登录检测逻辑：
+        // 检查 token 参数是否发生了变化
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentToken = urlParams.get('token') || '';
+        
+        // 如果 token 发生了变化，并且新 token 不为空，说明登录成功
+        if (currentToken !== initialToken && currentToken.trim() !== '') {
+          logger.log('✅ 登录成功，正在打开编辑器...', 'info');
+          
+          // 清除登录标记
+          sessionStorage.removeItem('memoraid_cookie_cleared');
+          sessionStorage.removeItem('memoraid_login_monitoring');
+          
+          // 通知 Background script 重新处理待发布任务
+          try {
+            await chrome.runtime.sendMessage({ 
+              type: 'REOPEN_WEIXIN_EDITOR'
+            });
+          } catch (e) {
+            console.warn('[Memoraid] 通知 Background 失败:', e);
+          }
+        }
+      };
+      
+      // 每秒检查一次，最多检查60秒
+      let checkCount = 0;
+      const checkInterval = setInterval(async () => {
+        checkCount++;
+        await checkLoginSuccess();
+        
+        // 检查 token 是否发生了变化
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentToken = urlParams.get('token') || '';
+        const tokenChanged = currentToken !== initialToken && currentToken.trim() !== '';
+        
+        // 如果 token 已经变化，或者超过60秒，停止检查
+        if (tokenChanged || checkCount >= 60) {
+          clearInterval(checkInterval);
+          // 清除监听标记
+          sessionStorage.removeItem('memoraid_login_monitoring');
+        }
+      }, 1000);
+      
+      // 不清除 pending 数据，等用户登录后由 Background 重新打开编辑器
       return;
     }
     
