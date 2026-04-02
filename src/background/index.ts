@@ -206,8 +206,32 @@ chrome.storage.local.get(['currentTask'], (result) => {
   }
 });
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async (details) => {
   console.log('Extension installed');
+  
+  // 首次安装时，添加新人指南到历史记录
+  if (details.reason === 'install') {
+    try {
+      // 读取新人指南文档内容
+      const guideUrl = chrome.runtime.getURL('docs/新人指南-Memoraid使用教程.md');
+      const response = await fetch(guideUrl);
+      const guideContent = await response.text();
+      
+      // 添加到历史记录
+      const guideItem = {
+        id: 'welcome-guide',
+        title: '📖 新人指南 - Memoraid 使用教程',
+        date: Date.now(),
+        content: guideContent,
+        url: 'https://github.com/ralph-wren/memoraid'
+      };
+      
+      await addHistoryItem(guideItem);
+      console.log('Welcome guide added to history');
+    } catch (error) {
+      console.error('Failed to add welcome guide:', error);
+    }
+  }
 });
 
 // ========== Cookie 自动更新监听器 ==========
